@@ -79,19 +79,20 @@ function AutoZoom({ adressen }: { adressen: Address[] }) {
   return null
 }
 
-// WMS-Layer für BayernAtlas Parzellenkarte (ALKIS)
-function ParzellenlayerWMS({ sichtbar }: { sichtbar: boolean }) {
+// BKG TopPlusOpen Topographiekarte als WMS-Overlay
+function TopographieWMS({ sichtbar }: { sichtbar: boolean }) {
   const map = useMap()
 
   useEffect(() => {
     if (!sichtbar) return
-    const wmsLayer = L.tileLayer.wms('https://geoservices.bayern.de/wms/v2/ogc_alkis.cgi', {
-      layers: 'liable',
+    const wmsLayer = L.tileLayer.wms('https://sgx.geodatenzentrum.de/wms_topplus_open', {
+      layers: 'web',
+      version: '1.1.1',
       format: 'image/png',
-      transparent: true,
-      opacity: 0.55,
-      attribution: '© Bayerische Vermessungsverwaltung',
-      maxZoom: 20,
+      transparent: false,
+      attribution: '© Bundesamt für Kartographie und Geodäsie (BKG)',
+      maxNativeZoom: 18,
+      maxZoom: 21,
     })
     wmsLayer.addTo(map)
     return () => {
@@ -124,7 +125,7 @@ export default function MapView({
   onTrasseGeaendert,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
-  const [parzellenSichtbar, setParzellenSichtbar] = useState(false)
+  const [topoSichtbar, setTopoSichtbar] = useState(false)
   const [suchQuery, setSuchQuery] = useState('')
   const [suchLaden, setSuchLaden] = useState(false)
   const [suchFehler, setSuchFehler] = useState(false)
@@ -197,15 +198,15 @@ export default function MapView({
           {tileVariante === 'satellit' ? '🗺️ Karte' : '🛰️ Satellit'}
         </button>
         <button
-          onClick={() => setParzellenSichtbar((v) => !v)}
+          onClick={() => setTopoSichtbar((v) => !v)}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-colors"
           style={{
-            backgroundColor: parzellenSichtbar ? '#1e3a5f' : '#1a1a1a',
+            backgroundColor: topoSichtbar ? '#1e3a5f' : '#1a1a1a',
             color: '#f9fafb',
-            border: `1px solid ${parzellenSichtbar ? '#3b82f6' : '#374151'}`,
+            border: `1px solid ${topoSichtbar ? '#3b82f6' : '#374151'}`,
           }}
         >
-          🏡 Parzellen
+          📐 Topokarte
         </button>
       </div>
 
@@ -233,7 +234,7 @@ export default function MapView({
 
         <KlickHandler aktiv={startpunktSetzenAktiv} onKlick={onStartpunktGesetzt} />
         <AutoZoom adressen={adressen} />
-        <ParzellenlayerWMS sichtbar={parzellenSichtbar} />
+        <TopographieWMS sichtbar={topoSichtbar} />
         <FlyTo ziel={flugZiel} />
 
         {/* Adressen-Pins */}
