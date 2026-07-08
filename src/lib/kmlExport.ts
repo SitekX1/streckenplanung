@@ -36,19 +36,23 @@ export function exportKML(projekt: Projekt): void {
     .join('\n')
 
   const hausanschlussPlacemarks = projekt.hausanschluesse
-    .map(
-      (h) => `    <Placemark>
+    .map((h) => {
+      const linePts =
+        h.wegpunkte && h.wegpunkte.length >= 2
+          ? h.wegpunkte
+          : [h.trassenPunkt, h.hausKoordinate]
+      const coordStr = linePts.map((p) => `${p.lng},${p.lat},0`).join('\n          ')
+      return `    <Placemark>
       <styleUrl>#hausstich</styleUrl>
       <name>Hausanschluss ${h.id.slice(0, 8)}</name>
       <description>Länge: ${h.laengeMeter.toFixed(1)} m</description>
       <LineString>
         <coordinates>
-          ${h.trassenPunkt.lng},${h.trassenPunkt.lat},0
-          ${h.hausKoordinate.lng},${h.hausKoordinate.lat},0
+          ${coordStr}
         </coordinates>
       </LineString>
     </Placemark>`
-    )
+    })
     .join('\n')
 
   const kml = `<?xml version="1.0" encoding="UTF-8"?>

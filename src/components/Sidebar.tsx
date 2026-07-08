@@ -12,11 +12,20 @@ interface SidebarProps {
   hausanschlussLaenge: number
   gesamtLaenge: number
   trasseProgress: number
+  hausanschluesseProgress: number
+  editierbarAktiv: boolean
+  adressFarbe: string
+  trasseFarbe: string
+  hausanschlussfarbe: string
+  onAdressFarbeAendern: (farbe: string) => void
+  onTrasseFarbeAendern: (farbe: string) => void
+  onHausanschlussFarbeAendern: (farbe: string) => void
   onExcelImport: (file: File) => void
   onStartpunktSetzen: () => void
   onStartpunktZuruecksetzen: () => void
   onTrasseGenerieren: () => void
   onHausanschluesseGenerieren: () => void
+  onEditierbarToggle: () => void
   onKMLExport: () => void
   onProjektSpeichern: () => void
   onProjektLaden: (file: File) => void
@@ -39,11 +48,20 @@ export default function Sidebar({
   hausanschlussLaenge,
   gesamtLaenge,
   trasseProgress,
+  hausanschluesseProgress,
+  editierbarAktiv,
+  adressFarbe,
+  trasseFarbe,
+  hausanschlussfarbe,
+  onAdressFarbeAendern,
+  onTrasseFarbeAendern,
+  onHausanschlussFarbeAendern,
   onExcelImport,
   onStartpunktSetzen,
   onStartpunktZuruecksetzen,
   onTrasseGenerieren,
   onHausanschluesseGenerieren,
+  onEditierbarToggle,
   onKMLExport,
   onProjektSpeichern,
   onProjektLaden,
@@ -53,11 +71,12 @@ export default function Sidebar({
 
   const hatDaten = adressenCount > 0
   const kannTrasseGenerieren = startpunktGesetzt && hatDaten
-  const isGenerating = trasseProgress > 0 && trasseProgress < 100
+  const isGeneratingTrasse = trasseProgress > 0 && trasseProgress < 100
+  const isGeneratingHaus = hausanschluesseProgress > 0 && hausanschluesseProgress < 100
 
   return (
     <aside
-      className="w-72 h-screen flex-shrink-0 flex flex-col overflow-y-auto"
+      className="w-72 h-screen shrink-0 flex flex-col overflow-y-auto"
       style={{ backgroundColor: '#141414', borderRight: '1px solid #1f2937' }}
     >
       {/* Header */}
@@ -170,11 +189,35 @@ export default function Sidebar({
                 <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] mr-1.5">2</span>
                 Trasse generieren
               </p>
-              {trasseVorhanden && !isGenerating ? (
-                <div className="px-3 py-2 rounded-lg text-sm bg-green-900/40 text-green-400 border border-green-800">
-                  ✅ Trasse: {formatMeter(trassenLaenge)}
+              {trasseVorhanden && !isGeneratingTrasse ? (
+                <div className="flex flex-col gap-2">
+                  <div className="px-3 py-2 rounded-lg text-sm bg-green-900/40 text-green-400 border border-green-800">
+                    ✅ Trasse: {formatMeter(trassenLaenge)}
+                  </div>
+                  <button
+                    onClick={onTrasseGenerieren}
+                    className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left"
+                  >
+                    ↺ Neu generieren
+                  </button>
+                  <button
+                    onClick={onEditierbarToggle}
+                    className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors text-left"
+                    style={{
+                      backgroundColor: editierbarAktiv ? '#1e3a5f' : '#1f2937',
+                      color: editierbarAktiv ? '#93c5fd' : '#9ca3af',
+                      border: `1px solid ${editierbarAktiv ? '#3b82f6' : '#374151'}`,
+                    }}
+                  >
+                    ✏️ {editierbarAktiv ? 'Bearbeitung aktiv' : 'Trasse bearbeiten'}
+                  </button>
+                  {editierbarAktiv && (
+                    <p className="px-1 text-[10px] text-blue-400 leading-tight">
+                      Punkte ziehen · Klick auf Linie fügt Punkt ein · Doppelklick auf Punkt löscht
+                    </p>
+                  )}
                 </div>
-              ) : isGenerating ? (
+              ) : isGeneratingTrasse ? (
                 <div className="flex flex-col gap-1.5">
                   <div className="w-full bg-gray-800 rounded-full h-2">
                     <div
@@ -201,9 +244,33 @@ export default function Sidebar({
                 <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] mr-1.5">3</span>
                 Hausanschlüsse generieren
               </p>
-              {hausanschluesseCount > 0 ? (
-                <div className="px-3 py-2 rounded-lg text-sm bg-green-900/40 text-green-400 border border-green-800">
-                  ✅ {hausanschluesseCount} Hausanschlüsse: {formatMeter(hausanschlussLaenge)}
+              {isGeneratingHaus ? (
+                <div className="flex flex-col gap-1.5">
+                  <div className="w-full bg-gray-800 rounded-full h-2">
+                    <div
+                      className="bg-red-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${hausanschluesseProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 text-right">{hausanschluesseProgress}%</p>
+                </div>
+              ) : hausanschluesseCount > 0 ? (
+                <div className="flex flex-col gap-2">
+                  <div className="px-3 py-2 rounded-lg text-sm bg-green-900/40 text-green-400 border border-green-800">
+                    ✅ {hausanschluesseCount} Hausanschlüsse: {formatMeter(hausanschlussLaenge)}
+                  </div>
+                  <button
+                    onClick={onHausanschluesseGenerieren}
+                    disabled={!trasseVorhanden}
+                    className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40"
+                  >
+                    ↺ Neu generieren
+                  </button>
+                  {editierbarAktiv && (
+                    <p className="px-1 text-[10px] text-red-400 leading-tight">
+                      Klick auf rote Linie löscht den Hausanschluss
+                    </p>
+                  )}
                 </div>
               ) : (
                 <button
@@ -261,6 +328,31 @@ export default function Sidebar({
             >
               📄 Als JSON speichern
             </button>
+          </div>
+        </div>
+
+        <div className="border-t border-gray-800" />
+
+        {/* Sektion: Darstellung */}
+        <div>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">Darstellung</p>
+          <div className="flex flex-col gap-2.5">
+            {[
+              { label: 'Adressen', value: adressFarbe, onChange: onAdressFarbeAendern },
+              { label: 'Trasse', value: trasseFarbe, onChange: onTrasseFarbeAendern },
+              { label: 'Hausanschlüsse', value: hausanschlussfarbe, onChange: onHausanschlussFarbeAendern },
+            ].map(({ label, value, onChange }) => (
+              <div key={label} className="flex items-center justify-between px-1">
+                <span className="text-xs text-gray-400">{label}</span>
+                <input
+                  type="color"
+                  value={value}
+                  onChange={(e) => onChange(e.target.value)}
+                  className="w-8 h-6 rounded cursor-pointer border-0 p-0"
+                  style={{ background: 'transparent' }}
+                />
+              </div>
+            ))}
           </div>
         </div>
 

@@ -22,6 +22,7 @@ export interface Hausstich {
   trassenPunkt: LatLng
   hausKoordinate: LatLng
   laengeMeter: number
+  wegpunkte?: LatLng[]
 }
 
 export interface Projekt {

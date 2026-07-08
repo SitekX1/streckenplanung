@@ -13,6 +13,7 @@ import {
   useMap,
 } from 'react-leaflet'
 import L from 'leaflet'
+import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
 import { Address, LatLng, Hausstich } from '../lib/types'
 
@@ -34,6 +35,13 @@ const startpunktIcon = new L.Icon({
   shadowSize: [41, 41],
 })
 
+const editHandleIcon = new L.DivIcon({
+  className: '',
+  html: '<div style="width:12px;height:12px;background:#3b82f6;border:2px solid white;border-radius:50%;cursor:grab;box-shadow:0 0 0 1px rgba(59,130,246,0.4),0 2px 6px rgba(0,0,0,0.6)"></div>',
+  iconSize: [12, 12],
+  iconAnchor: [6, 6],
+})
+
 interface MapViewProps {
   adressen: Address[]
   startpunkt: LatLng | null
@@ -41,11 +49,14 @@ interface MapViewProps {
   trasse: LatLng[]
   hausanschluesse: Hausstich[]
   editierbarAktiv: boolean
+  adressFarbe: string
+  trasseFarbe: string
+  hausanschlussfarbe: string
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
+  onHausanschluesseGeaendert: (updated: Hausstich[]) => void
 }
 
-// Hilfkomponente: reagiert auf Klicks zur Startpunkt-Setzung
 function KlickHandler({
   aktiv,
   onKlick,
@@ -63,7 +74,6 @@ function KlickHandler({
   return null
 }
 
-// Hilfkomponente: zoomt automatisch auf Adressen nach Import
 function AutoZoom({ adressen }: { adressen: Address[] }) {
   const map = useMap()
   const letzteAnzahl = useRef(0)
@@ -79,7 +89,6 @@ function AutoZoom({ adressen }: { adressen: Address[] }) {
   return null
 }
 
-// BKG TopPlusOpen Topographiekarte als WMS-Overlay
 function TopographieWMS({ sichtbar }: { sichtbar: boolean }) {
   const map = useMap()
 
@@ -103,7 +112,6 @@ function TopographieWMS({ sichtbar }: { sichtbar: boolean }) {
   return null
 }
 
-// Hilfkomponente: fliegt zu einer Position wenn flugZiel gesetzt wird
 function FlyTo({ ziel }: { ziel: LatLng | null }) {
   const map = useMap()
   useEffect(() => {
@@ -121,8 +129,12 @@ export default function MapView({
   trasse,
   hausanschluesse,
   editierbarAktiv,
+  adressFarbe,
+  trasseFarbe,
+  hausanschlussfarbe,
   onStartpunktGesetzt,
   onTrasseGeaendert,
+  onHausanschluesseGeaendert,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -131,6 +143,42 @@ export default function MapView({
   const [suchLaden, setSuchLaden] = useState(false)
   const [suchFehler, setSuchFehler] = useState(false)
   const [flugZiel, setFlugZiel] = useState<LatLng | null>(null)
+
+  // Edit state: simplified trasse for drag handles
+  const [editTrasse, setEditTrasse] = useState<LatLng[]>([])
+  const trasseRef = useRef<LatLng[]>([])
+
+  // Keep ref current
+  useEffect(() => {
+    trasseRef.current = trasse
+  }, [trasse])
+
+  // Initialize editTrasse only when edit mode is toggled ON
+  useEffect(() => {
+    if (!editierbarAktiv) {
+      setEditTrasse([])
+      return
+    }
+    const t = trasseRef.current
+    if (t.length === 0) return
+
+    if (t.length <= 500) {
+      setEditTrasse([...t])
+    } else {
+      try {
+        const line = turf.lineString(t.map((p) => [p.lng, p.lat]))
+        const simplified = turf.simplify(line, { tolerance: 0.0001, highQuality: false })
+        const pts = (simplified.geometry.coordinates as [number, number][]).map((c) => ({
+          lat: c[1],
+          lng: c[0],
+        }))
+        setEditTrasse(pts)
+      } catch {
+        setEditTrasse(t.slice(0, 500))
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editierbarAktiv])
 
   async function handleSuche() {
     const q = suchQuery.trim()
@@ -153,7 +201,42 @@ export default function MapView({
     }
   }
 
-  const trasseLeaflet = trasse.map((p) => [p.lat, p.lng] as [number, number])
+  // Which points to show in the Polyline: edit handles when active, full trasse otherwise
+  const trasseAnzeige = editierbarAktiv && editTrasse.length >= 2 ? editTrasse : trasse
+  const trasseLeaflet = trasseAnzeige.map((p) => [p.lat, p.lng] as [number, number])
+
+  function handleTrassePunktBewegt(i: number, neu: LatLng) {
+    const updated = [...editTrasse]
+    updated[i] = neu
+    setEditTrasse(updated)
+    onTrasseGeaendert(updated)
+  }
+
+  function handleTrassePunktLoeschen(i: number) {
+    if (editTrasse.length <= 2) return
+    const updated = editTrasse.filter((_, idx) => idx !== i)
+    setEditTrasse(updated)
+    onTrasseGeaendert(updated)
+  }
+
+  function handleTrassePunktEinfuegen(klickPos: LatLng) {
+    if (editTrasse.length < 2) return
+    try {
+      const line = turf.lineString(editTrasse.map((p) => [p.lng, p.lat]))
+      const nearest = turf.nearestPointOnLine(line, turf.point([klickPos.lng, klickPos.lat]))
+      const idx = (nearest.properties.index ?? 0) as number
+      const updated = [...editTrasse]
+      updated.splice(idx + 1, 0, klickPos)
+      setEditTrasse(updated)
+      onTrasseGeaendert(updated)
+    } catch {
+      // ignore
+    }
+  }
+
+  function handleHausstichLoeschen(id: string) {
+    onHausanschluesseGeaendert(hausanschluesse.filter((h) => h.id !== id))
+  }
 
   return (
     <div className="relative w-full h-full">
@@ -190,11 +273,7 @@ export default function MapView({
         <button
           onClick={() => setTileVariante((v) => (v === 'satellit' ? 'osm' : 'satellit'))}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-colors"
-          style={{
-            backgroundColor: '#1a1a1a',
-            color: '#f9fafb',
-            border: '1px solid #374151',
-          }}
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #374151' }}
         >
           {tileVariante === 'satellit' ? '🗺️ Karte' : '🛰️ Satellit'}
         </button>
@@ -244,7 +323,7 @@ export default function MapView({
           />
         )}
 
-        {/* Ortsnamen-Overlay — transparent, über Satellit und OSM */}
+        {/* Ortsnamen-Overlay */}
         {ortsnamenSichtbar && (
           <TileLayer
             url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
@@ -267,8 +346,8 @@ export default function MapView({
             center={[adresse.lat, adresse.lon]}
             radius={6}
             pathOptions={{
-              fillColor: '#22c55e',
-              color: '#16a34a',
+              fillColor: adressFarbe,
+              color: adressFarbe,
               weight: 1.5,
               fillOpacity: 0.85,
             }}
@@ -283,9 +362,7 @@ export default function MapView({
                   {adresse.strasse} {adresse.nr}
                   {adresse.nr_zusatz ? ` ${adresse.nr_zusatz}` : ''}
                 </p>
-                <p>
-                  {adresse.plz} {adresse.ortsname}
-                </p>
+                <p>{adresse.plz} {adresse.ortsname}</p>
                 {adresse.ortsteil && <p className="text-gray-500">{adresse.ortsteil}</p>}
                 <p className="mt-1 text-blue-600">Haushalte: {adresse.hh}</p>
               </div>
@@ -305,32 +382,81 @@ export default function MapView({
           <Polyline
             positions={trasseLeaflet}
             pathOptions={{
-              color: '#3b82f6',
-              weight: 4,
+              color: trasseFarbe,
+              weight: editierbarAktiv ? 5 : 4,
               opacity: 0.9,
             }}
+            eventHandlers={
+              editierbarAktiv
+                ? {
+                    click: (e) => {
+                      e.originalEvent.stopPropagation()
+                      handleTrassePunktEinfuegen({ lat: e.latlng.lat, lng: e.latlng.lng })
+                    },
+                  }
+                : {}
+            }
           />
         )}
 
+        {/* Edit-Handles für Trasse (nur im Bearbeiten-Modus) */}
+        {editierbarAktiv &&
+          editTrasse.map((p, i) => (
+            <Marker
+              key={`edit-${i}`}
+              position={[p.lat, p.lng]}
+              draggable={true}
+              icon={editHandleIcon}
+              eventHandlers={{
+                dragend: (e) => {
+                  const ll = (e.target as L.Marker).getLatLng()
+                  handleTrassePunktBewegt(i, { lat: ll.lat, lng: ll.lng })
+                },
+                dblclick: (e) => {
+                  if (e.originalEvent) e.originalEvent.stopPropagation()
+                  handleTrassePunktLoeschen(i)
+                },
+              }}
+            />
+          ))}
+
         {/* Hausanschlüsse */}
-        {hausanschluesse.map((h) => (
-          <Polyline
-            key={h.id}
-            positions={[
-              [h.trassenPunkt.lat, h.trassenPunkt.lng],
-              [h.hausKoordinate.lat, h.hausKoordinate.lng],
-            ]}
-            pathOptions={{
-              color: '#ef4444',
-              weight: 2,
-              opacity: 0.8,
-            }}
-          >
-            <Tooltip>
-              Hausanschluss: {h.laengeMeter.toFixed(1)} m
-            </Tooltip>
-          </Polyline>
-        ))}
+        {hausanschluesse.map((h) => {
+          const pts =
+            h.wegpunkte && h.wegpunkte.length >= 2
+              ? h.wegpunkte.map((p) => [p.lat, p.lng] as [number, number])
+              : [
+                  [h.trassenPunkt.lat, h.trassenPunkt.lng] as [number, number],
+                  [h.hausKoordinate.lat, h.hausKoordinate.lng] as [number, number],
+                ]
+
+          return (
+            <Polyline
+              key={h.id}
+              positions={pts}
+              pathOptions={{
+                color: hausanschlussfarbe,
+                weight: editierbarAktiv ? 3 : 2,
+                opacity: editierbarAktiv ? 1 : 0.8,
+              }}
+              eventHandlers={
+                editierbarAktiv
+                  ? {
+                      click: (e) => {
+                        e.originalEvent.stopPropagation()
+                        handleHausstichLoeschen(h.id)
+                      },
+                    }
+                  : {}
+              }
+            >
+              <Tooltip>
+                {editierbarAktiv ? '🗑️ Klicken zum Löschen · ' : ''}
+                Hausanschluss: {h.laengeMeter.toFixed(1)} m
+              </Tooltip>
+            </Polyline>
+          )
+        })}
       </MapContainer>
 
       {/* Hinweis wenn Startpunkt-Modus aktiv */}
@@ -340,6 +466,16 @@ export default function MapView({
           style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}
         >
           Klick auf die Karte, um den Startpunkt zu setzen
+        </div>
+      )}
+
+      {/* Hinweis wenn Bearbeiten-Modus aktiv */}
+      {editierbarAktiv && (
+        <div
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-xs shadow-lg"
+          style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}
+        >
+          ✏️ Bearbeiten · Punkte ziehen · Klick auf Trasse fügt Punkt ein · Doppelklick auf Punkt löscht
         </div>
       )}
     </div>
