@@ -1,65 +1,161 @@
-import Image from "next/image";
+'use client'
+
+import dynamic from 'next/dynamic'
+import { useState, useCallback } from 'react'
+import Sidebar from '../components/Sidebar'
+import { Address, LatLng, Hausstich } from '../lib/types'
+import { parseExcelFile } from '../lib/excelParser'
+import { nearestNeighborTSP } from '../lib/tsp'
+import { routeEntlangStrassen } from '../lib/osrmClient'
+import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse'
+import { exportKML } from '../lib/kmlExport'
+import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
+
+const MapView = dynamic(() => import('../components/MapView'), { ssr: false })
 
 export default function Home() {
+  const [adressen, setAdressen] = useState<Address[]>([])
+  const [startpunkt, setStartpunkt] = useState<LatLng | null>(null)
+  const [startpunktSetzenAktiv, setStartpunktSetzenAktiv] = useState(false)
+  const [trasse, setTrasse] = useState<LatLng[]>([])
+  const [hausanschluesse, setHausanschluesse] = useState<Hausstich[]>([])
+  const [trasseProgress, setTrasseProgress] = useState(0)
+  const [laengen, setLaengen] = useState({
+    trassenLaenge: 0,
+    hausanschluesseLaenge: 0,
+    gesamt: 0,
+  })
+  const [editierbarAktiv] = useState(false)
+  const [projektName] = useState('Neues Projekt')
+
+  const handleExcelImport = useCallback(async (file: File) => {
+    const ergebnis = await parseExcelFile(file)
+    setAdressen(ergebnis)
+  }, [])
+
+  const handleStartpunktSetzen = useCallback(() => {
+    setStartpunktSetzenAktiv(true)
+  }, [])
+
+  const handleStartpunktGesetzt = useCallback((punkt: LatLng) => {
+    setStartpunkt(punkt)
+    setStartpunktSetzenAktiv(false)
+  }, [])
+
+  const handleStartpunktZuruecksetzen = useCallback(() => {
+    setStartpunkt(null)
+    setStartpunktSetzenAktiv(false)
+  }, [])
+
+  const handleTrasseGenerieren = useCallback(async () => {
+    if (!startpunkt || adressen.length === 0) return
+
+    setTrasseProgress(1)
+
+    const adressPunkte: LatLng[] = adressen.map((a) => ({ lat: a.lat, lng: a.lon }))
+    const geordnetePunkte = nearestNeighborTSP(startpunkt, adressPunkte)
+
+    const result = await routeEntlangStrassen(geordnetePunkte, (p) => {
+      setTrasseProgress(p)
+    })
+
+    setTrasse(result)
+    setTrasseProgress(100)
+
+    const neueLaengen = berechneLaengen(result, hausanschluesse)
+    setLaengen(neueLaengen)
+
+    setTimeout(() => setTrasseProgress(0), 500)
+  }, [startpunkt, adressen, hausanschluesse])
+
+  const handleHausanschluesseGenerieren = useCallback(() => {
+    if (trasse.length < 2) return
+
+    const ergebnis = berechneHausanschluesse(trasse, adressen)
+    setHausanschluesse(ergebnis)
+
+    const neueLaengen = berechneLaengen(trasse, ergebnis)
+    setLaengen(neueLaengen)
+  }, [trasse, adressen])
+
+  const handleTrasseGeaendert = useCallback(
+    (punkte: LatLng[]) => {
+      setTrasse(punkte)
+      const neueLaengen = berechneLaengen(punkte, hausanschluesse)
+      setLaengen(neueLaengen)
+    },
+    [hausanschluesse]
+  )
+
+  const handleKMLExport = useCallback(() => {
+    exportKML({
+      name: projektName,
+      erstelltAm: new Date().toISOString(),
+      adressen,
+      startpunkt,
+      trasse,
+      hausanschluesse,
+      trassenLaengeMeter: laengen.trassenLaenge,
+      hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
+    })
+  }, [projektName, adressen, startpunkt, trasse, hausanschluesse, laengen])
+
+  const handleProjektSpeichern = useCallback(() => {
+    exportProjekt({
+      name: projektName,
+      erstelltAm: new Date().toISOString(),
+      adressen,
+      startpunkt,
+      trasse,
+      hausanschluesse,
+      trassenLaengeMeter: laengen.trassenLaenge,
+      hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
+    })
+  }, [projektName, adressen, startpunkt, trasse, hausanschluesse, laengen])
+
+  const handleProjektLaden = useCallback(async (file: File) => {
+    const projekt = await importProjekt(file)
+    setAdressen(projekt.adressen)
+    setStartpunkt(projekt.startpunkt)
+    setTrasse(projekt.trasse)
+    setHausanschluesse(projekt.hausanschluesse)
+    const neueLaengen = berechneLaengen(projekt.trasse, projekt.hausanschluesse)
+    setLaengen(neueLaengen)
+  }, [])
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="flex h-screen overflow-hidden bg-[#0f0f0f]">
+      <Sidebar
+        adressenCount={adressen.length}
+        startpunktGesetzt={startpunkt !== null}
+        startpunktKoords={startpunkt}
+        trasseVorhanden={trasse.length >= 2}
+        hausanschluesseCount={hausanschluesse.length}
+        trassenLaenge={laengen.trassenLaenge}
+        hausanschlussLaenge={laengen.hausanschluesseLaenge}
+        gesamtLaenge={laengen.gesamt}
+        trasseProgress={trasseProgress}
+        onExcelImport={handleExcelImport}
+        onStartpunktSetzen={handleStartpunktSetzen}
+        onStartpunktZuruecksetzen={handleStartpunktZuruecksetzen}
+        onTrasseGenerieren={handleTrasseGenerieren}
+        onHausanschluesseGenerieren={handleHausanschluesseGenerieren}
+        onKMLExport={handleKMLExport}
+        onProjektSpeichern={handleProjektSpeichern}
+        onProjektLaden={handleProjektLaden}
+      />
+      <main className="flex-1 relative overflow-hidden">
+        <MapView
+          adressen={adressen}
+          startpunkt={startpunkt}
+          startpunktSetzenAktiv={startpunktSetzenAktiv}
+          trasse={trasse}
+          hausanschluesse={hausanschluesse}
+          editierbarAktiv={editierbarAktiv}
+          onStartpunktGesetzt={handleStartpunktGesetzt}
+          onTrasseGeaendert={handleTrasseGeaendert}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
       </main>
     </div>
-  );
+  )
 }
