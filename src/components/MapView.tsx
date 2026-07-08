@@ -102,6 +102,15 @@ function ParzellenlayerWMS({ sichtbar }: { sichtbar: boolean }) {
   return null
 }
 
+// Hilfkomponente: fliegt zu einer Position wenn flugZiel gesetzt wird
+function FlyTo({ ziel }: { ziel: LatLng | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (ziel) map.flyTo([ziel.lat, ziel.lng], 15, { duration: 1.2 })
+  }, [map, ziel])
+  return null
+}
+
 type TileVariante = 'satellit' | 'osm'
 
 export default function MapView({
@@ -116,13 +125,66 @@ export default function MapView({
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [parzellenSichtbar, setParzellenSichtbar] = useState(false)
+  const [suchQuery, setSuchQuery] = useState('')
+  const [suchLaden, setSuchLaden] = useState(false)
+  const [suchFehler, setSuchFehler] = useState(false)
+  const [flugZiel, setFlugZiel] = useState<LatLng | null>(null)
+
+  async function handleSuche() {
+    const q = suchQuery.trim()
+    if (!q) return
+    setSuchLaden(true)
+    setSuchFehler(false)
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=de`
+      const res = await fetch(url, { headers: { 'Accept-Language': 'de' } })
+      const data = await res.json()
+      if (data.length > 0) {
+        setFlugZiel({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) })
+      } else {
+        setSuchFehler(true)
+      }
+    } catch {
+      setSuchFehler(true)
+    } finally {
+      setSuchLaden(false)
+    }
+  }
 
   const trasseLeaflet = trasse.map((p) => [p.lat, p.lng] as [number, number])
 
   return (
     <div className="relative w-full h-full">
+      {/* Ortssuche */}
+      <div className="absolute top-3 left-3 z-1000 flex gap-2 items-center">
+        <input
+          type="text"
+          value={suchQuery}
+          onChange={(e) => { setSuchQuery(e.target.value); setSuchFehler(false) }}
+          onKeyDown={(e) => e.key === 'Enter' && handleSuche()}
+          placeholder="Ort oder Adresse suchen…"
+          className="w-56 px-3 py-1.5 rounded-lg text-xs outline-none shadow-lg"
+          style={{
+            backgroundColor: '#1a1a1a',
+            color: '#f9fafb',
+            border: `1px solid ${suchFehler ? '#ef4444' : '#374151'}`,
+          }}
+        />
+        <button
+          onClick={handleSuche}
+          disabled={suchLaden}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-colors disabled:opacity-50"
+          style={{ backgroundColor: '#3b82f6', color: '#fff', border: 'none' }}
+        >
+          {suchLaden ? '…' : '🔍'}
+        </button>
+        {suchFehler && (
+          <span className="text-xs" style={{ color: '#ef4444' }}>Nicht gefunden</span>
+        )}
+      </div>
+
       {/* Layer-Toggle Buttons */}
-      <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+      <div className="absolute top-3 right-3 z-1000 flex flex-col gap-2">
         <button
           onClick={() => setTileVariante((v) => (v === 'satellit' ? 'osm' : 'satellit'))}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-colors"
@@ -170,6 +232,7 @@ export default function MapView({
         <KlickHandler aktiv={startpunktSetzenAktiv} onKlick={onStartpunktGesetzt} />
         <AutoZoom adressen={adressen} />
         <ParzellenlayerWMS sichtbar={parzellenSichtbar} />
+        <FlyTo ziel={flugZiel} />
 
         {/* Adressen-Pins */}
         {adressen.map((adresse) => (
@@ -247,7 +310,7 @@ export default function MapView({
       {/* Hinweis wenn Startpunkt-Modus aktiv */}
       {startpunktSetzenAktiv && (
         <div
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
           style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}
         >
           Klick auf die Karte, um den Startpunkt zu setzen
