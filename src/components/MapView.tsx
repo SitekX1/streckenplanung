@@ -156,7 +156,7 @@ export default function MapView({
   return (
     <div className="relative w-full h-full">
       {/* Ortssuche */}
-      <div className="absolute top-3 left-3 z-1000 flex gap-2 items-center">
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-1000 flex gap-2 items-center">
         <input
           type="text"
           value={suchQuery}
