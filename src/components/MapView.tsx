@@ -79,6 +79,29 @@ function AutoZoom({ adressen }: { adressen: Address[] }) {
   return null
 }
 
+// WMS-Layer für BayernAtlas Parzellenkarte (ALKIS)
+function ParzellenlayerWMS({ sichtbar }: { sichtbar: boolean }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!sichtbar) return
+    const wmsLayer = L.tileLayer.wms('https://geoservices.bayern.de/wms/v2/ogc_alkis.cgi', {
+      layers: 'liable',
+      format: 'image/png',
+      transparent: true,
+      opacity: 0.55,
+      attribution: '© Bayerische Vermessungsverwaltung',
+      maxZoom: 20,
+    })
+    wmsLayer.addTo(map)
+    return () => {
+      map.removeLayer(wmsLayer)
+    }
+  }, [map, sichtbar])
+
+  return null
+}
+
 type TileVariante = 'satellit' | 'osm'
 
 export default function MapView({
@@ -92,13 +115,14 @@ export default function MapView({
   onTrasseGeaendert,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
+  const [parzellenSichtbar, setParzellenSichtbar] = useState(false)
 
   const trasseLeaflet = trasse.map((p) => [p.lat, p.lng] as [number, number])
 
   return (
     <div className="relative w-full h-full">
-      {/* Layer-Toggle Button */}
-      <div className="absolute top-3 right-3 z-[1000]">
+      {/* Layer-Toggle Buttons */}
+      <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
         <button
           onClick={() => setTileVariante((v) => (v === 'satellit' ? 'osm' : 'satellit'))}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-colors"
@@ -109,6 +133,17 @@ export default function MapView({
           }}
         >
           {tileVariante === 'satellit' ? '🗺️ Karte' : '🛰️ Satellit'}
+        </button>
+        <button
+          onClick={() => setParzellenSichtbar((v) => !v)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-colors"
+          style={{
+            backgroundColor: parzellenSichtbar ? '#1e3a5f' : '#1a1a1a',
+            color: '#f9fafb',
+            border: `1px solid ${parzellenSichtbar ? '#3b82f6' : '#374151'}`,
+          }}
+        >
+          🏡 Parzellen
         </button>
       </div>
 
@@ -134,6 +169,7 @@ export default function MapView({
 
         <KlickHandler aktiv={startpunktSetzenAktiv} onKlick={onStartpunktGesetzt} />
         <AutoZoom adressen={adressen} />
+        <ParzellenlayerWMS sichtbar={parzellenSichtbar} />
 
         {/* Adressen-Pins */}
         {adressen.map((adresse) => (
