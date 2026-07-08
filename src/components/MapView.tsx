@@ -126,6 +126,7 @@ export default function MapView({
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
+  const [ortsnamenSichtbar, setOrtsnamenSichtbar] = useState(true)
   const [suchQuery, setSuchQuery] = useState('')
   const [suchLaden, setSuchLaden] = useState(false)
   const [suchFehler, setSuchFehler] = useState(false)
@@ -208,6 +209,17 @@ export default function MapView({
         >
           📐 Topokarte
         </button>
+        <button
+          onClick={() => setOrtsnamenSichtbar((v) => !v)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-colors"
+          style={{
+            backgroundColor: ortsnamenSichtbar ? '#1e3a5f' : '#1a1a1a',
+            color: '#f9fafb',
+            border: `1px solid ${ortsnamenSichtbar ? '#3b82f6' : '#374151'}`,
+          }}
+        >
+          🏷️ Ortsnamen
+        </button>
       </div>
 
       <MapContainer
@@ -229,6 +241,17 @@ export default function MapView({
             attribution='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             maxNativeZoom={19}
             maxZoom={21}
+          />
+        )}
+
+        {/* Ortsnamen-Overlay — transparent, über Satellit und OSM */}
+        {ortsnamenSichtbar && (
+          <TileLayer
+            url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+            attribution="© Esri"
+            maxNativeZoom={19}
+            maxZoom={21}
+            opacity={1}
           />
         )}
 
