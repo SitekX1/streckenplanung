@@ -127,6 +127,30 @@ function FlyTo({ ziel }: { ziel: LatLng | null }) {
   return null
 }
 
+// Rendert das MST-Netzwerk imperativ als Canvas-Layer — ein einziges Canvas-Element
+// für alle 645 Pfade statt 645 SVG-Polylines. Verhindert SVG-Overhead, der sonst
+// den Browser-Renderer blockiert und WMS-Tiles am Laden hindert.
+function TrasseNetzwerk({ pfade, farbe }: { pfade: LatLng[][]; farbe: string }) {
+  const map = useMap()
+
+  useEffect(() => {
+    const gueltige = pfade.filter((p) => p.length >= 2)
+    if (gueltige.length === 0) return
+    const renderer = L.canvas({ padding: 0.1 })
+    const gruppe = L.layerGroup(
+      gueltige.map((pfad) =>
+        L.polyline(
+          pfad.map((p) => [p.lat, p.lng] as [number, number]),
+          { color: farbe, weight: 4, opacity: 0.9, renderer } as L.PolylineOptions
+        )
+      )
+    ).addTo(map)
+    return () => { map.removeLayer(gruppe) }
+  }, [pfade, farbe, map])
+
+  return null
+}
+
 type TileVariante = 'satellit' | 'osm'
 
 // React.memo prevents MapView from re-rendering during Trasse generation
@@ -160,6 +184,8 @@ const MapView = memo(function MapView({
   const [editTrasse, setEditTrasse] = useState<LatLng[]>([])
   // Startindizes der einzelnen Pfade im flachen editTrasse-Array (für MST-Modus)
   const [editBoundaries, setEditBoundaries] = useState<number[]>([])
+  // Undo-Stack für versehentlich gelöschte Hausanschlüsse (max. 10)
+  const [deletedStack, setDeletedStack] = useState<Hausstich[]>([])
   const trasseRef = useRef<LatLng[]>([])
   const trassePfadeRef = useRef<LatLng[][]>([])
 
@@ -174,6 +200,7 @@ const MapView = memo(function MapView({
     if (!editierbarAktiv) {
       setEditTrasse([])
       setEditBoundaries([])
+      setDeletedStack([])
       return
     }
 
@@ -267,7 +294,16 @@ const MapView = memo(function MapView({
   }
 
   function handleHausstichLoeschen(id: string) {
+    const deleted = hausanschluesse.find((h) => h.id === id)
+    if (deleted) setDeletedStack((prev) => [...prev, deleted].slice(-10))
     onHausanschluesseGeaendert(hausanschluesse.filter((h) => h.id !== id))
+  }
+
+  function handleHausstichUndo() {
+    if (deletedStack.length === 0) return
+    const last = deletedStack[deletedStack.length - 1]
+    setDeletedStack((prev) => prev.slice(0, -1))
+    onHausanschluesseGeaendert([...hausanschluesse, last])
   }
 
   return (
@@ -416,18 +452,8 @@ const MapView = memo(function MapView({
 
         {/* Trasse */}
         {!editierbarAktiv && trassePfade.length > 0
-          // View-Modus: MST-Netzwerk als einzelne Polylinien
-          ? trassePfade.map((pfad, i) => {
-              const pts = pfad.map((p) => [p.lat, p.lng] as [number, number])
-              if (pts.length < 2) return null
-              return (
-                <Polyline
-                  key={`pfad-${i}`}
-                  positions={pts}
-                  pathOptions={{ color: trasseFarbe, weight: 4, opacity: 0.9 }}
-                />
-              )
-            })
+          // View-Modus: MST-Netzwerk als Canvas-Layer (kein SVG-Overhead → WMS bleibt stabil)
+          ? <TrasseNetzwerk pfade={trassePfade} farbe={trasseFarbe} />
           : editierbarAktiv && editBoundaries.length > 0
           // Edit-Modus MST: jeden Pfad als eigene Polylinie → keine Sprung-Diagonalen
           ? editBoundaries.map((start, i) => {
@@ -507,7 +533,7 @@ const MapView = memo(function MapView({
               eventHandlers={
                 editierbarAktiv
                   ? {
-                      click: (e) => {
+                      dblclick: (e) => {
                         e.originalEvent.stopPropagation()
                         handleHausstichLoeschen(h.id)
                       },
@@ -516,7 +542,7 @@ const MapView = memo(function MapView({
               }
             >
               <Tooltip>
-                {editierbarAktiv ? '🗑️ Klicken zum Löschen · ' : ''}
+                {editierbarAktiv ? '🗑️ Doppelklick zum Löschen · ' : ''}
                 Hausanschluss: {h.laengeMeter.toFixed(1)} m
               </Tooltip>
             </Polyline>
@@ -537,10 +563,27 @@ const MapView = memo(function MapView({
       {/* Hinweis wenn Bearbeiten-Modus aktiv */}
       {editierbarAktiv && (
         <div
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-xs shadow-lg"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-xs shadow-lg flex items-center gap-3"
           style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}
         >
-          ✏️ Bearbeiten · Punkte ziehen · Klick auf Trasse fügt Punkt ein · Doppelklick auf Punkt löscht
+          ✏️ Bearbeiten · Punkte ziehen · Klick auf Trasse fügt Punkt ein · Doppelklick auf Punkt löscht · Doppelklick auf Hausanschluss löscht
+          {deletedStack.length > 0 && (
+            <button
+              onClick={handleHausstichUndo}
+              style={{
+                background: '#3b82f6',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '3px 10px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              ↩ Rückgängig ({deletedStack.length})
+            </button>
+          )}
         </div>
       )}
     </div>
