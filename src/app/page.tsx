@@ -8,7 +8,7 @@ import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
 import { buildRoadGraph } from '../lib/roadGraph'
 import { berechneSteinerBaum } from '../lib/steinerbaum'
-import { berechneBaumOSRM } from '../lib/baumOsrm'
+import { berechneBaumORS } from '../lib/baumOrs'
 import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse'
 import { exportKML } from '../lib/kmlExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
@@ -130,15 +130,15 @@ export default function Home() {
       setTrasseMethode(`OSM Straßennetz · ${pfade.length} Segmente`)
     } catch (err) {
       const fehlerText = err instanceof Error ? err.message : String(err)
-      console.warn('Overpass nicht verfügbar, OSRM-Baum:', fehlerText)
-      setTrasseMethode('OSRM-Baum (Straßendaten werden geladen…)')
+      console.warn('Overpass nicht verfügbar, ORS-Baum:', fehlerText)
+      setTrasseMethode('ORS-Routing (Straßendaten werden geladen…)')
       setTrasseProgress(3)
-      pfade = await berechneBaumOSRM(
+      pfade = await berechneBaumORS(
         startpunkt,
         gefilterteAdressen,
         (p) => setTrasseProgress(3 + Math.round(p * 0.95))
       )
-      setTrasseMethode('OSRM-Baum — Straßen folgen ✓, Abzweige optimiert')
+      setTrasseMethode('ORS-Baum — Straßen folgen ✓, Abzweige optimiert')
     }
 
     setTrassePfade(pfade)
