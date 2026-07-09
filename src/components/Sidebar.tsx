@@ -26,6 +26,7 @@ interface SidebarProps {
   onTrasseGenerieren: () => void
   onHausanschluesseGenerieren: () => void
   onEditierbarToggle: () => void
+  onAllesZuruecksetzen: () => void
   onKMLExport: () => void
   onProjektSpeichern: () => void
   onProjektLaden: (file: File) => void
@@ -62,6 +63,7 @@ export default function Sidebar({
   onTrasseGenerieren,
   onHausanschluesseGenerieren,
   onEditierbarToggle,
+  onAllesZuruecksetzen,
   onKMLExport,
   onProjektSpeichern,
   onProjektLaden,
@@ -114,6 +116,15 @@ export default function Sidebar({
               className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 hover:text-white hover:bg-gray-800 enabled:hover:bg-gray-800"
             >
               💾 Projekt speichern
+            </button>
+            <button
+              onClick={() => {
+                if (hatDaten && !confirm('Alle Daten löschen und neu anfangen?')) return
+                onAllesZuruecksetzen()
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors text-red-500 hover:text-red-400 hover:bg-red-950/30"
+            >
+              🗑️ Neu anfangen
             </button>
           </div>
         </div>

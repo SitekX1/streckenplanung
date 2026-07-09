@@ -113,6 +113,18 @@ export default function Home() {
     setEditierbarAktiv((v) => !v)
   }, [])
 
+  const handleAllesZuruecksetzen = useCallback(() => {
+    setAdressen([])
+    setStartpunkt(null)
+    setStartpunktSetzenAktiv(false)
+    setTrasse([])
+    setHausanschluesse([])
+    setTrasseProgress(0)
+    setHausanschluesseProgress(0)
+    setLaengen({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0 })
+    setEditierbarAktiv(false)
+  }, [])
+
   const handleKMLExport = useCallback(() => {
     exportKML({
       name: projektName,
@@ -176,6 +188,7 @@ export default function Home() {
         onTrasseGenerieren={handleTrasseGenerieren}
         onHausanschluesseGenerieren={handleHausanschluesseGenerieren}
         onEditierbarToggle={handleEditierbarToggle}
+        onAllesZuruecksetzen={handleAllesZuruecksetzen}
         onKMLExport={handleKMLExport}
         onProjektSpeichern={handleProjektSpeichern}
         onProjektLaden={handleProjektLaden}
