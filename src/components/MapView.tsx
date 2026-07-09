@@ -39,6 +39,14 @@ const editHandleIcon = new L.DivIcon({
   iconAnchor: [6, 6],
 })
 
+// Aktiv-Handle: leuchtet orange wenn "Segment von hier zeichnen" aktiv ist
+const editHandleAktivIcon = new L.DivIcon({
+  className: '',
+  html: '<div style="width:16px;height:16px;background:#f97316;border:3px solid white;border-radius:50%;cursor:crosshair;box-shadow:0 0 0 3px rgba(249,115,22,0.6),0 2px 8px rgba(0,0,0,0.8)"></div>',
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+})
+
 // Hausanschluss-Handle: Haus-Ende (orange) + Kabel-Ende (lila)
 const hsHausIcon = new L.DivIcon({
   className: '',
@@ -72,10 +80,25 @@ interface MapViewProps {
   onHausanschluesseGeaendert: (updated: Hausstich[]) => void
 }
 
-function KlickHandler({ aktiv, onKlick }: { aktiv: boolean; onKlick: (p: LatLng) => void }) {
+function KlickHandler({
+  aktiv,
+  onKlick,
+  ziehModus,
+  onZiehZiel,
+}: {
+  aktiv: boolean
+  onKlick: (p: LatLng) => void
+  ziehModus?: boolean
+  onZiehZiel?: (p: LatLng) => void
+}) {
   useMapEvents({
     click(e) {
-      if (aktiv) onKlick({ lat: e.latlng.lat, lng: e.latlng.lng })
+      const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+      if (ziehModus && onZiehZiel) {
+        onZiehZiel(pos)
+      } else if (aktiv) {
+        onKlick(pos)
+      }
     },
   })
   return null
@@ -176,6 +199,10 @@ const MapView = memo(function MapView({
   const [editSingle, setEditSingle] = useState<LatLng[]>([])
   const [deletedStack, setDeletedStack] = useState<Hausstich[]>([])
 
+  // Zeichenmodus: Handle anklicken → von dort neue Linie zeichnen
+  const [ziehStartId, setZiehStartId] = useState<string | null>(null)
+  const [ziehStartPos, setZiehStartPos] = useState<LatLng | null>(null)
+
   const trasseRef = useRef<LatLng[]>([])
   const trassePfadeRef = useRef<LatLng[][]>([])
   const editPfadeRef = useRef<LatLng[][]>([])
@@ -233,9 +260,37 @@ const MapView = memo(function MapView({
       setEditPfade([])
       setEditSingle([])
       setDeletedStack([])
+      setZiehStartId(null)
+      setZiehStartPos(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
+
+  // ESC bricht den Zeichenmodus ab
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setZiehStartId(null); setZiehStartPos(null) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Handle anklicken: startet Zeichenmodus (oder bricht ihn ab wenn gleicher Handle nochmal)
+  function handleStartZiehen(id: string, pos: LatLng) {
+    if (ziehStartId === id) {
+      setZiehStartId(null); setZiehStartPos(null)
+    } else {
+      setZiehStartId(id); setZiehStartPos(pos)
+    }
+  }
+
+  // Karte angeklickt im Zeichenmodus: neues Segment von Start zu Ziel
+  function handleZiehZiel(zielPos: LatLng) {
+    if (!ziehStartPos) return
+    setEditPfade((prev) => [...prev, [ziehStartPos, zielPos]])
+    setZiehStartId(null)
+    setZiehStartPos(null)
+  }
 
   async function handleSuche() {
     const q = suchQuery.trim()
@@ -395,7 +450,7 @@ const MapView = memo(function MapView({
         center={[51.1657, 10.4515]}
         zoom={6}
         style={{ height: '100%', width: '100%' }}
-        className={startpunktSetzenAktiv ? 'cursor-crosshair' : ''}
+        className={startpunktSetzenAktiv || ziehStartId ? 'cursor-crosshair' : ''}
       >
         {tileVariante === 'satellit' ? (
           <TileLayer
@@ -423,7 +478,12 @@ const MapView = memo(function MapView({
           />
         )}
 
-        <KlickHandler aktiv={startpunktSetzenAktiv} onKlick={onStartpunktGesetzt} />
+        <KlickHandler
+          aktiv={startpunktSetzenAktiv}
+          onKlick={onStartpunktGesetzt}
+          ziehModus={!!ziehStartId}
+          onZiehZiel={handleZiehZiel}
+        />
         <AutoZoom adressen={adressen} />
         <TopographieWMS sichtbar={topoSichtbar} />
         <FlyTo ziel={flugZiel} />
@@ -478,7 +538,7 @@ const MapView = memo(function MapView({
           />
         )}
 
-        {/* Edit-Modus: MST-Polylinien (klickbar zum Einfügen) */}
+        {/* Edit-Modus: MST-Polylinien (klickbar zum Einfügen, außer im Zeichenmodus) */}
         {editierbarAktiv && editPfade.length > 0 && editPfade.map((pfad, pi) =>
           pfad.length >= 2 ? (
             <Polyline
@@ -487,6 +547,7 @@ const MapView = memo(function MapView({
               pathOptions={{ color: trasseFarbe, weight: 5, opacity: 0.9 }}
               eventHandlers={{
                 click: (e) => {
+                  if (ziehStartId) return // Zeichenmodus hat Vorrang
                   e.originalEvent.stopPropagation()
                   handlePfadPunktEinfuegen(pi, { lat: e.latlng.lat, lng: e.latlng.lng })
                 },
@@ -502,6 +563,7 @@ const MapView = memo(function MapView({
             pathOptions={{ color: trasseFarbe, weight: 5, opacity: 0.9 }}
             eventHandlers={{
               click: (e) => {
+                if (ziehStartId) return
                 e.originalEvent.stopPropagation()
                 handleSinglePunktEinfuegen({ lat: e.latlng.lat, lng: e.latlng.lng })
               },
@@ -511,45 +573,65 @@ const MapView = memo(function MapView({
 
         {/* Edit-Handles: MST-Modus (pro Pfad) */}
         {editierbarAktiv && editPfade.length > 0 && editPfade.flatMap((pfad, pi) =>
-          pfad.map((p, i) => (
-            <Marker
-              key={`ep-h-${pi}-${i}`}
-              position={[p.lat, p.lng]}
-              draggable={true}
-              icon={editHandleIcon}
-              eventHandlers={{
-                dragend: (e) => {
-                  const ll = (e.target as L.Marker).getLatLng()
-                  handlePfadPunktBewegt(pi, i, { lat: ll.lat, lng: ll.lng })
-                },
-                dblclick: (e) => {
-                  if (e.originalEvent) e.originalEvent.stopPropagation()
-                  handlePfadPunktLoeschen(pi, i)
-                },
-              }}
-            />
-          ))
+          pfad.map((p, i) => {
+            const hid = `ep-${pi}-${i}`
+            const istAktiv = ziehStartId === hid
+            return (
+              <Marker
+                key={`ep-h-${pi}-${i}`}
+                position={[p.lat, p.lng]}
+                draggable={!ziehStartId}
+                icon={istAktiv ? editHandleAktivIcon : editHandleIcon}
+                eventHandlers={{
+                  click: (e) => {
+                    if (e.originalEvent) e.originalEvent.stopPropagation()
+                    handleStartZiehen(hid, p)
+                  },
+                  dragend: (e) => {
+                    const ll = (e.target as L.Marker).getLatLng()
+                    handlePfadPunktBewegt(pi, i, { lat: ll.lat, lng: ll.lng })
+                  },
+                  dblclick: (e) => {
+                    if (e.originalEvent) e.originalEvent.stopPropagation()
+                    handlePfadPunktLoeschen(pi, i)
+                  },
+                }}
+              >
+                {istAktiv && <Tooltip permanent>Klick auf Karte → neues Segment · ESC = Abbrechen</Tooltip>}
+              </Marker>
+            )
+          })
         )}
 
         {/* Edit-Handles: Einzel-Modus */}
-        {editierbarAktiv && editSingle.length > 0 && editSingle.map((p, i) => (
-          <Marker
-            key={`es-h-${i}`}
-            position={[p.lat, p.lng]}
-            draggable={true}
-            icon={editHandleIcon}
-            eventHandlers={{
-              dragend: (e) => {
-                const ll = (e.target as L.Marker).getLatLng()
-                handleSinglePunktBewegt(i, { lat: ll.lat, lng: ll.lng })
-              },
-              dblclick: (e) => {
-                if (e.originalEvent) e.originalEvent.stopPropagation()
-                handleSinglePunktLoeschen(i)
-              },
-            }}
-          />
-        ))}
+        {editierbarAktiv && editSingle.length > 0 && editSingle.map((p, i) => {
+          const hid = `es-${i}`
+          const istAktiv = ziehStartId === hid
+          return (
+            <Marker
+              key={`es-h-${i}`}
+              position={[p.lat, p.lng]}
+              draggable={!ziehStartId}
+              icon={istAktiv ? editHandleAktivIcon : editHandleIcon}
+              eventHandlers={{
+                click: (e) => {
+                  if (e.originalEvent) e.originalEvent.stopPropagation()
+                  handleStartZiehen(hid, p)
+                },
+                dragend: (e) => {
+                  const ll = (e.target as L.Marker).getLatLng()
+                  handleSinglePunktBewegt(i, { lat: ll.lat, lng: ll.lng })
+                },
+                dblclick: (e) => {
+                  if (e.originalEvent) e.originalEvent.stopPropagation()
+                  handleSinglePunktLoeschen(i)
+                },
+              }}
+            >
+              {istAktiv && <Tooltip permanent>Klick auf Karte → neues Segment · ESC = Abbrechen</Tooltip>}
+            </Marker>
+          )
+        })}
 
         {/* Hausanschlüsse */}
         {hausanschluesse.map((h) => {
@@ -623,11 +705,16 @@ const MapView = memo(function MapView({
 
       {editierbarAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-xs shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}>
-          ✏️ Trasse: Punkte ziehen · Klick auf Linie fügt Punkt ein · Doppelklick löscht Punkt
-          &nbsp;|&nbsp;
-          🏠 Hausanschluss: <span style={{color:'#fb923c'}}>●</span> Haus-Ende ziehen · <span style={{color:'#c084fc'}}>●</span> Kabelpunkt ziehen · Doppelklick auf Linie löscht
-          {deletedStack.length > 0 && (
+          style={{ backgroundColor: ziehStartId ? '#431407' : '#1e3a5f', color: ziehStartId ? '#fed7aa' : '#93c5fd', border: `1px solid ${ziehStartId ? '#f97316' : '#3b82f6'}` }}>
+          {ziehStartId
+            ? '🖊️ Zeichenmodus: Klick auf Karte → neues Segment von diesem Punkt · ESC = Abbrechen'
+            : <>
+                ✏️ Punkte ziehen · Klick auf Linie = Punkt einfügen · Doppelklick auf Punkt = löschen · <b>Klick auf Punkt = neues Segment zeichnen</b>
+                &nbsp;|&nbsp;
+                🏠 <span style={{color:'#fb923c'}}>●</span> Haus · <span style={{color:'#c084fc'}}>●</span> Kabel ziehen · Doppelklick Linie = löschen
+              </>
+          }
+          {!ziehStartId && deletedStack.length > 0 && (
             <button
               onClick={handleHausstichUndo}
               style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: '11px', whiteSpace: 'nowrap' }}
