@@ -208,6 +208,8 @@ const MapView = memo(function MapView({
   const editPfadeRef = useRef<LatLng[][]>([])
   const editSingleRef = useRef<LatLng[]>([])
   const prevEditRef = useRef(false)
+  // Timer-Map für click vs. dblclick-Unterscheidung auf Handles
+  const clickTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   useEffect(() => { trasseRef.current = trasse }, [trasse])
   useEffect(() => { trassePfadeRef.current = trassePfade }, [trassePfade])
@@ -275,13 +277,24 @@ const MapView = memo(function MapView({
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Handle anklicken: startet Zeichenmodus (oder bricht ihn ab wenn gleicher Handle nochmal)
-  function handleStartZiehen(id: string, pos: LatLng) {
-    if (ziehStartId === id) {
-      setZiehStartId(null); setZiehStartPos(null)
-    } else {
-      setZiehStartId(id); setZiehStartPos(pos)
+  // Einzelklick vs. Doppelklick unterscheiden:
+  // - Doppelklick (< 250ms) → Timer abbrechen, dblclick-Handler übernimmt (Punkt löschen)
+  // - Einzelklick (> 250ms kein zweiter Klick) → Zeichenmodus aktivieren
+  function handleHandleKlick(id: string, pos: LatLng) {
+    if (clickTimers.current.has(id)) {
+      clearTimeout(clickTimers.current.get(id)!)
+      clickTimers.current.delete(id)
+      return
     }
+    const t = setTimeout(() => {
+      clickTimers.current.delete(id)
+      if (ziehStartId === id) {
+        setZiehStartId(null); setZiehStartPos(null)
+      } else {
+        setZiehStartId(id); setZiehStartPos(pos)
+      }
+    }, 260)
+    clickTimers.current.set(id, t)
   }
 
   // Karte angeklickt im Zeichenmodus: neues Segment von Start zu Ziel
@@ -585,7 +598,7 @@ const MapView = memo(function MapView({
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
-                    handleStartZiehen(hid, p)
+                    handleHandleKlick(hid, p)
                   },
                   dragend: (e) => {
                     const ll = (e.target as L.Marker).getLatLng()
@@ -616,7 +629,7 @@ const MapView = memo(function MapView({
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
-                  handleStartZiehen(hid, p)
+                  handleHandleKlick(hid, p)
                 },
                 dragend: (e) => {
                   const ll = (e.target as L.Marker).getLatLng()
