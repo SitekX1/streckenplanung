@@ -8,8 +8,7 @@ import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
 import { buildRoadGraph } from '../lib/roadGraph'
 import { berechneSteinerBaum } from '../lib/steinerbaum'
-import { mstAdressen } from '../lib/tsp'
-import { routeMSTKanten } from '../lib/osrmClient'
+import { berechneBaumOSRM } from '../lib/baumOsrm'
 import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse'
 import { exportKML } from '../lib/kmlExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
@@ -130,13 +129,16 @@ export default function Home() {
       pfade = ergebnis.pfade
       setTrasseMethode(`OSM Straßennetz · ${pfade.length} Segmente`)
     } catch (err) {
-      // Fallback: MST + OSRM (wenn Overpass nicht verfügbar)
+      // Fallback: Baum-Algorithmus via OSRM (kein Overpass nötig)
       const fehlerText = err instanceof Error ? err.message : String(err)
       console.warn('Overpass/Steiner fehlgeschlagen:', fehlerText)
-      setTrasseMethode(`Hilfs-Algorithmus (OSM: ${fehlerText.slice(0, 60)})`)
-      setTrasseProgress(10)
-      const kanten = mstAdressen(startpunkt, gefilterteAdressen)
-      pfade = await routeMSTKanten(kanten, (p) => setTrasseProgress(10 + Math.round(p * 0.88)))
+      setTrasseMethode(`OSRM-Baum (Overpass nicht verfügbar)`)
+      setTrasseProgress(5)
+      pfade = await berechneBaumOSRM(
+        startpunkt,
+        gefilterteAdressen,
+        (p) => setTrasseProgress(5 + Math.round(p * 0.93))
+      )
     }
 
     setTrassePfade(pfade)
