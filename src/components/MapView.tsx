@@ -156,33 +156,57 @@ const MapView = memo(function MapView({
   const [suchFehler, setSuchFehler] = useState(false)
   const [flugZiel, setFlugZiel] = useState<LatLng | null>(null)
 
-  // Edit state: downsampled trasse for drag handles
+  // Edit state
   const [editTrasse, setEditTrasse] = useState<LatLng[]>([])
+  // Startindizes der einzelnen Pfade im flachen editTrasse-Array (für MST-Modus)
+  const [editBoundaries, setEditBoundaries] = useState<number[]>([])
   const trasseRef = useRef<LatLng[]>([])
+  const trassePfadeRef = useRef<LatLng[][]>([])
 
-  // Keep ref current
-  useEffect(() => {
-    trasseRef.current = trasse
-  }, [trasse])
+  useEffect(() => { trasseRef.current = trasse }, [trasse])
+  useEffect(() => { trassePfadeRef.current = trassePfade }, [trassePfade])
 
-  // Initialize editTrasse only when edit mode is toggled ON.
-  // Uses uniform step-sampling instead of turf.simplify: simplify (Ramer-Douglas-Peucker)
-  // creates long diagonal lines on TSP routes that visit dead-ends and back —
-  // it removes U-turn points and connects distant nodes directly.
-  // Step-sampling preserves exact point order so all handles stay on the road.
+  // Baut editTrasse wenn Edit-Modus aktiviert wird.
+  // MST-Modus: jeden Pfad separat sampeln + Grenzen merken, damit die Polylinien
+  // im Edit-Modus pro Pfad gezeichnet werden und keine Sprung-Diagonalen entstehen.
+  // Einzel-Polylinie: gleichmäßige Dezimierung auf max. 250 Handles.
   useEffect(() => {
     if (!editierbarAktiv) {
       setEditTrasse([])
+      setEditBoundaries([])
       return
     }
-    const t = trasseRef.current
-    if (t.length === 0) return
 
-    if (t.length <= 250) {
-      setEditTrasse([...t])
+    const pfade = trassePfadeRef.current
+    const t = trasseRef.current
+
+    if (pfade.length > 0) {
+      // MST-Modus: jeden Pfad separat auf max. 4 Handles sampeln
+      const MAX_PRO_PFAD = 4
+      const points: LatLng[] = []
+      const boundaries: number[] = []
+      for (const pfad of pfade) {
+        if (pfad.length < 2) continue
+        boundaries.push(points.length)
+        if (pfad.length <= MAX_PRO_PFAD) {
+          points.push(...pfad)
+        } else {
+          const step = Math.ceil(pfad.length / MAX_PRO_PFAD)
+          points.push(...pfad.filter((_, i) => i % step === 0 || i === pfad.length - 1))
+        }
+      }
+      setEditTrasse(points)
+      setEditBoundaries(boundaries)
     } else {
-      const step = Math.ceil(t.length / 250)
-      setEditTrasse(t.filter((_, i) => i % step === 0 || i === t.length - 1))
+      // Einzel-Polylinie: gleichmäßig auf max. 250 Handles dezimieren
+      if (t.length === 0) return
+      setEditBoundaries([])
+      if (t.length <= 250) {
+        setEditTrasse([...t])
+      } else {
+        const step = Math.ceil(t.length / 250)
+        setEditTrasse(t.filter((_, i) => i % step === 0 || i === t.length - 1))
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
@@ -390,8 +414,9 @@ const MapView = memo(function MapView({
           </Marker>
         )}
 
-        {/* Trasse — MST-Netzwerk (mehrere Pfade) oder bearbeitete Einzel-Polylinie */}
+        {/* Trasse */}
         {!editierbarAktiv && trassePfade.length > 0
+          // View-Modus: MST-Netzwerk als einzelne Polylinien
           ? trassePfade.map((pfad, i) => {
               const pts = pfad.map((p) => [p.lat, p.lng] as [number, number])
               if (pts.length < 2) return null
@@ -403,6 +428,21 @@ const MapView = memo(function MapView({
                 />
               )
             })
+          : editierbarAktiv && editBoundaries.length > 0
+          // Edit-Modus MST: jeden Pfad als eigene Polylinie → keine Sprung-Diagonalen
+          ? editBoundaries.map((start, i) => {
+              const end = editBoundaries[i + 1] ?? editTrasse.length
+              const pts = editTrasse.slice(start, end).map((p) => [p.lat, p.lng] as [number, number])
+              if (pts.length < 2) return null
+              return (
+                <Polyline
+                  key={`ep-${i}`}
+                  positions={pts}
+                  pathOptions={{ color: trasseFarbe, weight: 5, opacity: 0.9 }}
+                />
+              )
+            })
+          // Edit-Modus Einzel-Polylinie (oder View-Modus ohne trassePfade)
           : trasseLeaflet.length >= 2 && (
               <Polyline
                 positions={trasseLeaflet}
