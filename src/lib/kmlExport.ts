@@ -77,7 +77,23 @@ ${adressenPlacemarks}
 
   <Folder>
     <name>Trasse</name>
-    <Placemark>
+    ${
+      projekt.trassePfade && projekt.trassePfade.length > 0
+        ? projekt.trassePfade
+            .filter((p) => p.length >= 2)
+            .map(
+              (pfad, i) => `<Placemark>
+      <styleUrl>#trasse</styleUrl>
+      <name>Trasse Segment ${i + 1}</name>
+      <LineString>
+        <coordinates>
+          ${koordinatenZuString(pfad)}
+        </coordinates>
+      </LineString>
+    </Placemark>`
+            )
+            .join('\n    ')
+        : `<Placemark>
       <styleUrl>#trasse</styleUrl>
       <name>Trasse</name>
       <LineString>
@@ -85,7 +101,8 @@ ${adressenPlacemarks}
           ${koordinatenZuString(projekt.trasse)}
         </coordinates>
       </LineString>
-    </Placemark>
+    </Placemark>`
+    }
   </Folder>
 
   <Folder>

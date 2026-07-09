@@ -101,3 +101,50 @@ export function clusteredNearestNeighborTSP(startpunkt: LatLng, adressen: Addres
 
   return result
 }
+
+// Prim's Minimum Spanning Tree: verbindet alle Adressen in einer Baum-Struktur.
+// Jede Adresse wird genau einmal mit ihrem nächsten bereits verbundenen Nachbarn
+// verbunden — keine Umwege, kein Zurückfahren auf derselben Strecke.
+// Verwendet quadrierte Flacherd-Distanz (kein Trig nötig, deutlich schneller).
+export function mstAdressen(
+  startpunkt: LatLng,
+  adressen: Address[]
+): Array<{ von: LatLng; zu: LatLng }> {
+  if (adressen.length === 0) return []
+
+  const punkte: LatLng[] = [startpunkt, ...adressen.map((a) => ({ lat: a.lat, lng: a.lon }))]
+  const n = punkte.length
+  const inTree = new Array<boolean>(n).fill(false)
+  const minDist = new Array<number>(n).fill(Infinity)
+  const vonIdx = new Array<number>(n).fill(-1)
+
+  minDist[0] = 0
+  const kanten: Array<{ von: LatLng; zu: LatLng }> = []
+
+  for (let iter = 0; iter < n; iter++) {
+    // Nächster noch nicht verbundener Knoten
+    let u = -1
+    for (let i = 0; i < n; i++) {
+      if (!inTree[i] && (u === -1 || minDist[i] < minDist[u])) u = i
+    }
+
+    inTree[u] = true
+    if (vonIdx[u] >= 0) {
+      kanten.push({ von: punkte[vonIdx[u]], zu: punkte[u] })
+    }
+
+    // Abstände zu noch nicht verbundenen Knoten aktualisieren
+    for (let v = 0; v < n; v++) {
+      if (inTree[v]) continue
+      const dlat = punkte[u].lat - punkte[v].lat
+      const dlng = (punkte[u].lng - punkte[v].lng) * 0.7 // cos(lat) Näherung für Mitteleuropa
+      const d2 = dlat * dlat + dlng * dlng
+      if (d2 < minDist[v]) {
+        minDist[v] = d2
+        vonIdx[v] = u
+      }
+    }
+  }
+
+  return kanten
+}

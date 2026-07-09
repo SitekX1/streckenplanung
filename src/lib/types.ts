@@ -38,6 +38,7 @@ export interface Projekt {
   adressen: Address[]
   startpunkt: LatLng | null
   trasse: LatLng[]
+  trassePfade?: LatLng[][]
   hausanschluesse: Hausstich[]
   trassenLaengeMeter: number
   hausanschlussLaengeMeter: number

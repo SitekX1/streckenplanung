@@ -52,6 +52,7 @@ interface MapViewProps {
   startpunkt: LatLng | null
   startpunktSetzenAktiv: boolean
   trasse: LatLng[]
+  trassePfade: LatLng[][]
   hausanschluesse: Hausstich[]
   editierbarAktiv: boolean
   aktiveOrteKeys: string[]
@@ -136,6 +137,7 @@ const MapView = memo(function MapView({
   startpunkt,
   startpunktSetzenAktiv,
   trasse,
+  trassePfade,
   hausanschluesse,
   editierbarAktiv,
   aktiveOrteKeys,
@@ -388,27 +390,39 @@ const MapView = memo(function MapView({
           </Marker>
         )}
 
-        {/* Trasse */}
-        {trasseLeaflet.length >= 2 && (
-          <Polyline
-            positions={trasseLeaflet}
-            pathOptions={{
-              color: trasseFarbe,
-              weight: editierbarAktiv ? 5 : 4,
-              opacity: 0.9,
-            }}
-            eventHandlers={
-              editierbarAktiv
-                ? {
-                    click: (e) => {
-                      e.originalEvent.stopPropagation()
-                      handleTrassePunktEinfuegen({ lat: e.latlng.lat, lng: e.latlng.lng })
-                    },
-                  }
-                : {}
-            }
-          />
-        )}
+        {/* Trasse — MST-Netzwerk (mehrere Pfade) oder bearbeitete Einzel-Polylinie */}
+        {!editierbarAktiv && trassePfade.length > 0
+          ? trassePfade.map((pfad, i) => {
+              const pts = pfad.map((p) => [p.lat, p.lng] as [number, number])
+              if (pts.length < 2) return null
+              return (
+                <Polyline
+                  key={`pfad-${i}`}
+                  positions={pts}
+                  pathOptions={{ color: trasseFarbe, weight: 4, opacity: 0.9 }}
+                />
+              )
+            })
+          : trasseLeaflet.length >= 2 && (
+              <Polyline
+                positions={trasseLeaflet}
+                pathOptions={{
+                  color: trasseFarbe,
+                  weight: editierbarAktiv ? 5 : 4,
+                  opacity: 0.9,
+                }}
+                eventHandlers={
+                  editierbarAktiv
+                    ? {
+                        click: (e) => {
+                          e.originalEvent.stopPropagation()
+                          handleTrassePunktEinfuegen({ lat: e.latlng.lat, lng: e.latlng.lng })
+                        },
+                      }
+                    : {}
+                }
+              />
+            )}
 
         {/* Edit-Handles für Trasse (nur im Bearbeiten-Modus) */}
         {editierbarAktiv &&

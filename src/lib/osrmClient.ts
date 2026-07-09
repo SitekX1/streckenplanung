@@ -1,4 +1,5 @@
 import { LatLng } from './types'
+import { haversineDistanz } from './tsp'
 
 const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving/'
 const BATCH_SIZE = 50
@@ -51,4 +52,46 @@ export async function routeEntlangStrassen(
   }
 
   return result
+}
+
+// Routet eine einzelne MST-Kante (Punkt A → Punkt B) entlang von Straßen.
+async function routeKante(von: LatLng, zu: LatLng): Promise<LatLng[]> {
+  const url = `${OSRM_BASE}${von.lng},${von.lat};${zu.lng},${zu.lat}?overview=full&geometries=geojson`
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    const coords: [number, number][] | undefined = data.routes?.[0]?.geometry?.coordinates
+    if (!coords?.length) throw new Error('Keine Route')
+    const wegpunkte = coords.map(([lon, lat]) => ({ lat, lng: lon }))
+    // Plausibilitäts-Check: Route darf nicht mehr als 15× die Luftlinie betragen
+    const luftlinie = haversineDistanz(von, zu)
+    const routenLaenge = wegpunkte.reduce(
+      (sum, p, i) => (i === 0 ? 0 : sum + haversineDistanz(wegpunkte[i - 1], p)),
+      0
+    )
+    return routenLaenge > luftlinie * 15 ? [von, zu] : wegpunkte
+  } catch {
+    return [von, zu]
+  }
+}
+
+// Routet alle MST-Kanten entlang von Straßen (parallel in Batches).
+// Gibt ein Array von Pfaden zurück — einen Pfad pro MST-Kante.
+export async function routeMSTKanten(
+  kanten: Array<{ von: LatLng; zu: LatLng }>,
+  onProgress?: (prozent: number) => void
+): Promise<LatLng[][]> {
+  const BATCH = 10
+  const pfade: LatLng[][] = []
+
+  for (let i = 0; i < kanten.length; i += BATCH) {
+    const batch = kanten.slice(i, i + BATCH)
+    const ergebnisse = await Promise.all(batch.map((k) => routeKante(k.von, k.zu)))
+    pfade.push(...ergebnisse)
+    onProgress?.(Math.round(((i + batch.length) / kanten.length) * 100))
+    if (i + BATCH < kanten.length) await new Promise<void>((r) => setTimeout(r, 50))
+  }
+
+  return pfade
 }

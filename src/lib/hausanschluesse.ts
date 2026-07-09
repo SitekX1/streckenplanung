@@ -25,7 +25,6 @@ async function routeHausanschlussOSRM(
     if (!coords || coords.length === 0) throw new Error('Keine Route')
     const laengeMeter = routes![0].distance
 
-    // Sanity check: discard if route is implausibly long (>10x straight line)
     if (laengeMeter > straightLine * 10 || laengeMeter < 1) {
       return { wegpunkte: [haus, ziel], laengeMeter: straightLine }
     }
@@ -36,14 +35,44 @@ async function routeHausanschlussOSRM(
   }
 }
 
+// Findet den nächsten Punkt auf dem gesamten Trassen-Netzwerk (alle Pfade).
+// Bei MST-Trasse: jeder der 645 Pfade wird geprüft, der global nächste Punkt gewinnt.
+function findNearestOnNetzwerk(
+  linien: ReturnType<typeof turf.lineString>[],
+  hausPoint: ReturnType<typeof turf.point>
+): LatLng {
+  let nearestPunkt: LatLng | null = null
+  let nearestDist = Infinity
+
+  for (const linie of linien) {
+    try {
+      const nearest = turf.nearestPointOnLine(linie, hausPoint, { units: 'meters' })
+      const dist = nearest.properties.dist ?? Infinity
+      if (dist < nearestDist) {
+        nearestDist = dist
+        nearestPunkt = toLatLng(nearest.geometry.coordinates)
+      }
+    } catch {
+      // einzelnen Pfad überspringen
+    }
+  }
+
+  return nearestPunkt ?? toLatLng(hausPoint.geometry.coordinates)
+}
+
 export async function berechneHausanschluesse(
-  trasse: LatLng[],
+  trassePfade: LatLng[][],
   adressen: Address[],
   onProgress?: (percent: number) => void
 ): Promise<Hausstich[]> {
-  if (trasse.length < 2) return []
+  const gueltigePfade = trassePfade.filter((p) => p.length >= 2)
+  if (gueltigePfade.length === 0) return []
 
-  const linie = turf.lineString(trasse.map((p) => [p.lng, p.lat]))
+  // Turf-Linien einmalig vorberechnen (nicht für jeden Punkt neu bauen)
+  const linien = gueltigePfade.map((pfad) =>
+    turf.lineString(pfad.map((p) => [p.lng, p.lat]))
+  )
+
   const BATCH = 10
   const ergebnisse: Hausstich[] = []
 
@@ -53,8 +82,7 @@ export async function berechneHausanschluesse(
     const batchResults = await Promise.all(
       batch.map(async (adresse): Promise<Hausstich> => {
         const hausPoint = turf.point([adresse.lon, adresse.lat])
-        const nearest = turf.nearestPointOnLine(linie, hausPoint, { units: 'meters' })
-        const trassenPunkt = toLatLng(nearest.geometry.coordinates)
+        const trassenPunkt = findNearestOnNetzwerk(linien, hausPoint)
         const hausKoordinate: LatLng = { lat: adresse.lat, lng: adresse.lon }
 
         const { wegpunkte, laengeMeter } = await routeHausanschlussOSRM(hausKoordinate, trassenPunkt)
@@ -82,13 +110,18 @@ export async function berechneHausanschluesse(
 }
 
 export function berechneLaengen(
-  trasse: LatLng[],
+  trassePfade: LatLng[][],
   hausanschluesse: Hausstich[]
 ): { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number } {
-  const trassenLaenge =
-    trasse.length >= 2
-      ? turf.length(turf.lineString(trasse.map((p) => [p.lng, p.lat])), { units: 'meters' })
-      : 0
+  const trassenLaenge = trassePfade
+    .filter((p) => p.length >= 2)
+    .reduce((sum, pfad) => {
+      try {
+        return sum + turf.length(turf.lineString(pfad.map((p) => [p.lng, p.lat])), { units: 'meters' })
+      } catch {
+        return sum
+      }
+    }, 0)
 
   const hausanschluesseLaenge = hausanschluesse.reduce((sum, h) => sum + h.laengeMeter, 0)
 

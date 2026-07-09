@@ -5,8 +5,8 @@ import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
 import { Address, LatLng, Hausstich, OrtInfo } from '../lib/types'
 import { parseExcelFile } from '../lib/excelParser'
-import { clusteredNearestNeighborTSP } from '../lib/tsp'
-import { routeEntlangStrassen } from '../lib/osrmClient'
+import { mstAdressen } from '../lib/tsp'
+import { routeMSTKanten } from '../lib/osrmClient'
 import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse'
 import { exportKML } from '../lib/kmlExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
@@ -16,7 +16,6 @@ const MapView = dynamic(() => import('../components/MapView'), { ssr: false })
 function extractOrte(adressen: Address[]): OrtInfo[] {
   const map = new Map<string, OrtInfo>()
   for (const a of adressen) {
-    // Group by ortsname+ortsteil — handles Gemeinden with multiple Ortsteile
     const key = `${a.plz}_${a.ortsname}_${a.ortsteil}`
     const name = [a.ortsname, a.ortsteil].filter(Boolean).join(' – ') || a.plz
     if (!map.has(key)) map.set(key, { key, name, plz: a.plz, anzahl: 0 })
@@ -32,6 +31,7 @@ export default function Home() {
   const [startpunkt, setStartpunkt] = useState<LatLng | null>(null)
   const [startpunktSetzenAktiv, setStartpunktSetzenAktiv] = useState(false)
   const [trasse, setTrasse] = useState<LatLng[]>([])
+  const [trassePfade, setTrassePfade] = useState<LatLng[][]>([])
   const [hausanschluesse, setHausanschluesse] = useState<Hausstich[]>([])
   const [trasseProgress, setTrasseProgress] = useState(0)
   const [hausanschluesseProgress, setHausanschluesseProgress] = useState(0)
@@ -88,55 +88,59 @@ export default function Home() {
     setHausanschluesse([])
     setTrasseProgress(1)
 
-    // Only route addresses from selected towns/Ortsteile
     const gefilterteAdressen =
       aktiveOrteKeys.length === orte.length
         ? adressen
         : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
 
-    const geordnetePunkte = clusteredNearestNeighborTSP(startpunkt, gefilterteAdressen)
+    // MST: verbindet jede Adresse mit ihrem nächsten bereits verbundenen Nachbarn
+    const kanten = mstAdressen(startpunkt, gefilterteAdressen)
 
-    const result = await routeEntlangStrassen(geordnetePunkte, (p) => {
-      setTrasseProgress(p)
-    })
+    // Jede MST-Kante entlang von Straßen routen
+    const pfade = await routeMSTKanten(kanten, (p) => setTrasseProgress(p))
+    setTrassePfade(pfade)
 
-    setTrasse(result)
+    // Flattened trasse für Edit-Modus und Kompatibilität
+    const flatTrasse = pfade.flat()
+    setTrasse(flatTrasse)
+
     setTrasseProgress(100)
 
-    const neueLaengen = berechneLaengen(result, [])
+    const neueLaengen = berechneLaengen(pfade, [])
     setLaengen(neueLaengen)
 
     setTimeout(() => setTrasseProgress(0), 500)
   }, [startpunkt, adressen, aktiveOrteKeys, orte.length])
 
   const handleHausanschluesseGenerieren = useCallback(async () => {
-    if (trasse.length < 2) return
+    const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
+    if (pfade.length === 0) return
 
     setHausanschluesseProgress(1)
 
-    // Hausanschlüsse only for addresses in active towns/Ortsteile
     const gefilterteAdressen =
       aktiveOrteKeys.length === orte.length
         ? adressen
         : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
 
-    const ergebnis = await berechneHausanschluesse(trasse, gefilterteAdressen, (p) => {
+    const ergebnis = await berechneHausanschluesse(pfade, gefilterteAdressen, (p) => {
       setHausanschluesseProgress(p)
     })
 
     setHausanschluesse(ergebnis)
     setHausanschluesseProgress(100)
 
-    const neueLaengen = berechneLaengen(trasse, ergebnis)
+    const neueLaengen = berechneLaengen(pfade, ergebnis)
     setLaengen(neueLaengen)
 
     setTimeout(() => setHausanschluesseProgress(0), 500)
-  }, [trasse, adressen, aktiveOrteKeys, orte.length])
+  }, [trassePfade, trasse, adressen, aktiveOrteKeys, orte.length])
 
   const handleTrasseGeaendert = useCallback(
     (punkte: LatLng[]) => {
       setTrasse(punkte)
-      const neueLaengen = berechneLaengen(punkte, hausanschluesse)
+      setTrassePfade([]) // nach manueller Bearbeitung: einzelne Polylinie
+      const neueLaengen = berechneLaengen([punkte], hausanschluesse)
       setLaengen(neueLaengen)
     },
     [hausanschluesse]
@@ -145,10 +149,11 @@ export default function Home() {
   const handleHausanschluesseGeaendert = useCallback(
     (updated: Hausstich[]) => {
       setHausanschluesse(updated)
-      const neueLaengen = berechneLaengen(trasse, updated)
+      const pfade = trassePfade.length > 0 ? trassePfade : [trasse]
+      const neueLaengen = berechneLaengen(pfade, updated)
       setLaengen(neueLaengen)
     },
-    [trasse]
+    [trassePfade, trasse]
   )
 
   const handleEditierbarToggle = useCallback(() => {
@@ -162,6 +167,7 @@ export default function Home() {
     setStartpunkt(null)
     setStartpunktSetzenAktiv(false)
     setTrasse([])
+    setTrassePfade([])
     setHausanschluesse([])
     setTrasseProgress(0)
     setHausanschluesseProgress(0)
@@ -176,11 +182,12 @@ export default function Home() {
       adressen,
       startpunkt,
       trasse,
+      trassePfade: trassePfade.length > 0 ? trassePfade : undefined,
       hausanschluesse,
       trassenLaengeMeter: laengen.trassenLaenge,
       hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
     })
-  }, [projektName, adressen, startpunkt, trasse, hausanschluesse, laengen])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen])
 
   const handleProjektSpeichern = useCallback(() => {
     exportProjekt({
@@ -189,19 +196,22 @@ export default function Home() {
       adressen,
       startpunkt,
       trasse,
+      trassePfade: trassePfade.length > 0 ? trassePfade : undefined,
       hausanschluesse,
       trassenLaengeMeter: laengen.trassenLaenge,
       hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
     })
-  }, [projektName, adressen, startpunkt, trasse, hausanschluesse, laengen])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen])
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
     setAdressen(projekt.adressen)
     setStartpunkt(projekt.startpunkt)
     setTrasse(projekt.trasse)
+    setTrassePfade(projekt.trassePfade ?? [])
     setHausanschluesse(projekt.hausanschluesse)
-    const neueLaengen = berechneLaengen(projekt.trasse, projekt.hausanschluesse)
+    const pfade = projekt.trassePfade?.length ? projekt.trassePfade : [projekt.trasse]
+    const neueLaengen = berechneLaengen(pfade, projekt.hausanschluesse)
     setLaengen(neueLaengen)
     setEditierbarAktiv(false)
     const orteListe = extractOrte(projekt.adressen)
@@ -217,7 +227,7 @@ export default function Home() {
         aktiveOrteKeys={aktiveOrteKeys}
         startpunktGesetzt={startpunkt !== null}
         startpunktKoords={startpunkt}
-        trasseVorhanden={trasse.length >= 2}
+        trasseVorhanden={trasse.length >= 2 || trassePfade.length > 0}
         hausanschluesseCount={hausanschluesse.length}
         trassenLaenge={laengen.trassenLaenge}
         hausanschlussLaenge={laengen.hausanschluesseLaenge}
@@ -250,6 +260,7 @@ export default function Home() {
           startpunkt={startpunkt}
           startpunktSetzenAktiv={startpunktSetzenAktiv}
           trasse={trasse}
+          trassePfade={trassePfade}
           hausanschluesse={hausanschluesse}
           editierbarAktiv={editierbarAktiv}
           aktiveOrteKeys={aktiveOrteKeys}
