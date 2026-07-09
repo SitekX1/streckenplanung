@@ -1,3 +1,4 @@
+import * as turf from '@turf/turf'
 import { LatLng } from './types'
 import { haversineDistanz } from './tsp'
 
@@ -70,7 +71,16 @@ async function routeKante(von: LatLng, zu: LatLng): Promise<LatLng[]> {
       (sum, p, i) => (i === 0 ? 0 : sum + haversineDistanz(wegpunkte[i - 1], p)),
       0
     )
-    return routenLaenge > luftlinie * 15 ? [von, zu] : wegpunkte
+    if (routenLaenge > luftlinie * 15) return [von, zu]
+    // Douglas-Peucker ~10m Toleranz: gerade Abschnitte auf 2 Punkte reduzieren
+    if (wegpunkte.length > 4) {
+      try {
+        const line = turf.lineString(wegpunkte.map((p) => [p.lng, p.lat]))
+        const simplified = turf.simplify(line, { tolerance: 0.0001, highQuality: false })
+        return (simplified.geometry.coordinates as [number, number][]).map(([lng, lat]) => ({ lat, lng }))
+      } catch { /* original behalten */ }
+    }
+    return wegpunkte
   } catch {
     return [von, zu]
   }

@@ -139,8 +139,18 @@ export default function Home() {
   const handleTrasseGeaendert = useCallback(
     (punkte: LatLng[]) => {
       setTrasse(punkte)
-      setTrassePfade([]) // nach manueller Bearbeitung: einzelne Polylinie
+      setTrassePfade([])
       const neueLaengen = berechneLaengen([punkte], hausanschluesse)
+      setLaengen(neueLaengen)
+    },
+    [hausanschluesse]
+  )
+
+  const handleTrassePfadeGeaendert = useCallback(
+    (pfade: LatLng[][]) => {
+      setTrassePfade(pfade)
+      setTrasse(pfade.flat())
+      const neueLaengen = berechneLaengen(pfade, hausanschluesse)
       setLaengen(neueLaengen)
     },
     [hausanschluesse]
@@ -269,6 +279,7 @@ export default function Home() {
           hausanschlussfarbe={hausanschlussfarbe}
           onStartpunktGesetzt={handleStartpunktGesetzt}
           onTrasseGeaendert={handleTrasseGeaendert}
+          onTrassePfadeGeaendert={handleTrassePfadeGeaendert}
           onHausanschluesseGeaendert={handleHausanschluesseGeaendert}
         />
       </main>
