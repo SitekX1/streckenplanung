@@ -100,7 +100,7 @@ export async function routeMSTKanten(
     const ergebnisse = await Promise.all(batch.map((k) => routeKante(k.von, k.zu)))
     pfade.push(...ergebnisse)
     onProgress?.(Math.round(((i + batch.length) / kanten.length) * 100))
-    if (i + BATCH < kanten.length) await new Promise<void>((r) => setTimeout(r, 50))
+    if (i + BATCH < kanten.length) await new Promise<void>((r) => setTimeout(r, 350))
   }
 
   return pfade

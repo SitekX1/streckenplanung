@@ -5,42 +5,11 @@ function toLatLng(coord: number[]): LatLng {
   return { lat: coord[1], lng: coord[0] }
 }
 
-async function routeHausanschlussOSRM(
-  haus: LatLng,
-  ziel: LatLng
-): Promise<{ wegpunkte: LatLng[]; laengeMeter: number }> {
-  const straightLine = turf.distance(
-    turf.point([haus.lng, haus.lat]),
-    turf.point([ziel.lng, ziel.lat]),
-    { units: 'meters' }
-  )
-
-  try {
-    const url = `https://router.project-osrm.org/route/v1/driving/${haus.lng},${haus.lat};${ziel.lng},${ziel.lat}?overview=full&geometries=geojson`
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json() as Record<string, unknown>
-    const routes = data.routes as Array<{ geometry: { coordinates: [number, number][] }; distance: number }> | undefined
-    const coords = routes?.[0]?.geometry?.coordinates
-    if (!coords || coords.length === 0) throw new Error('Keine Route')
-    const laengeMeter = routes![0].distance
-
-    if (laengeMeter > straightLine * 10 || laengeMeter < 1) {
-      return { wegpunkte: [haus, ziel], laengeMeter: straightLine }
-    }
-
-    return { wegpunkte: coords.map(toLatLng), laengeMeter }
-  } catch {
-    return { wegpunkte: [haus, ziel], laengeMeter: straightLine }
-  }
-}
-
 // Findet den nächsten Punkt auf dem gesamten Trassen-Netzwerk (alle Pfade).
-// Bei MST-Trasse: jeder der 645 Pfade wird geprüft, der global nächste Punkt gewinnt.
 function findNearestOnNetzwerk(
   linien: ReturnType<typeof turf.lineString>[],
   hausPoint: ReturnType<typeof turf.point>
-): LatLng {
+): { punkt: LatLng; distMeter: number } {
   let nearestPunkt: LatLng | null = null
   let nearestDist = Infinity
 
@@ -57,7 +26,8 @@ function findNearestOnNetzwerk(
     }
   }
 
-  return nearestPunkt ?? toLatLng(hausPoint.geometry.coordinates)
+  const fallback = toLatLng(hausPoint.geometry.coordinates)
+  return { punkt: nearestPunkt ?? fallback, distMeter: nearestDist === Infinity ? 0 : nearestDist }
 }
 
 export async function berechneHausanschluesse(
@@ -68,42 +38,39 @@ export async function berechneHausanschluesse(
   const gueltigePfade = trassePfade.filter((p) => p.length >= 2)
   if (gueltigePfade.length === 0) return []
 
-  // Turf-Linien einmalig vorberechnen (nicht für jeden Punkt neu bauen)
+  // Turf-Linien einmalig vorberechnen
   const linien = gueltigePfade.map((pfad) =>
     turf.lineString(pfad.map((p) => [p.lng, p.lat]))
   )
 
-  const BATCH = 10
+  // Hausanschlüsse = gerade Linie Haus → nächster Trassen-Punkt.
+  // KEIN OSRM: Glasfaser-Hausanschlüsse verlaufen direkt durch den Garten/unter dem
+  // Bürgersteig — keine Straßenführung notwendig oder korrekt.
+  const CHUNK = 50
   const ergebnisse: Hausstich[] = []
 
-  for (let i = 0; i < adressen.length; i += BATCH) {
-    const batch = adressen.slice(i, i + BATCH)
+  for (let i = 0; i < adressen.length; i += CHUNK) {
+    const chunk = adressen.slice(i, i + CHUNK)
 
-    const batchResults = await Promise.all(
-      batch.map(async (adresse): Promise<Hausstich> => {
-        const hausPoint = turf.point([adresse.lon, adresse.lat])
-        const trassenPunkt = findNearestOnNetzwerk(linien, hausPoint)
-        const hausKoordinate: LatLng = { lat: adresse.lat, lng: adresse.lon }
+    const chunkResults: Hausstich[] = chunk.map((adresse): Hausstich => {
+      const hausPoint = turf.point([adresse.lon, adresse.lat])
+      const { punkt: trassenPunkt, distMeter } = findNearestOnNetzwerk(linien, hausPoint)
+      const hausKoordinate: LatLng = { lat: adresse.lat, lng: adresse.lon }
 
-        const { wegpunkte, laengeMeter } = await routeHausanschlussOSRM(hausKoordinate, trassenPunkt)
+      return {
+        id: crypto.randomUUID(),
+        addressUuid: adresse.uuid,
+        trassenPunkt,
+        hausKoordinate,
+        laengeMeter: distMeter,
+        wegpunkte: [hausKoordinate, trassenPunkt],
+      }
+    })
 
-        return {
-          id: crypto.randomUUID(),
-          addressUuid: adresse.uuid,
-          trassenPunkt,
-          hausKoordinate,
-          laengeMeter,
-          wegpunkte,
-        }
-      })
-    )
-
-    ergebnisse.push(...batchResults)
-    onProgress?.(Math.round(((i + batch.length) / adressen.length) * 100))
-
-    if (i + BATCH < adressen.length) {
-      await new Promise<void>((r) => setTimeout(r, 50))
-    }
+    ergebnisse.push(...chunkResults)
+    onProgress?.(Math.round(((i + chunk.length) / adressen.length) * 100))
+    // Kurze Pause damit React re-rendern kann
+    await new Promise<void>((r) => setTimeout(r, 0))
   }
 
   return ergebnisse

@@ -17,14 +17,15 @@ export interface OsmNetz {
   ways: OsmWay[]
 }
 
-// Alle für FTTH-Planung relevanten Straßentypen
+// Nur versiegelte/beschilderte Straßen — Feldwege/Fußwege (track/path) werden BEWUSST ausgeschlossen
+// damit die Trasse nicht quer durch Felder oder Häuser läuft
 const HIGHWAY_FILTER =
-  'motorway|trunk|primary|secondary|tertiary|unclassified|residential|service|living_street|track|road|path'
+  'primary|secondary|tertiary|unclassified|residential|service|living_street|road'
 
 export function berechneGrenzen(
   adressen: Address[],
   startpunkt: LatLng,
-  padding = 0.015
+  padding = 0.008  // enger Puffer (~900m) → kleinere Overpass-Antwort
 ): { minLat: number; maxLat: number; minLng: number; maxLng: number } {
   const lats = adressen.map((a) => a.lat)
   const lngs = adressen.map((a) => a.lon)

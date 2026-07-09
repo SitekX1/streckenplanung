@@ -44,6 +44,7 @@ export default function Home() {
     gesamt: 0,
   })
   const [editierbarAktiv, setEditierbarAktiv] = useState(false)
+  const [trasseMethode, setTrasseMethode] = useState('')
   const [projektName] = useState('Neues Projekt')
   const [adressFarbe, setAdressFarbe] = useState('#22c55e')
   const [trasseFarbe, setTrasseFarbe] = useState('#3b82f6')
@@ -125,11 +126,14 @@ export default function Home() {
         (p) => setTrasseProgress(25 + Math.round(p * 0.73))
       )
 
-      if (ergebnis.pfade.length === 0) throw new Error('Keine Pfade')
+      if (ergebnis.pfade.length === 0) throw new Error('Keine Pfade erzeugt')
       pfade = ergebnis.pfade
+      setTrasseMethode(`OSM Straßennetz · ${pfade.length} Segmente`)
     } catch (err) {
       // Fallback: MST + OSRM (wenn Overpass nicht verfügbar)
-      console.warn('Overpass/Steiner fehlgeschlagen, Fallback MST+OSRM:', err)
+      const fehlerText = err instanceof Error ? err.message : String(err)
+      console.warn('Overpass/Steiner fehlgeschlagen:', fehlerText)
+      setTrasseMethode(`Hilfs-Algorithmus (OSM: ${fehlerText.slice(0, 60)})`)
       setTrasseProgress(10)
       const kanten = mstAdressen(startpunkt, gefilterteAdressen)
       pfade = await routeMSTKanten(kanten, (p) => setTrasseProgress(10 + Math.round(p * 0.88)))
@@ -307,6 +311,7 @@ export default function Home() {
           adressFarbe={adressFarbe}
           trasseFarbe={trasseFarbe}
           hausanschlussfarbe={hausanschlussfarbe}
+          trasseMethode={trasseMethode}
           onStartpunktGesetzt={handleStartpunktGesetzt}
           onTrasseGeaendert={handleTrasseGeaendert}
           onTrassePfadeGeaendert={handleTrassePfadeGeaendert}

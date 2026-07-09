@@ -39,6 +39,20 @@ const editHandleIcon = new L.DivIcon({
   iconAnchor: [6, 6],
 })
 
+// Hausanschluss-Handle: Haus-Ende (orange) + Kabel-Ende (lila)
+const hsHausIcon = new L.DivIcon({
+  className: '',
+  html: '<div style="width:11px;height:11px;background:#f97316;border:2px solid white;border-radius:50%;cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,0.7)"></div>',
+  iconSize: [11, 11],
+  iconAnchor: [5, 5],
+})
+const hsTrasseIcon = new L.DivIcon({
+  className: '',
+  html: '<div style="width:11px;height:11px;background:#a855f7;border:2px solid white;border-radius:50%;cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,0.7)"></div>',
+  iconSize: [11, 11],
+  iconAnchor: [5, 5],
+})
+
 interface MapViewProps {
   adressen: Address[]
   startpunkt: LatLng | null
@@ -51,6 +65,7 @@ interface MapViewProps {
   adressFarbe: string
   trasseFarbe: string
   hausanschlussfarbe: string
+  trasseMethode?: string
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][]) => void
@@ -141,6 +156,7 @@ const MapView = memo(function MapView({
   adressFarbe,
   trasseFarbe,
   hausanschlussfarbe,
+  trasseMethode,
   onStartpunktGesetzt,
   onTrasseGeaendert,
   onTrassePfadeGeaendert,
@@ -183,18 +199,21 @@ const MapView = memo(function MapView({
       setDeletedStack([])
 
       if (pfade.length > 0) {
-        setEditPfade(
-          pfade
-            .filter((p) => p.length >= 2)
-            .map((pfad) => {
-              // Nur Start- und Endpunkt als Handles + ggf. Mittelpunkt bei langen Pfaden
-              if (pfad.length <= 3) return [...pfad]
-              return [pfad[0], pfad[Math.floor(pfad.length / 2)], pfad[pfad.length - 1]]
-            })
-        )
+        const gueltig = pfade.filter((p) => p.length >= 2)
+        // Alle Punkte zeigen wie Google Earth — maximal 2000 Handles gesamt
+        const gesamtPunkte = gueltig.reduce((s, p) => s + p.length, 0)
+        const maxProPfad = gesamtPunkte <= 2000
+          ? Infinity
+          : Math.max(3, Math.floor(2000 / gueltig.length))
+
+        setEditPfade(gueltig.map((pfad) => {
+          if (!isFinite(maxProPfad) || pfad.length <= maxProPfad) return [...pfad]
+          const step = (pfad.length - 1) / (maxProPfad - 1)
+          return Array.from({ length: maxProPfad }, (_, i) => pfad[Math.round(i * step)])
+        }))
         setEditSingle([])
       } else if (t.length >= 2) {
-        const max = 250
+        const max = 500
         setEditSingle(
           t.length <= max
             ? [...t]
@@ -309,6 +328,18 @@ const MapView = memo(function MapView({
     const last = deletedStack[deletedStack.length - 1]
     setDeletedStack((prev) => prev.slice(0, -1))
     onHausanschluesseGeaendert([...hausanschluesse, last])
+  }
+
+  function handleHausstichEndpunktBewegen(id: string, typ: 'haus' | 'trasse', neuePos: LatLng) {
+    const updated = hausanschluesse.map((h) => {
+      if (h.id !== id) return h
+      const haus = typ === 'haus' ? neuePos : h.hausKoordinate
+      const trasse = typ === 'trasse' ? neuePos : h.trassenPunkt
+      const dLat = (haus.lat - trasse.lat) * 111_000
+      const dLng = (haus.lng - trasse.lng) * Math.cos((haus.lat * Math.PI) / 180) * 111_000
+      return { ...h, hausKoordinate: haus, trassenPunkt: trasse, wegpunkte: [haus, trasse], laengeMeter: Math.sqrt(dLat * dLat + dLng * dLng) }
+    })
+    onHausanschluesseGeaendert(updated)
   }
 
   return (
@@ -538,10 +569,42 @@ const MapView = memo(function MapView({
                   : {}
               }
             >
-              <Tooltip>{editierbarAktiv ? '🗑️ Doppelklick zum Löschen · ' : ''}Hausanschluss: {h.laengeMeter.toFixed(1)} m</Tooltip>
+              <Tooltip>{editierbarAktiv ? '🗑️ Doppelklick = Löschen · ' : ''}Hausanschluss: {h.laengeMeter.toFixed(1)} m</Tooltip>
             </Polyline>
           )
         })}
+
+        {/* Hausanschluss-Handles im Edit-Modus: orange = Haus, lila = Kabelpunkt */}
+        {editierbarAktiv && hausanschluesse.flatMap((h) => [
+          <Marker
+            key={`hs-haus-${h.id}`}
+            position={[h.hausKoordinate.lat, h.hausKoordinate.lng]}
+            draggable={true}
+            icon={hsHausIcon}
+            eventHandlers={{
+              dragend: (e) => {
+                const ll = (e.target as L.Marker).getLatLng()
+                handleHausstichEndpunktBewegen(h.id, 'haus', { lat: ll.lat, lng: ll.lng })
+              },
+            }}
+          >
+            <Tooltip>🏠 Haus-Ende ziehen</Tooltip>
+          </Marker>,
+          <Marker
+            key={`hs-trasse-${h.id}`}
+            position={[h.trassenPunkt.lat, h.trassenPunkt.lng]}
+            draggable={true}
+            icon={hsTrasseIcon}
+            eventHandlers={{
+              dragend: (e) => {
+                const ll = (e.target as L.Marker).getLatLng()
+                handleHausstichEndpunktBewegen(h.id, 'trasse', { lat: ll.lat, lng: ll.lng })
+              },
+            }}
+          >
+            <Tooltip>📡 Kabel-Anschlusspunkt ziehen</Tooltip>
+          </Marker>,
+        ])}
       </MapContainer>
 
       {startpunktSetzenAktiv && (
@@ -551,10 +614,19 @@ const MapView = memo(function MapView({
         </div>
       )}
 
+      {trasseMethode && !editierbarAktiv && (
+        <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg"
+          style={{ backgroundColor: '#1a1a1a', color: trasseMethode.startsWith('OSM') ? '#4ade80' : '#fbbf24', border: `1px solid ${trasseMethode.startsWith('OSM') ? '#16a34a' : '#d97706'}` }}>
+          {trasseMethode.startsWith('OSM') ? '✅' : '⚠️'} {trasseMethode}
+        </div>
+      )}
+
       {editierbarAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-xs shadow-lg flex items-center gap-3"
           style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}>
-          ✏️ Punkte ziehen · Klick auf Linie fügt Punkt ein · Doppelklick auf Punkt löscht · Änderungen werden beim Verlassen gespeichert
+          ✏️ Trasse: Punkte ziehen · Klick auf Linie fügt Punkt ein · Doppelklick löscht Punkt
+          &nbsp;|&nbsp;
+          🏠 Hausanschluss: <span style={{color:'#fb923c'}}>●</span> Haus-Ende ziehen · <span style={{color:'#c084fc'}}>●</span> Kabelpunkt ziehen · Doppelklick auf Linie löscht
           {deletedStack.length > 0 && (
             <button
               onClick={handleHausstichUndo}
