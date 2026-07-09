@@ -39,34 +39,18 @@ export function berechneGrenzen(
   }
 }
 
-// Mehrere öffentliche Overpass-Mirror — wenn einer ausfällt, wird der nächste probiert
-const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-]
-
+// Anfragen gehen über unseren eigenen Vercel-Proxy → kein Browser-CORS-Problem
 async function fetchOverpass(query: string): Promise<Response> {
-  let lastError: unknown
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 55_000) // 55s pro Versuch
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        body: `data=${encodeURIComponent(query)}`,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        signal: controller.signal,
-      })
-      clearTimeout(timer)
-      if (res.ok) return res
-      lastError = new Error(`HTTP ${res.status} von ${endpoint}`)
-    } catch (e) {
-      clearTimeout(timer)
-      lastError = e
-    }
+  const res = await fetch('/api/osm-proxy', {
+    method: 'POST',
+    body: `data=${encodeURIComponent(query)}`,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`)
   }
-  throw new Error(`Alle Overpass-Server nicht erreichbar: ${lastError}`)
+  return res
 }
 
 export async function fetchOsmNetz(bounds: {
