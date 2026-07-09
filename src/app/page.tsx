@@ -252,6 +252,7 @@ export default function Home() {
           trasse={trasse}
           hausanschluesse={hausanschluesse}
           editierbarAktiv={editierbarAktiv}
+          aktiveOrteKeys={aktiveOrteKeys}
           adressFarbe={adressFarbe}
           trasseFarbe={trasseFarbe}
           hausanschlussfarbe={hausanschlussfarbe}

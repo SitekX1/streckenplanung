@@ -49,6 +49,7 @@ interface MapViewProps {
   trasse: LatLng[]
   hausanschluesse: Hausstich[]
   editierbarAktiv: boolean
+  aktiveOrteKeys: string[]
   adressFarbe: string
   trasseFarbe: string
   hausanschlussfarbe: string
@@ -102,7 +103,9 @@ function TopographieWMS({ sichtbar }: { sichtbar: boolean }) {
       attribution: '© Bundesamt für Kartographie und Geodäsie (BKG)',
       maxNativeZoom: 18,
       maxZoom: 21,
-    })
+      updateWhenZooming: false,
+      keepBuffer: 4,
+    } as L.WMSOptions)
     wmsLayer.addTo(map)
     return () => {
       map.removeLayer(wmsLayer)
@@ -129,6 +132,7 @@ export default function MapView({
   trasse,
   hausanschluesse,
   editierbarAktiv,
+  aktiveOrteKeys,
   adressFarbe,
   trasseFarbe,
   hausanschlussfarbe,
@@ -162,20 +166,22 @@ export default function MapView({
     const t = trasseRef.current
     if (t.length === 0) return
 
-    if (t.length <= 500) {
-      setEditTrasse([...t])
-    } else {
-      try {
-        const line = turf.lineString(t.map((p) => [p.lng, p.lat]))
-        const simplified = turf.simplify(line, { tolerance: 0.0001, highQuality: false })
-        const pts = (simplified.geometry.coordinates as [number, number][]).map((c) => ({
-          lat: c[1],
-          lng: c[0],
-        }))
-        setEditTrasse(pts)
-      } catch {
-        setEditTrasse(t.slice(0, 500))
+    try {
+      const line = turf.lineString(t.map((p) => [p.lng, p.lat]))
+      // Higher tolerance to avoid dense overlapping handles on back-and-forth segments
+      const simplified = turf.simplify(line, { tolerance: 0.0005, highQuality: false })
+      let pts = (simplified.geometry.coordinates as [number, number][]).map((c) => ({
+        lat: c[1],
+        lng: c[0],
+      }))
+      // Cap at 250 handles so edit mode stays usable
+      if (pts.length > 250) {
+        const step = Math.ceil(pts.length / 250)
+        pts = pts.filter((_, i) => i % step === 0 || i === pts.length - 1)
       }
+      setEditTrasse(pts)
+    } catch {
+      setEditTrasse(t.slice(0, 250))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
@@ -340,16 +346,20 @@ export default function MapView({
         <FlyTo ziel={flugZiel} />
 
         {/* Adressen-Pins */}
-        {adressen.map((adresse) => (
+        {adressen.map((adresse) => {
+          const istAktiv =
+            aktiveOrteKeys.length === 0 ||
+            aktiveOrteKeys.includes(`${adresse.plz}_${adresse.ortsname}_${adresse.ortsteil}`)
+          return (
           <CircleMarker
             key={adresse.uuid}
             center={[adresse.lat, adresse.lon]}
-            radius={6}
+            radius={istAktiv ? 6 : 4}
             pathOptions={{
-              fillColor: adressFarbe,
-              color: adressFarbe,
+              fillColor: istAktiv ? adressFarbe : '#6b7280',
+              color: istAktiv ? adressFarbe : '#4b5563',
               weight: 1.5,
-              fillOpacity: 0.85,
+              fillOpacity: istAktiv ? 0.85 : 0.3,
             }}
           >
             <Tooltip>
@@ -368,7 +378,8 @@ export default function MapView({
               </div>
             </Popup>
           </CircleMarker>
-        ))}
+          )
+        })}
 
         {/* Startpunkt-Marker */}
         {startpunkt && (
