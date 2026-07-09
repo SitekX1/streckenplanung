@@ -106,8 +106,9 @@ function FlyTo({ ziel }: { ziel: LatLng | null }) {
   return null
 }
 
-// Ein Canvas-Element für alle MST-Pfade — kein SVG-Overhead, WMS-Tiles bleiben stabil.
-function TrasseNetzwerk({ pfade, farbe }: { pfade: LatLng[][]; farbe: string }) {
+// Canvas-Layer für alle Trassenpfade — kein SVG-Overhead, WMS-Tiles bleiben stabil.
+// opacity: 0.9 im View-Modus, 0.25 als Referenz während Edit-Modus
+function TrasseNetzwerk({ pfade, farbe, opacity = 0.9 }: { pfade: LatLng[][]; farbe: string; opacity?: number }) {
   const map = useMap()
   useEffect(() => {
     const gueltige = pfade.filter((p) => p.length >= 2)
@@ -117,12 +118,12 @@ function TrasseNetzwerk({ pfade, farbe }: { pfade: LatLng[][]; farbe: string }) 
       gueltige.map((pfad) =>
         L.polyline(
           pfad.map((p) => [p.lat, p.lng] as [number, number]),
-          { color: farbe, weight: 4, opacity: 0.9, renderer } as L.PolylineOptions
+          { color: farbe, weight: 4, opacity, renderer } as L.PolylineOptions
         )
       )
     ).addTo(map)
     return () => { map.removeLayer(gruppe) }
-  }, [pfade, farbe, map])
+  }, [pfade, farbe, opacity, map])
   return null
 }
 
@@ -433,12 +434,12 @@ const MapView = memo(function MapView({
           </Marker>
         )}
 
-        {/* View-Modus: MST als Canvas-Layer */}
-        {!editierbarAktiv && trassePfade.length > 0 && (
-          <TrasseNetzwerk pfade={trassePfade} farbe={trasseFarbe} />
+        {/* Trasse: View-Modus voll sichtbar, Edit-Modus gedimmt als Referenz */}
+        {trassePfade.length > 0 && (
+          <TrasseNetzwerk pfade={trassePfade} farbe={trasseFarbe} opacity={editierbarAktiv ? 0.25 : 0.9} />
         )}
 
-        {/* View-Modus: Einzel-Polylinie */}
+        {/* Einzel-Polylinie (nur View-Modus, kein MST) */}
         {!editierbarAktiv && trassePfade.length === 0 && trasse.length >= 2 && (
           <Polyline
             positions={trasse.map((p) => [p.lat, p.lng] as [number, number])}

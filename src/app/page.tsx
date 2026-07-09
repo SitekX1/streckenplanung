@@ -5,6 +5,9 @@ import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
 import { Address, LatLng, Hausstich, OrtInfo } from '../lib/types'
 import { parseExcelFile } from '../lib/excelParser'
+import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
+import { buildRoadGraph } from '../lib/roadGraph'
+import { berechneSteinerBaum } from '../lib/steinerbaum'
 import { mstAdressen } from '../lib/tsp'
 import { routeMSTKanten } from '../lib/osrmClient'
 import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse'
@@ -86,29 +89,56 @@ export default function Home() {
 
     setEditierbarAktiv(false)
     setHausanschluesse([])
-    setTrasseProgress(1)
+    setTrasseProgress(2)
 
     const gefilterteAdressen =
       aktiveOrteKeys.length === orte.length
         ? adressen
         : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
 
-    // MST: verbindet jede Adresse mit ihrem nächsten bereits verbundenen Nachbarn
-    const kanten = mstAdressen(startpunkt, gefilterteAdressen)
+    let pfade: LatLng[][] = []
 
-    // Jede MST-Kante entlang von Straßen routen
-    const pfade = await routeMSTKanten(kanten, (p) => setTrasseProgress(p))
+    try {
+      // Phase 1: OSM-Straßennetz laden (Overpass API, kostenlos)
+      setTrasseProgress(5)
+      const bounds = berechneGrenzen(gefilterteAdressen, startpunkt)
+      const osmNetz = await fetchOsmNetz(bounds)
+      setTrasseProgress(18)
+
+      // Phase 2: Straßengraph aufbauen
+      const graph = buildRoadGraph(osmNetz)
+      if (graph.coordinates.size === 0) throw new Error('Leerer Graph')
+      setTrasseProgress(22)
+
+      // Phase 3: Startpunkt + Adressen auf nächste Straßenknoten einrasten
+      const startNodeId = graph.nearestNode(startpunkt)
+      const terminalIds = gefilterteAdressen.map((a) =>
+        graph.nearestNode({ lat: a.lat, lng: a.lon })
+      )
+      setTrasseProgress(25)
+
+      // Phase 4: Steiner-Baum (jede Straße nur EINMAL — kein Hin-und-Zurück)
+      const ergebnis = await berechneSteinerBaum(
+        graph,
+        startNodeId,
+        terminalIds,
+        (p) => setTrasseProgress(25 + Math.round(p * 0.73))
+      )
+
+      if (ergebnis.pfade.length === 0) throw new Error('Keine Pfade')
+      pfade = ergebnis.pfade
+    } catch (err) {
+      // Fallback: MST + OSRM (wenn Overpass nicht verfügbar)
+      console.warn('Overpass/Steiner fehlgeschlagen, Fallback MST+OSRM:', err)
+      setTrasseProgress(10)
+      const kanten = mstAdressen(startpunkt, gefilterteAdressen)
+      pfade = await routeMSTKanten(kanten, (p) => setTrasseProgress(10 + Math.round(p * 0.88)))
+    }
+
     setTrassePfade(pfade)
-
-    // Flattened trasse für Edit-Modus und Kompatibilität
-    const flatTrasse = pfade.flat()
-    setTrasse(flatTrasse)
-
+    setTrasse(pfade.flat())
     setTrasseProgress(100)
-
-    const neueLaengen = berechneLaengen(pfade, [])
-    setLaengen(neueLaengen)
-
+    setLaengen(berechneLaengen(pfade, []))
     setTimeout(() => setTrasseProgress(0), 500)
   }, [startpunkt, adressen, aktiveOrteKeys, orte.length])
 
