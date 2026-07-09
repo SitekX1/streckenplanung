@@ -25,6 +25,13 @@ export interface Hausstich {
   wegpunkte?: LatLng[]
 }
 
+export interface OrtInfo {
+  key: string
+  name: string
+  plz: string
+  anzahl: number
+}
+
 export interface Projekt {
   name: string
   erstelltAm: string

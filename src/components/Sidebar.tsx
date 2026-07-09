@@ -1,9 +1,12 @@
 'use client'
 
 import { useRef } from 'react'
+import { OrtInfo } from '../lib/types'
 
 interface SidebarProps {
   adressenCount: number
+  orte: OrtInfo[]
+  aktiveOrteKeys: string[]
   startpunktGesetzt: boolean
   startpunktKoords: { lat: number; lng: number } | null
   trasseVorhanden: boolean
@@ -20,6 +23,8 @@ interface SidebarProps {
   onAdressFarbeAendern: (farbe: string) => void
   onTrasseFarbeAendern: (farbe: string) => void
   onHausanschlussFarbeAendern: (farbe: string) => void
+  onOrtToggle: (key: string) => void
+  onAlleOrteToggle: (alleAktiv: boolean) => void
   onExcelImport: (file: File) => void
   onStartpunktSetzen: () => void
   onStartpunktZuruecksetzen: () => void
@@ -41,6 +46,10 @@ function formatMeter(meter: number): string {
 
 export default function Sidebar({
   adressenCount,
+  orte,
+  aktiveOrteKeys,
+  onOrtToggle,
+  onAlleOrteToggle,
   startpunktGesetzt,
   startpunktKoords,
   trasseVorhanden,
@@ -155,6 +164,49 @@ export default function Sidebar({
             <p className="mt-2 px-3 text-xs text-green-400">
               ✅ {adressenCount.toLocaleString('de-DE')} Adressen geladen
             </p>
+          )}
+
+          {/* Orts-Filter — nur anzeigen wenn mehrere Orte vorhanden */}
+          {orte.length > 1 && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between px-1 mb-1.5">
+                <span className="text-[10px] text-gray-500 uppercase tracking-wider">
+                  Orte für Trasse ({aktiveOrteKeys.length}/{orte.length})
+                </span>
+                <div className="flex gap-2.5">
+                  <button
+                    onClick={() => onAlleOrteToggle(true)}
+                    className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    Alle
+                  </button>
+                  <button
+                    onClick={() => onAlleOrteToggle(false)}
+                    className="text-[10px] text-gray-500 hover:text-gray-400 transition-colors"
+                  >
+                    Keine
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-0.5 max-h-44 overflow-y-auto rounded-lg"
+                style={{ backgroundColor: '#1a1a1a' }}>
+                {orte.map((ort) => (
+                  <label
+                    key={ort.key}
+                    className="flex items-center gap-2.5 px-2.5 py-1.5 cursor-pointer hover:bg-gray-800 transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={aktiveOrteKeys.includes(ort.key)}
+                      onChange={() => onOrtToggle(ort.key)}
+                      className="accent-blue-500 w-3.5 h-3.5 shrink-0"
+                    />
+                    <span className="text-xs text-gray-300 flex-1 truncate">{ort.name}</span>
+                    <span className="text-[10px] text-gray-600 shrink-0">{ort.anzahl}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 

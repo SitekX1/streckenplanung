@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic'
 import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
-import { Address, LatLng, Hausstich } from '../lib/types'
+import { Address, LatLng, Hausstich, OrtInfo } from '../lib/types'
 import { parseExcelFile } from '../lib/excelParser'
 import { clusteredNearestNeighborTSP } from '../lib/tsp'
 import { routeEntlangStrassen } from '../lib/osrmClient'
@@ -13,8 +13,20 @@ import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false })
 
+function extractOrte(adressen: Address[]): OrtInfo[] {
+  const map = new Map<string, OrtInfo>()
+  for (const a of adressen) {
+    const key = `${a.plz}_${a.ortsname}`
+    if (!map.has(key)) map.set(key, { key, name: a.ortsname, plz: a.plz, anzahl: 0 })
+    map.get(key)!.anzahl++
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'))
+}
+
 export default function Home() {
   const [adressen, setAdressen] = useState<Address[]>([])
+  const [orte, setOrte] = useState<OrtInfo[]>([])
+  const [aktiveOrteKeys, setAktiveOrteKeys] = useState<string[]>([])
   const [startpunkt, setStartpunkt] = useState<LatLng | null>(null)
   const [startpunktSetzenAktiv, setStartpunktSetzenAktiv] = useState(false)
   const [trasse, setTrasse] = useState<LatLng[]>([])
@@ -35,7 +47,23 @@ export default function Home() {
   const handleExcelImport = useCallback(async (file: File) => {
     const ergebnis = await parseExcelFile(file)
     setAdressen(ergebnis)
+    const orteListe = extractOrte(ergebnis)
+    setOrte(orteListe)
+    setAktiveOrteKeys(orteListe.map((o) => o.key))
   }, [])
+
+  const handleOrtToggle = useCallback((key: string) => {
+    setAktiveOrteKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    )
+  }, [])
+
+  const handleAlleOrteToggle = useCallback(
+    (alleAktiv: boolean) => {
+      setAktiveOrteKeys(alleAktiv ? orte.map((o) => o.key) : [])
+    },
+    [orte]
+  )
 
   const handleStartpunktSetzen = useCallback(() => {
     setStartpunktSetzenAktiv(true)
@@ -58,7 +86,13 @@ export default function Home() {
     setHausanschluesse([])
     setTrasseProgress(1)
 
-    const geordnetePunkte = clusteredNearestNeighborTSP(startpunkt, adressen)
+    // Only route addresses from selected towns
+    const gefilterteAdressen =
+      aktiveOrteKeys.length === orte.length
+        ? adressen
+        : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}`))
+
+    const geordnetePunkte = clusteredNearestNeighborTSP(startpunkt, gefilterteAdressen)
 
     const result = await routeEntlangStrassen(geordnetePunkte, (p) => {
       setTrasseProgress(p)
@@ -71,14 +105,20 @@ export default function Home() {
     setLaengen(neueLaengen)
 
     setTimeout(() => setTrasseProgress(0), 500)
-  }, [startpunkt, adressen])
+  }, [startpunkt, adressen, aktiveOrteKeys, orte.length])
 
   const handleHausanschluesseGenerieren = useCallback(async () => {
     if (trasse.length < 2) return
 
     setHausanschluesseProgress(1)
 
-    const ergebnis = await berechneHausanschluesse(trasse, adressen, (p) => {
+    // Hausanschlüsse only for addresses in active towns
+    const gefilterteAdressen =
+      aktiveOrteKeys.length === orte.length
+        ? adressen
+        : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}`))
+
+    const ergebnis = await berechneHausanschluesse(trasse, gefilterteAdressen, (p) => {
       setHausanschluesseProgress(p)
     })
 
@@ -89,7 +129,7 @@ export default function Home() {
     setLaengen(neueLaengen)
 
     setTimeout(() => setHausanschluesseProgress(0), 500)
-  }, [trasse, adressen])
+  }, [trasse, adressen, aktiveOrteKeys, orte.length])
 
   const handleTrasseGeaendert = useCallback(
     (punkte: LatLng[]) => {
@@ -115,6 +155,8 @@ export default function Home() {
 
   const handleAllesZuruecksetzen = useCallback(() => {
     setAdressen([])
+    setOrte([])
+    setAktiveOrteKeys([])
     setStartpunkt(null)
     setStartpunktSetzenAktiv(false)
     setTrasse([])
@@ -160,12 +202,17 @@ export default function Home() {
     const neueLaengen = berechneLaengen(projekt.trasse, projekt.hausanschluesse)
     setLaengen(neueLaengen)
     setEditierbarAktiv(false)
+    const orteListe = extractOrte(projekt.adressen)
+    setOrte(orteListe)
+    setAktiveOrteKeys(orteListe.map((o) => o.key))
   }, [])
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#0f0f0f]">
       <Sidebar
         adressenCount={adressen.length}
+        orte={orte}
+        aktiveOrteKeys={aktiveOrteKeys}
         startpunktGesetzt={startpunkt !== null}
         startpunktKoords={startpunkt}
         trasseVorhanden={trasse.length >= 2}
@@ -183,6 +230,8 @@ export default function Home() {
         onTrasseFarbeAendern={setTrasseFarbe}
         onHausanschlussFarbeAendern={setHausanschlussfarbe}
         onExcelImport={handleExcelImport}
+        onOrtToggle={handleOrtToggle}
+        onAlleOrteToggle={handleAlleOrteToggle}
         onStartpunktSetzen={handleStartpunktSetzen}
         onStartpunktZuruecksetzen={handleStartpunktZuruecksetzen}
         onTrasseGenerieren={handleTrasseGenerieren}
