@@ -8,7 +8,6 @@ import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
 import { buildRoadGraph } from '../lib/roadGraph'
 import { berechneSteinerBaum } from '../lib/steinerbaum'
-import { berechneBaumOSRM } from '../lib/baumOsrm'
 import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse'
 import { exportKML } from '../lib/kmlExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
@@ -129,16 +128,11 @@ export default function Home() {
       pfade = ergebnis.pfade
       setTrasseMethode(`OSM Straßennetz · ${pfade.length} Segmente`)
     } catch (err) {
-      // Fallback: Baum-Algorithmus via OSRM (kein Overpass nötig)
       const fehlerText = err instanceof Error ? err.message : String(err)
       console.warn('Overpass/Steiner fehlgeschlagen:', fehlerText)
-      setTrasseMethode(`OSRM-Baum (Overpass nicht verfügbar)`)
-      setTrasseProgress(5)
-      pfade = await berechneBaumOSRM(
-        startpunkt,
-        gefilterteAdressen,
-        (p) => setTrasseProgress(5 + Math.round(p * 0.93))
-      )
+      setTrasseMethode(`Fehler: ${fehlerText.slice(0, 80)}`)
+      setTrasseProgress(0)
+      return // Kein Fallback — lieber nichts zeigen als falsche Ergebnisse
     }
 
     setTrassePfade(pfade)

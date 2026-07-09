@@ -697,9 +697,14 @@ const MapView = memo(function MapView({
       )}
 
       {trasseMethode && !editierbarAktiv && (
-        <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: trasseMethode.startsWith('OSM') ? '#4ade80' : '#fbbf24', border: `1px solid ${trasseMethode.startsWith('OSM') ? '#16a34a' : '#d97706'}` }}>
-          {trasseMethode.startsWith('OSM') ? '✅' : '⚠️'} {trasseMethode}
+        <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg max-w-xs"
+          style={{
+            backgroundColor: '#1a1a1a',
+            color: trasseMethode.startsWith('OSM') ? '#4ade80' : trasseMethode.startsWith('Fehler') ? '#f87171' : '#fbbf24',
+            border: `1px solid ${trasseMethode.startsWith('OSM') ? '#16a34a' : trasseMethode.startsWith('Fehler') ? '#dc2626' : '#d97706'}`,
+          }}>
+          {trasseMethode.startsWith('OSM') ? '✅' : trasseMethode.startsWith('Fehler') ? '❌' : '⚠️'} {trasseMethode}
+          {trasseMethode.startsWith('Fehler') && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
         </div>
       )}
 
