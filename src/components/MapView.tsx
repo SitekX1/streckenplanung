@@ -85,14 +85,22 @@ function KlickHandler({
   onKlick,
   ziehModus,
   onZiehZiel,
+  menuOffen,
+  onMenuSchliessen,
 }: {
   aktiv: boolean
   onKlick: (p: LatLng) => void
   ziehModus?: boolean
   onZiehZiel?: (p: LatLng) => void
+  menuOffen?: boolean
+  onMenuSchliessen?: () => void
 }) {
   useMapEvents({
     click(e) {
+      if (menuOffen) {
+        onMenuSchliessen?.()
+        return
+      }
       const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
       if (ziehModus && onZiehZiel) {
         onZiehZiel(pos)
@@ -208,8 +216,15 @@ const MapView = memo(function MapView({
   const editPfadeRef = useRef<LatLng[][]>([])
   const editSingleRef = useRef<LatLng[]>([])
   const prevEditRef = useRef(false)
-  // Timer-Map für click vs. dblclick-Unterscheidung auf Handles
-  const clickTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  // Kontextmenü: erscheint beim Klick auf einen Handle (Löschen / Neuer Strich)
+  const [menuPunkt, setMenuPunkt] = useState<{
+    id: string
+    pos: LatLng
+    screenX: number
+    screenY: number
+    onLoeschen: () => void
+  } | null>(null)
 
   useEffect(() => { trasseRef.current = trasse }, [trasse])
   useEffect(() => { trassePfadeRef.current = trassePfade }, [trassePfade])
@@ -264,6 +279,7 @@ const MapView = memo(function MapView({
       setDeletedStack([])
       setZiehStartId(null)
       setZiehStartPos(null)
+      setMenuPunkt(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
@@ -271,31 +287,11 @@ const MapView = memo(function MapView({
   // ESC bricht den Zeichenmodus ab
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { setZiehStartId(null); setZiehStartPos(null) }
+      if (e.key === 'Escape') { setZiehStartId(null); setZiehStartPos(null); setMenuPunkt(null) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-
-  // Einzelklick vs. Doppelklick unterscheiden:
-  // - Doppelklick (< 250ms) → Timer abbrechen, dblclick-Handler übernimmt (Punkt löschen)
-  // - Einzelklick (> 250ms kein zweiter Klick) → Zeichenmodus aktivieren
-  function handleHandleKlick(id: string, pos: LatLng) {
-    if (clickTimers.current.has(id)) {
-      clearTimeout(clickTimers.current.get(id)!)
-      clickTimers.current.delete(id)
-      return
-    }
-    const t = setTimeout(() => {
-      clickTimers.current.delete(id)
-      if (ziehStartId === id) {
-        setZiehStartId(null); setZiehStartPos(null)
-      } else {
-        setZiehStartId(id); setZiehStartPos(pos)
-      }
-    }, 260)
-    clickTimers.current.set(id, t)
-  }
 
   // Karte angeklickt im Zeichenmodus: neues Segment von Start zu Ziel
   function handleZiehZiel(zielPos: LatLng) {
@@ -496,6 +492,8 @@ const MapView = memo(function MapView({
           onKlick={onStartpunktGesetzt}
           ziehModus={!!ziehStartId}
           onZiehZiel={handleZiehZiel}
+          menuOffen={!!menuPunkt}
+          onMenuSchliessen={() => setMenuPunkt(null)}
         />
         <AutoZoom adressen={adressen} />
         <TopographieWMS sichtbar={topoSichtbar} />
@@ -598,15 +596,13 @@ const MapView = memo(function MapView({
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
-                    handleHandleKlick(hid, p)
+                    if (ziehStartId) { setZiehStartId(null); setZiehStartPos(null); return }
+                    setMenuPunkt({ id: hid, pos: p, screenX: e.containerPoint.x, screenY: e.containerPoint.y, onLoeschen: () => handlePfadPunktLoeschen(pi, i) })
                   },
+                  dragstart: () => setMenuPunkt(null),
                   dragend: (e) => {
                     const ll = (e.target as L.Marker).getLatLng()
                     handlePfadPunktBewegt(pi, i, { lat: ll.lat, lng: ll.lng })
-                  },
-                  dblclick: (e) => {
-                    if (e.originalEvent) e.originalEvent.stopPropagation()
-                    handlePfadPunktLoeschen(pi, i)
                   },
                 }}
               >
@@ -629,15 +625,13 @@ const MapView = memo(function MapView({
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
-                  handleHandleKlick(hid, p)
+                  if (ziehStartId) { setZiehStartId(null); setZiehStartPos(null); return }
+                  setMenuPunkt({ id: hid, pos: p, screenX: e.containerPoint.x, screenY: e.containerPoint.y, onLoeschen: () => handleSinglePunktLoeschen(i) })
                 },
+                dragstart: () => setMenuPunkt(null),
                 dragend: (e) => {
                   const ll = (e.target as L.Marker).getLatLng()
                   handleSinglePunktBewegt(i, { lat: ll.lat, lng: ll.lng })
-                },
-                dblclick: (e) => {
-                  if (e.originalEvent) e.originalEvent.stopPropagation()
-                  handleSinglePunktLoeschen(i)
                 },
               }}
             >
@@ -721,13 +715,42 @@ const MapView = memo(function MapView({
         </div>
       )}
 
+      {/* Kontextmenü beim Handle-Klick */}
+      {editierbarAktiv && menuPunkt && !ziehStartId && (
+        <div style={{
+          position: 'absolute',
+          left: Math.min(menuPunkt.screenX - 50, window.innerWidth - 160),
+          top: Math.max(menuPunkt.screenY - 90, 60),
+          zIndex: 2000,
+          backgroundColor: '#1a1a1a',
+          border: '1px solid #374151',
+          borderRadius: '10px',
+          overflow: 'hidden',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.9)',
+          minWidth: '145px',
+        }}>
+          <button
+            onClick={() => { menuPunkt.onLoeschen(); setMenuPunkt(null) }}
+            style={{ display: 'block', width: '100%', padding: '13px 16px', background: 'none', border: 'none', borderBottom: '1px solid #374151', color: '#f87171', fontSize: '14px', cursor: 'pointer', textAlign: 'left' }}
+          >
+            🗑️ Löschen
+          </button>
+          <button
+            onClick={() => { setZiehStartId(menuPunkt.id); setZiehStartPos(menuPunkt.pos); setMenuPunkt(null) }}
+            style={{ display: 'block', width: '100%', padding: '13px 16px', background: 'none', border: 'none', color: '#93c5fd', fontSize: '14px', cursor: 'pointer', textAlign: 'left' }}
+          >
+            ✏️ Neuer Strich
+          </button>
+        </div>
+      )}
+
       {editierbarAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-xs shadow-lg flex items-center gap-3"
           style={{ backgroundColor: ziehStartId ? '#431407' : '#1e3a5f', color: ziehStartId ? '#fed7aa' : '#93c5fd', border: `1px solid ${ziehStartId ? '#f97316' : '#3b82f6'}` }}>
           {ziehStartId
-            ? '🖊️ Zeichenmodus: Klick auf Karte → neues Segment von diesem Punkt · ESC = Abbrechen'
+            ? '🖊️ Zeichenmodus: Klick auf Karte → neues Segment · ESC oder Punkt antippen = Abbrechen'
             : <>
-                ✏️ Punkte ziehen · Klick auf Linie = Punkt einfügen · Doppelklick auf Punkt = löschen · <b>Klick auf Punkt = neues Segment zeichnen</b>
+                ✏️ Punkte ziehen · Klick auf Linie = Punkt einfügen · <b>Klick auf Punkt = Menü</b>
                 &nbsp;|&nbsp;
                 🏠 <span style={{color:'#fb923c'}}>●</span> Haus · <span style={{color:'#c084fc'}}>●</span> Kabel ziehen · Doppelklick Linie = löschen
               </>
