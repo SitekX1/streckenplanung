@@ -166,22 +166,16 @@ const MapView = memo(function MapView({
     const t = trasseRef.current
     if (t.length === 0) return
 
-    try {
-      const line = turf.lineString(t.map((p) => [p.lng, p.lat]))
-      // Higher tolerance to avoid dense overlapping handles on back-and-forth segments
-      const simplified = turf.simplify(line, { tolerance: 0.0005, highQuality: false })
-      let pts = (simplified.geometry.coordinates as [number, number][]).map((c) => ({
-        lat: c[1],
-        lng: c[0],
-      }))
-      // Cap at 250 handles so edit mode stays usable
-      if (pts.length > 250) {
-        const step = Math.ceil(pts.length / 250)
-        pts = pts.filter((_, i) => i % step === 0 || i === pts.length - 1)
-      }
-      setEditTrasse(pts)
-    } catch {
-      setEditTrasse(t.slice(0, 250))
+    // Even downsampling to max 250 handles.
+    // turf.simplify is intentionally NOT used here: on back-and-forth TSP routes
+    // (OSRM visits each dead-end street and returns) simplify creates long diagonal
+    // lines that cut across the map. Uniform step-sampling preserves point order
+    // so handles always stay on the road.
+    if (t.length <= 250) {
+      setEditTrasse([...t])
+    } else {
+      const step = Math.ceil(t.length / 250)
+      setEditTrasse(t.filter((_, i) => i % step === 0 || i === t.length - 1))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
@@ -210,20 +204,13 @@ const MapView = memo(function MapView({
   // Canvas renderer for CircleMarkers — much faster than SVG for 600+ markers
   const canvasRenderer = useMemo(() => L.canvas({ padding: 0.5 }), [])
 
-  // Simplified trasse for display-only rendering (not for export/edit)
-  // Reduces SVG complexity without visible quality loss (tolerance ≈ 5m)
+  // Down-sampled trasse for display-only (not for export/edit).
+  // Uniform step keeps every point on the road — simplify is not used for the
+  // same reason as in edit mode (diagonal artifacts on back-and-forth routes).
   const trasseDisplay = useMemo(() => {
-    if (trasse.length <= 500) return trasse
-    try {
-      const line = turf.lineString(trasse.map((p) => [p.lng, p.lat]))
-      const simplified = turf.simplify(line, { tolerance: 0.00005, highQuality: false })
-      return (simplified.geometry.coordinates as [number, number][]).map((c) => ({
-        lat: c[1],
-        lng: c[0],
-      }))
-    } catch {
-      return trasse
-    }
+    if (trasse.length <= 1000) return trasse
+    const step = Math.ceil(trasse.length / 1000)
+    return trasse.filter((_, i) => i % step === 0 || i === trasse.length - 1)
   }, [trasse])
 
   // Which points to show in the Polyline: edit handles when active, simplified trasse otherwise
