@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import {
   MapContainer,
   TileLayer,
@@ -25,14 +25,19 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 })
 
-const startpunktIcon = new L.Icon({
-  iconUrl:
-    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
+// DivIcon statt externer URL — keine CDN-Abhängigkeit, immer sichtbar auf jeder Kartenebene
+const startpunktIcon = new L.DivIcon({
+  className: '',
+  html: `<div style="
+    width:20px;height:20px;
+    background:#ef4444;
+    border:3px solid white;
+    border-radius:50%;
+    box-shadow:0 0 0 2px rgba(239,68,68,0.6),0 3px 12px rgba(0,0,0,0.9);
+  "></div>`,
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+  popupAnchor: [0, -12],
 })
 
 const editHandleIcon = new L.DivIcon({
@@ -103,8 +108,6 @@ function TopographieWMS({ sichtbar }: { sichtbar: boolean }) {
       attribution: '© Bundesamt für Kartographie und Geodäsie (BKG)',
       maxNativeZoom: 18,
       maxZoom: 21,
-      updateWhenZooming: false,
-      keepBuffer: 4,
     } as L.WMSOptions)
     wmsLayer.addTo(map)
     return () => {
@@ -125,6 +128,9 @@ function FlyTo({ ziel }: { ziel: LatLng | null }) {
 
 type TileVariante = 'satellit' | 'osm'
 
+// React.memo prevents MapView from re-rendering during Trasse generation
+// progress updates — only re-renders when actual map data (props) changes.
+// This is the primary fix for WMS tile disruption during Trasse generation.
 const MapView = memo(function MapView({
   adressen,
   startpunkt,
@@ -148,7 +154,7 @@ const MapView = memo(function MapView({
   const [suchFehler, setSuchFehler] = useState(false)
   const [flugZiel, setFlugZiel] = useState<LatLng | null>(null)
 
-  // Edit state: simplified trasse for drag handles
+  // Edit state: downsampled trasse for drag handles
   const [editTrasse, setEditTrasse] = useState<LatLng[]>([])
   const trasseRef = useRef<LatLng[]>([])
 
@@ -157,7 +163,11 @@ const MapView = memo(function MapView({
     trasseRef.current = trasse
   }, [trasse])
 
-  // Initialize editTrasse only when edit mode is toggled ON
+  // Initialize editTrasse only when edit mode is toggled ON.
+  // Uses uniform step-sampling instead of turf.simplify: simplify (Ramer-Douglas-Peucker)
+  // creates long diagonal lines on TSP routes that visit dead-ends and back —
+  // it removes U-turn points and connects distant nodes directly.
+  // Step-sampling preserves exact point order so all handles stay on the road.
   useEffect(() => {
     if (!editierbarAktiv) {
       setEditTrasse([])
@@ -166,11 +176,6 @@ const MapView = memo(function MapView({
     const t = trasseRef.current
     if (t.length === 0) return
 
-    // Even downsampling to max 250 handles.
-    // turf.simplify is intentionally NOT used here: on back-and-forth TSP routes
-    // (OSRM visits each dead-end street and returns) simplify creates long diagonal
-    // lines that cut across the map. Uniform step-sampling preserves point order
-    // so handles always stay on the road.
     if (t.length <= 250) {
       setEditTrasse([...t])
     } else {
@@ -201,20 +206,9 @@ const MapView = memo(function MapView({
     }
   }
 
-  // Canvas renderer for CircleMarkers — much faster than SVG for 600+ markers
-  const canvasRenderer = useMemo(() => L.canvas({ padding: 0.5 }), [])
-
-  // Down-sampled trasse for display-only (not for export/edit).
-  // Uniform step keeps every point on the road — simplify is not used for the
-  // same reason as in edit mode (diagonal artifacts on back-and-forth routes).
-  const trasseDisplay = useMemo(() => {
-    if (trasse.length <= 1000) return trasse
-    const step = Math.ceil(trasse.length / 1000)
-    return trasse.filter((_, i) => i % step === 0 || i === trasse.length - 1)
-  }, [trasse])
-
-  // Which points to show in the Polyline: edit handles when active, simplified trasse otherwise
-  const trasseAnzeige = editierbarAktiv && editTrasse.length >= 2 ? editTrasse : trasseDisplay
+  // In view mode, show full trasse (accurate to OSRM geometry).
+  // In edit mode, show the downsampled editTrasse (250 draggable handles).
+  const trasseAnzeige = editierbarAktiv && editTrasse.length >= 2 ? editTrasse : trasse
   const trasseLeaflet = trasseAnzeige.map((p) => [p.lat, p.lng] as [number, number])
 
   function handleTrassePunktBewegt(i: number, neu: LatLng) {
@@ -361,7 +355,6 @@ const MapView = memo(function MapView({
             key={adresse.uuid}
             center={[adresse.lat, adresse.lon]}
             radius={istAktiv ? 6 : 4}
-            {...({ renderer: canvasRenderer } as Record<string, unknown>)}
             pathOptions={{
               fillColor: istAktiv ? adressFarbe : '#6b7280',
               color: istAktiv ? adressFarbe : '#4b5563',
