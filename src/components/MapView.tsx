@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import {
   MapContainer,
   TileLayer,
@@ -125,7 +125,7 @@ function FlyTo({ ziel }: { ziel: LatLng | null }) {
 
 type TileVariante = 'satellit' | 'osm'
 
-export default function MapView({
+const MapView = memo(function MapView({
   adressen,
   startpunkt,
   startpunktSetzenAktiv,
@@ -207,8 +207,27 @@ export default function MapView({
     }
   }
 
-  // Which points to show in the Polyline: edit handles when active, full trasse otherwise
-  const trasseAnzeige = editierbarAktiv && editTrasse.length >= 2 ? editTrasse : trasse
+  // Canvas renderer for CircleMarkers — much faster than SVG for 600+ markers
+  const canvasRenderer = useMemo(() => L.canvas({ padding: 0.5 }), [])
+
+  // Simplified trasse for display-only rendering (not for export/edit)
+  // Reduces SVG complexity without visible quality loss (tolerance ≈ 5m)
+  const trasseDisplay = useMemo(() => {
+    if (trasse.length <= 500) return trasse
+    try {
+      const line = turf.lineString(trasse.map((p) => [p.lng, p.lat]))
+      const simplified = turf.simplify(line, { tolerance: 0.00005, highQuality: false })
+      return (simplified.geometry.coordinates as [number, number][]).map((c) => ({
+        lat: c[1],
+        lng: c[0],
+      }))
+    } catch {
+      return trasse
+    }
+  }, [trasse])
+
+  // Which points to show in the Polyline: edit handles when active, simplified trasse otherwise
+  const trasseAnzeige = editierbarAktiv && editTrasse.length >= 2 ? editTrasse : trasseDisplay
   const trasseLeaflet = trasseAnzeige.map((p) => [p.lat, p.lng] as [number, number])
 
   function handleTrassePunktBewegt(i: number, neu: LatLng) {
@@ -355,6 +374,7 @@ export default function MapView({
             key={adresse.uuid}
             center={[adresse.lat, adresse.lon]}
             radius={istAktiv ? 6 : 4}
+            {...({ renderer: canvasRenderer } as Record<string, unknown>)}
             pathOptions={{
               fillColor: istAktiv ? adressFarbe : '#6b7280',
               color: istAktiv ? adressFarbe : '#4b5563',
@@ -491,4 +511,6 @@ export default function MapView({
       )}
     </div>
   )
-}
+})
+
+export default MapView
