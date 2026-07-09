@@ -39,6 +39,36 @@ export function berechneGrenzen(
   }
 }
 
+// Mehrere öffentliche Overpass-Mirror — wenn einer ausfällt, wird der nächste probiert
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+]
+
+async function fetchOverpass(query: string): Promise<Response> {
+  let lastError: unknown
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 55_000) // 55s pro Versuch
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        body: `data=${encodeURIComponent(query)}`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal: controller.signal,
+      })
+      clearTimeout(timer)
+      if (res.ok) return res
+      lastError = new Error(`HTTP ${res.status} von ${endpoint}`)
+    } catch (e) {
+      clearTimeout(timer)
+      lastError = e
+    }
+  }
+  throw new Error(`Alle Overpass-Server nicht erreichbar: ${lastError}`)
+}
+
 export async function fetchOsmNetz(bounds: {
   minLat: number
   maxLat: number
@@ -46,15 +76,9 @@ export async function fetchOsmNetz(bounds: {
   maxLng: number
 }): Promise<OsmNetz> {
   const bbox = `${bounds.minLat},${bounds.minLng},${bounds.maxLat},${bounds.maxLng}`
-  const query = `[out:json][timeout:90];(way["highway"~"${HIGHWAY_FILTER}"](${bbox}););out body;>;out skel qt;`
+  const query = `[out:json][timeout:50];(way["highway"~"${HIGHWAY_FILTER}"](${bbox}););out body;>;out skel qt;`
 
-  const res = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    body: `data=${encodeURIComponent(query)}`,
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  })
-
-  if (!res.ok) throw new Error(`Overpass API: HTTP ${res.status}`)
+  const res = await fetchOverpass(query)
 
   const data = (await res.json()) as {
     elements: Array<{
