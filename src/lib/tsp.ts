@@ -49,10 +49,10 @@ export function nearestNeighborTSP(startpunkt: LatLng, punkte: LatLng[]): LatLng
 export function clusteredNearestNeighborTSP(startpunkt: LatLng, adressen: Address[]): LatLng[] {
   if (adressen.length === 0) return [startpunkt]
 
-  // Group by plz+ortsname
+  // Group by plz+ortsname+ortsteil (matches the Orts-Filter grouping)
   const clusterMap = new Map<string, Address[]>()
   for (const a of adressen) {
-    const key = `${a.plz}_${a.ortsname}`
+    const key = `${a.plz}_${a.ortsname}_${a.ortsteil}`
     if (!clusterMap.has(key)) clusterMap.set(key, [])
     clusterMap.get(key)!.push(a)
   }

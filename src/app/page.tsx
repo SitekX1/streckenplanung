@@ -16,8 +16,10 @@ const MapView = dynamic(() => import('../components/MapView'), { ssr: false })
 function extractOrte(adressen: Address[]): OrtInfo[] {
   const map = new Map<string, OrtInfo>()
   for (const a of adressen) {
-    const key = `${a.plz}_${a.ortsname}`
-    if (!map.has(key)) map.set(key, { key, name: a.ortsname, plz: a.plz, anzahl: 0 })
+    // Group by ortsname+ortsteil — handles Gemeinden with multiple Ortsteile
+    const key = `${a.plz}_${a.ortsname}_${a.ortsteil}`
+    const name = [a.ortsname, a.ortsteil].filter(Boolean).join(' – ') || a.plz
+    if (!map.has(key)) map.set(key, { key, name, plz: a.plz, anzahl: 0 })
     map.get(key)!.anzahl++
   }
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'))
@@ -86,11 +88,11 @@ export default function Home() {
     setHausanschluesse([])
     setTrasseProgress(1)
 
-    // Only route addresses from selected towns
+    // Only route addresses from selected towns/Ortsteile
     const gefilterteAdressen =
       aktiveOrteKeys.length === orte.length
         ? adressen
-        : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}`))
+        : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
 
     const geordnetePunkte = clusteredNearestNeighborTSP(startpunkt, gefilterteAdressen)
 
@@ -112,11 +114,11 @@ export default function Home() {
 
     setHausanschluesseProgress(1)
 
-    // Hausanschlüsse only for addresses in active towns
+    // Hausanschlüsse only for addresses in active towns/Ortsteile
     const gefilterteAdressen =
       aktiveOrteKeys.length === orte.length
         ? adressen
-        : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}`))
+        : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
 
     const ergebnis = await berechneHausanschluesse(trasse, gefilterteAdressen, (p) => {
       setHausanschluesseProgress(p)
