@@ -332,9 +332,10 @@ const MapView = memo(function MapView({
   function handlePfadPunktLoeschen(pfadIdx: number, punktIdx: number) {
     setEditPfade((prev) =>
       prev.map((pf, pi) => {
-        if (pi !== pfadIdx || pf.length <= 2) return pf
+        if (pi !== pfadIdx) return pf
+        if (pf.length <= 2) return []  // Pfad zu kurz → komplett entfernen
         return pf.filter((_, i) => i !== punktIdx)
-      })
+      }).filter((pf) => pf.length >= 2)
     )
   }
 
@@ -361,10 +362,7 @@ const MapView = memo(function MapView({
   }
 
   function handleSinglePunktLoeschen(i: number) {
-    setEditSingle((prev) => {
-      if (prev.length <= 2) return prev
-      return prev.filter((_, idx) => idx !== i)
-    })
+    setEditSingle((prev) => prev.filter((_, idx) => idx !== i))
   }
 
   function handleSinglePunktEinfuegen(klickPos: LatLng) {
@@ -730,13 +728,13 @@ const MapView = memo(function MapView({
           minWidth: '145px',
         }}>
           <button
-            onClick={() => { menuPunkt.onLoeschen(); setMenuPunkt(null) }}
+            onPointerDown={(e) => { e.stopPropagation(); menuPunkt.onLoeschen(); setMenuPunkt(null) }}
             style={{ display: 'block', width: '100%', padding: '13px 16px', background: 'none', border: 'none', borderBottom: '1px solid #374151', color: '#f87171', fontSize: '14px', cursor: 'pointer', textAlign: 'left' }}
           >
             🗑️ Löschen
           </button>
           <button
-            onClick={() => { setZiehStartId(menuPunkt.id); setZiehStartPos(menuPunkt.pos); setMenuPunkt(null) }}
+            onPointerDown={(e) => { e.stopPropagation(); setZiehStartId(menuPunkt.id); setZiehStartPos(menuPunkt.pos); setMenuPunkt(null) }}
             style={{ display: 'block', width: '100%', padding: '13px 16px', background: 'none', border: 'none', color: '#93c5fd', fontSize: '14px', cursor: 'pointer', textAlign: 'left' }}
           >
             ✏️ Neuer Strich
