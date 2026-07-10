@@ -80,15 +80,18 @@ function sortiereNaechsterNachbar(start: LatLng, adressen: Address[]): Address[]
 // ORS-Baum: bis zu 45 Adressen pro API-Aufruf → wesentlich weniger Anfragen als OSRM.
 // Jeder Batch startet vom nächsten Punkt auf dem bestehenden Netz (Abzweig mitten auf Straßen).
 // ORS routet dann optimal durch alle Adressen im Batch — kein Hin-und-Zurück.
+// vorhandenePfade: für "Trasse erweitern" — neue Pfade docken ans bestehende Netz an.
 export async function berechneBaumORS(
   start: LatLng,
   adressen: Address[],
-  onProgress?: (prozent: number) => void
+  onProgress?: (prozent: number) => void,
+  vorhandenePfade?: LatLng[][]
 ): Promise<LatLng[][]> {
   if (adressen.length === 0) return []
 
   const sortiert = sortiereNaechsterNachbar(start, adressen)
-  const pfade: LatLng[][] = []
+  const pfade: LatLng[][] = vorhandenePfade ? [...vorhandenePfade] : []
+  const neuePfade: LatLng[][] = []
 
   const batches: Address[][] = []
   for (let i = 0; i < sortiert.length; i += MAX_WAYPOINTS) {
@@ -111,12 +114,13 @@ export async function berechneBaumORS(
 
     try {
       const route = await routeOrs(waypoints)
-      if (route.length >= 2) pfade.push(route)
+      if (route.length >= 2) { pfade.push(route); neuePfade.push(route) }
     } catch (e) {
       fehlerAnzahl++
       letzterFehler = e instanceof Error ? e.message : String(e)
       console.warn(`ORS Batch ${b + 1} fehlgeschlagen:`, letzterFehler)
       pfade.push(waypoints)
+      neuePfade.push(waypoints)
     }
 
     onProgress?.(Math.round(((b + 1) / batches.length) * 100))
@@ -127,5 +131,5 @@ export async function berechneBaumORS(
     throw new Error(`ORS nicht verfügbar: ${letzterFehler}`)
   }
 
-  return pfade
+  return neuePfade
 }

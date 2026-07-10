@@ -99,25 +99,21 @@ export default function Home() {
     let pfade: LatLng[][] = []
 
     try {
-      // Phase 1: OSM-Straßennetz laden (Overpass API, kostenlos)
       setTrasseProgress(5)
       const bounds = berechneGrenzen(gefilterteAdressen, startpunkt)
       const osmNetz = await fetchOsmNetz(bounds)
       setTrasseProgress(18)
 
-      // Phase 2: Straßengraph aufbauen
       const graph = buildRoadGraph(osmNetz)
       if (graph.coordinates.size === 0) throw new Error('Leerer Graph')
       setTrasseProgress(22)
 
-      // Phase 3: Startpunkt + Adressen auf nächste Straßenknoten einrasten
       const startNodeId = graph.nearestNode(startpunkt)
       const terminalIds = gefilterteAdressen.map((a) =>
         graph.nearestNode({ lat: a.lat, lng: a.lon })
       )
       setTrasseProgress(25)
 
-      // Phase 4: Steiner-Baum (jede Straße nur EINMAL — kein Hin-und-Zurück)
       const ergebnis = await berechneSteinerBaum(
         graph,
         startNodeId,
@@ -155,6 +151,54 @@ export default function Home() {
     setLaengen(berechneLaengen(pfade, []))
     setTimeout(() => setTrasseProgress(0), 500)
   }, [startpunkt, adressen, aktiveOrteKeys, orte.length])
+
+  const handleTrasseErweitern = useCallback(async (file: File) => {
+    const vorhandenePfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
+    if (vorhandenePfade.length === 0 || !startpunkt) return
+
+    setTrasseProgress(2)
+    setTrasseMethode('ORS-Routing (Erweiterung läuft…)')
+
+    try {
+      const neueAdressen = await parseExcelFile(file)
+      // Duplikate herausfiltern (gleiche PLZ + Straße + Nr)
+      const existingKeys = new Set(adressen.map((a) => `${a.plz}_${a.strasse}_${a.nr}_${a.nr_zusatz}`))
+      const gefilterteNeue = neueAdressen.filter(
+        (a) => !existingKeys.has(`${a.plz}_${a.strasse}_${a.nr}_${a.nr_zusatz}`)
+      )
+      if (gefilterteNeue.length === 0) {
+        setTrasseMethode('Keine neuen Adressen gefunden')
+        setTrasseProgress(0)
+        return
+      }
+
+      const neuePfade = await berechneBaumORS(
+        startpunkt,
+        gefilterteNeue,
+        (p) => setTrasseProgress(2 + Math.round(p * 0.95)),
+        vorhandenePfade
+      )
+
+      const allePfade = [...vorhandenePfade, ...neuePfade]
+      setTrassePfade(allePfade)
+      setTrasse(allePfade.flat())
+      setTrasseMethode(`ORS-Baum Erweitert · ${allePfade.length} Segmente`)
+
+      const alleAdressen = [...adressen, ...gefilterteNeue]
+      setAdressen(alleAdressen)
+      const orteListe = extractOrte(alleAdressen)
+      setOrte(orteListe)
+      setAktiveOrteKeys(orteListe.map((o) => o.key))
+
+      setLaengen(berechneLaengen(allePfade, hausanschluesse))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setTrasseMethode(`Erweiterung fehlgeschlagen: ${msg}`)
+    }
+
+    setTrasseProgress(100)
+    setTimeout(() => setTrasseProgress(0), 500)
+  }, [startpunkt, trassePfade, trasse, adressen, hausanschluesse])
 
   const handleHausanschluesseGenerieren = useCallback(async () => {
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
@@ -273,10 +317,17 @@ export default function Home() {
     setAktiveOrteKeys(orteListe.map((o) => o.key))
   }, [])
 
+  // Gefilterte Adressanzahl für Hausanschluss-Zähler
+  const gefilterteAdressenAnzahl =
+    aktiveOrteKeys.length === orte.length
+      ? adressen.length
+      : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)).length
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#0f0f0f]">
       <Sidebar
         adressenCount={adressen.length}
+        gefilterteAdressenAnzahl={gefilterteAdressenAnzahl}
         orte={orte}
         aktiveOrteKeys={aktiveOrteKeys}
         startpunktGesetzt={startpunkt !== null}
@@ -307,6 +358,7 @@ export default function Home() {
         onKMLExport={handleKMLExport}
         onProjektSpeichern={handleProjektSpeichern}
         onProjektLaden={handleProjektLaden}
+        onTrasseErweitern={handleTrasseErweitern}
       />
       <main className="flex-1 relative overflow-hidden">
         <MapView

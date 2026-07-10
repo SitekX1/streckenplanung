@@ -1,4 +1,4 @@
-import { Projekt } from './types'
+﻿import { Projekt } from './types'
 
 function isValidProjekt(obj: unknown): obj is Projekt {
   if (!obj || typeof obj !== 'object') return false
@@ -22,8 +22,29 @@ function downloadBlob(inhalt: string, dateiname: string): void {
   URL.revokeObjectURL(url)
 }
 
-export function exportProjekt(projekt: Projekt): void {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyFn = (...args: any[]) => any
+
+export async function exportProjekt(projekt: Projekt): Promise<void> {
   const json = JSON.stringify(projekt, null, 2)
+
+  const picker = (window as unknown as Record<string, AnyFn>)['showSaveFilePicker'] as AnyFn | undefined
+  if (picker) {
+    try {
+      const handle = await picker({
+        suggestedName: `${projekt.name}.json`,
+        types: [{ description: 'JSON Projektdatei', accept: { 'application/json': ['.json'] } }],
+      })
+      const writable = await handle.createWritable()
+      await writable.write(json)
+      await writable.close()
+      return
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return
+      // Fallback auf Download
+    }
+  }
+
   downloadBlob(json, `${projekt.name}.json`)
 }
 

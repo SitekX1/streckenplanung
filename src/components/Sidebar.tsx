@@ -1,10 +1,11 @@
-'use client'
+﻿'use client'
 
 import { useRef } from 'react'
 import { OrtInfo } from '../lib/types'
 
 interface SidebarProps {
   adressenCount: number
+  gefilterteAdressenAnzahl: number
   orte: OrtInfo[]
   aktiveOrteKeys: string[]
   startpunktGesetzt: boolean
@@ -35,6 +36,7 @@ interface SidebarProps {
   onKMLExport: () => void
   onProjektSpeichern: () => void
   onProjektLaden: (file: File) => void
+  onTrasseErweitern?: (file: File) => void
 }
 
 function formatMeter(meter: number): string {
@@ -46,6 +48,7 @@ function formatMeter(meter: number): string {
 
 export default function Sidebar({
   adressenCount,
+  gefilterteAdressenAnzahl,
   orte,
   aktiveOrteKeys,
   onOrtToggle,
@@ -76,9 +79,11 @@ export default function Sidebar({
   onKMLExport,
   onProjektSpeichern,
   onProjektLaden,
+  onTrasseErweitern,
 }: SidebarProps) {
   const excelInputRef = useRef<HTMLInputElement>(null)
   const projektLadenRef = useRef<HTMLInputElement>(null)
+  const trasseErweiternRef = useRef<HTMLInputElement>(null)
 
   const hatDaten = adressenCount > 0
   const kannTrasseGenerieren = startpunktGesetzt && hatDaten
@@ -274,6 +279,27 @@ export default function Sidebar({
                   >
                     ✏️ {editierbarAktiv ? 'Bearbeitung aktiv' : 'Trasse bearbeiten'}
                   </button>
+                  {onTrasseErweitern && (
+                    <>
+                      <button
+                        onClick={() => trasseErweiternRef.current?.click()}
+                        className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left"
+                      >
+                        🔗 Trasse erweitern
+                      </button>
+                      <input
+                        ref={trasseErweiternRef}
+                        type="file"
+                        accept=".xlsx,.xls"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (file) onTrasseErweitern(file)
+                          e.target.value = ''
+                        }}
+                      />
+                    </>
+                  )}
                   {editierbarAktiv && (
                     <p className="px-1 text-[10px] text-blue-400 leading-tight">
                       Punkte ziehen · Klick auf Linie fügt Punkt ein · Doppelklick auf Punkt löscht
@@ -320,7 +346,7 @@ export default function Sidebar({
               ) : hausanschluesseCount > 0 ? (
                 <div className="flex flex-col gap-2">
                   <div className="px-3 py-2 rounded-lg text-sm bg-green-900/40 text-green-400 border border-green-800">
-                    ✅ {hausanschluesseCount} Hausanschlüsse: {formatMeter(hausanschlussLaenge)}
+                    ✅ {hausanschluesseCount} / {gefilterteAdressenAnzahl} Adressen: {formatMeter(hausanschlussLaenge)}
                   </div>
                   <button
                     onClick={onHausanschluesseGenerieren}
@@ -382,14 +408,6 @@ export default function Sidebar({
               className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               📥 KML exportieren
-            </button>
-            <button
-              onClick={onProjektSpeichern}
-              disabled={!hatDaten}
-              className="w-full px-3 py-2 rounded-lg text-sm font-medium text-gray-300 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{ backgroundColor: '#1f2937' }}
-            >
-              📄 Als JSON speichern
             </button>
           </div>
         </div>

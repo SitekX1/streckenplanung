@@ -163,6 +163,11 @@ const MapView = memo(function MapView({
   const [suchFehler, setSuchFehler] = useState(false)
   const [flugZiel, setFlugZiel] = useState<LatLng | null>(null)
 
+  // Layer-Sichtbarkeit (Feature A)
+  const [trasseSichtbar, setTrasseSichtbar] = useState(true)
+  const [hausanschluesseSichtbar, setHausanschluesseSichtbar] = useState(true)
+  const [adressenSichtbar, setAdressenSichtbar] = useState(true)
+
   const [editPfade, setEditPfade] = useState<LatLng[][]>([])
   const [editSingle, setEditSingle] = useState<LatLng[]>([])
   const [deletedStack, setDeletedStack] = useState<Hausstich[]>([])
@@ -175,6 +180,8 @@ const MapView = memo(function MapView({
   const editPfadeRef = useRef<LatLng[][]>([])
   const editSingleRef = useRef<LatLng[]>([])
   const prevEditRef = useRef(false)
+  // Dirty-Flag: ORS-Originalgeometrie bleibt erhalten wenn nichts geändert (Feature G)
+  const editiertRef = useRef(false)
 
   useEffect(() => { trasseRef.current = trasse }, [trasse])
   useEffect(() => { trassePfadeRef.current = trassePfade }, [trassePfade])
@@ -189,6 +196,7 @@ const MapView = memo(function MapView({
       const pfade = trassePfadeRef.current
       const t = trasseRef.current
       setDeletedStack([])
+      editiertRef.current = false
       if (pfade.length > 0) {
         const gueltig = pfade.filter((p) => p.length >= 2)
         const gesamtPunkte = gueltig.reduce((s, p) => s + p.length, 0)
@@ -207,8 +215,11 @@ const MapView = memo(function MapView({
     } else if (wasActive && !editierbarAktiv) {
       const ep = editPfadeRef.current
       const es = editSingleRef.current
-      if (ep.length > 0) onTrassePfadeGeaendert(ep.filter((p) => p.length >= 2))
-      else if (es.length >= 2) onTrasseGeaendert(es)
+      // Nur propagieren wenn tatsächlich etwas geändert — ORS-Geometrie bleibt sonst exakt erhalten
+      if (editiertRef.current) {
+        if (ep.length > 0) onTrassePfadeGeaendert(ep.filter((p) => p.length >= 2))
+        else if (es.length >= 2) onTrasseGeaendert(es)
+      }
       setEditPfade([])
       setEditSingle([])
       setDeletedStack([])
@@ -229,6 +240,7 @@ const MapView = memo(function MapView({
 
   function handleZiehZiel(zielPos: LatLng) {
     if (!ziehStartPos) return
+    editiertRef.current = true
     setEditPfade((prev) => [...prev, [ziehStartPos, zielPos]])
     setZiehStartId(null)
     setZiehStartPos(null)
@@ -236,12 +248,14 @@ const MapView = memo(function MapView({
 
   // --- Trasse ---
   function handlePfadPunktBewegt(pfadIdx: number, punktIdx: number, pos: LatLng) {
+    editiertRef.current = true
     setEditPfade((prev) =>
       prev.map((pf, pi) => (pi === pfadIdx ? pf.map((p, i) => (i === punktIdx ? pos : p)) : pf))
     )
   }
 
   function handlePfadPunktLoeschen(pfadIdx: number, punktIdx: number) {
+    editiertRef.current = true
     setEditPfade((prev) =>
       prev.map((pf, pi) => {
         if (pi !== pfadIdx) return pf
@@ -252,10 +266,12 @@ const MapView = memo(function MapView({
   }
 
   function handlePfadLoeschen(pfadIdx: number) {
+    editiertRef.current = true
     setEditPfade((prev) => prev.filter((_, i) => i !== pfadIdx))
   }
 
   function handlePfadPunktEinfuegen(pfadIdx: number, klickPos: LatLng) {
+    editiertRef.current = true
     setEditPfade((prev) =>
       prev.map((pf, pi) => {
         if (pi !== pfadIdx || pf.length < 2) return pf
@@ -270,10 +286,12 @@ const MapView = memo(function MapView({
   }
 
   function handleSinglePunktBewegt(i: number, pos: LatLng) {
+    editiertRef.current = true
     setEditSingle((prev) => prev.map((p, idx) => (idx === i ? pos : p)))
   }
 
   function handleSinglePunktLoeschen(i: number) {
+    editiertRef.current = true
     setEditSingle((prev) => prev.filter((_, idx) => idx !== i))
   }
 
@@ -283,6 +301,7 @@ const MapView = memo(function MapView({
       const line = turf.lineString(editSingle.map((p) => [p.lng, p.lat]))
       const nearest = turf.nearestPointOnLine(line, turf.point([klickPos.lng, klickPos.lat]))
       const idx = (nearest.properties.index ?? 0) as number
+      editiertRef.current = true
       setEditSingle((prev) => { const u = [...prev]; u.splice(idx + 1, 0, klickPos); return u })
     } catch { /* ignore */ }
   }
@@ -365,6 +384,13 @@ const MapView = memo(function MapView({
     color: farbe, fontSize: '14px', cursor: 'pointer', textAlign: 'left',
   })
 
+  const layerBtnStyle = (aktiv: boolean): React.CSSProperties => ({
+    backgroundColor: aktiv ? '#1e3a5f' : '#1a1a1a',
+    color: '#f9fafb',
+    border: `1px solid ${aktiv ? '#3b82f6' : '#374151'}`,
+    opacity: aktiv ? 1 : 0.55,
+  })
+
   return (
     <div className="relative w-full h-full">
       {/* Ortssuche */}
@@ -385,7 +411,7 @@ const MapView = memo(function MapView({
         {suchFehler && <span className="text-xs" style={{ color: '#ef4444' }}>Nicht gefunden</span>}
       </div>
 
-      {/* Layer-Buttons */}
+      {/* Rechte Buttons: Karte + Layer-Toggles */}
       <div className="absolute top-3 right-3 z-1000 flex flex-col gap-2">
         <button onClick={() => setTileVariante((v) => (v === 'satellit' ? 'osm' : 'satellit'))}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
@@ -401,6 +427,24 @@ const MapView = memo(function MapView({
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
           style={{ backgroundColor: ortsnamenSichtbar ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb', border: `1px solid ${ortsnamenSichtbar ? '#3b82f6' : '#374151'}` }}>
           🏷️ Ortsnamen
+        </button>
+
+        <div style={{ borderTop: '1px solid #374151', margin: '2px 0' }} />
+
+        <button onClick={() => setTrasseSichtbar((v) => !v)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all"
+          style={layerBtnStyle(trasseSichtbar)}>
+          🔵 Trasse
+        </button>
+        <button onClick={() => setHausanschluesseSichtbar((v) => !v)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all"
+          style={layerBtnStyle(hausanschluesseSichtbar)}>
+          🔴 Hausanschlüsse
+        </button>
+        <button onClick={() => setAdressenSichtbar((v) => !v)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all"
+          style={layerBtnStyle(adressenSichtbar)}>
+          🟢 Adressen
         </button>
       </div>
 
@@ -424,7 +468,7 @@ const MapView = memo(function MapView({
         <FlyTo ziel={flugZiel} />
 
         {/* Adressen */}
-        {adressen.map((a) => {
+        {adressenSichtbar && adressen.map((a) => {
           const aktiv = aktiveOrteKeys.length === 0 || aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)
           return (
             <CircleMarker key={a.uuid} center={[a.lat, a.lon]} radius={aktiv ? 6 : 4}
@@ -445,12 +489,12 @@ const MapView = memo(function MapView({
         {startpunkt && <Marker position={[startpunkt.lat, startpunkt.lng]} icon={startpunktIcon}><Tooltip>Startpunkt</Tooltip></Marker>}
 
         {/* Trasse View */}
-        {trassePfade.length > 0 && <TrasseNetzwerk pfade={trassePfade} farbe={trasseFarbe} opacity={editierbarAktiv ? 0.25 : 0.9} />}
-        {!editierbarAktiv && trassePfade.length === 0 && trasse.length >= 2 && (
+        {trasseSichtbar && trassePfade.length > 0 && <TrasseNetzwerk pfade={trassePfade} farbe={trasseFarbe} opacity={editierbarAktiv ? 0.25 : 0.9} />}
+        {trasseSichtbar && !editierbarAktiv && trassePfade.length === 0 && trasse.length >= 2 && (
           <Polyline positions={trasse.map((p) => [p.lat, p.lng] as [number, number])} pathOptions={{ color: trasseFarbe, weight: 4, opacity: 0.9 }} />
         )}
 
-        {/* Trasse Edit — MST-Linien (Linie antippen = Menü) */}
+        {/* Trasse Edit — MST-Linien */}
         {editierbarAktiv && editPfade.map((pfad, pi) =>
           pfad.length >= 2 ? (
             <Polyline key={`ep-${pi}`} positions={pfad.map((p) => [p.lat, p.lng] as [number, number])}
@@ -535,8 +579,8 @@ const MapView = memo(function MapView({
           )
         })}
 
-        {/* Hausanschlüsse — Linien (Edit: antippen = Menü) */}
-        {hausanschluesse.map((h) => {
+        {/* Hausanschlüsse — Linien */}
+        {hausanschluesseSichtbar && hausanschluesse.map((h) => {
           const wp = hausstichWp(h)
           return (
             <Polyline key={h.id} positions={wp.map((p) => [p.lat, p.lng] as [number, number])}
@@ -556,8 +600,8 @@ const MapView = memo(function MapView({
           )
         })}
 
-        {/* Hausanschlüsse — Handles (alle Wegpunkte) */}
-        {editierbarAktiv && hausanschluesse.flatMap((h) => {
+        {/* Hausanschlüsse — Handles */}
+        {hausanschluesseSichtbar && editierbarAktiv && hausanschluesse.flatMap((h) => {
           const wp = hausstichWp(h)
           return wp.map((p, idx) => {
             const isFirst = idx === 0
@@ -594,11 +638,11 @@ const MapView = memo(function MapView({
         <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg max-w-xs"
           style={{
             backgroundColor: '#1a1a1a',
-            color: trasseMethode.startsWith('OSM') ? '#4ade80' : trasseMethode.startsWith('Fehler') ? '#f87171' : '#fbbf24',
-            border: `1px solid ${trasseMethode.startsWith('OSM') ? '#16a34a' : trasseMethode.startsWith('Fehler') ? '#dc2626' : '#d97706'}`,
+            color: trasseMethode.startsWith('OSM') ? '#4ade80' : trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '#f87171' : '#fbbf24',
+            border: `1px solid ${trasseMethode.startsWith('OSM') ? '#16a34a' : trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '#dc2626' : '#d97706'}`,
           }}>
-          {trasseMethode.startsWith('OSM') ? '✅' : trasseMethode.startsWith('Fehler') ? '❌' : '⚠️'} {trasseMethode}
-          {trasseMethode.startsWith('Fehler') && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
+          {trasseMethode.startsWith('OSM') || trasseMethode.includes('Erweitert') ? '✅' : trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '❌' : '⚠️'} {trasseMethode}
+          {(trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen')) && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
         </div>
       )}
 
