@@ -55,6 +55,7 @@ function berechneLinieLaenge(wp: LatLng[]): number {
 
 type MenuAktion = { label: string; farbe: string; action: () => void }
 type AktivMenu = { screenX: number; screenY: number; aktionen: MenuAktion[] } | null
+type NeuerHsStart = { adresseUuid: string; pos: LatLng; name: string } | null
 
 interface MapViewProps {
   adressen: Address[]
@@ -76,12 +77,14 @@ interface MapViewProps {
 }
 
 function KlickHandler({
-  aktiv, onKlick, ziehModus, onZiehZiel, menuOffen, onMenuSchliessen,
+  aktiv, onKlick, ziehModus, onZiehZiel, hsZeichenModus, onHsZeichenZiel, menuOffen, onMenuSchliessen,
 }: {
   aktiv: boolean
   onKlick: (p: LatLng) => void
   ziehModus?: boolean
   onZiehZiel?: (p: LatLng) => void
+  hsZeichenModus?: boolean
+  onHsZeichenZiel?: (p: LatLng) => void
   menuOffen?: boolean
   onMenuSchliessen?: () => void
 }) {
@@ -90,6 +93,7 @@ function KlickHandler({
       if (menuOffen) { onMenuSchliessen?.(); return }
       const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
       if (ziehModus && onZiehZiel) onZiehZiel(pos)
+      else if (hsZeichenModus && onHsZeichenZiel) onHsZeichenZiel(pos)
       else if (aktiv) onKlick(pos)
     },
   })
@@ -163,7 +167,7 @@ const MapView = memo(function MapView({
   const [suchFehler, setSuchFehler] = useState(false)
   const [flugZiel, setFlugZiel] = useState<LatLng | null>(null)
 
-  // Layer-Sichtbarkeit (Feature A)
+  // Layer-Sichtbarkeit
   const [trasseSichtbar, setTrasseSichtbar] = useState(true)
   const [hausanschluesseSichtbar, setHausanschluesseSichtbar] = useState(true)
   const [adressenSichtbar, setAdressenSichtbar] = useState(true)
@@ -174,13 +178,14 @@ const MapView = memo(function MapView({
   const [ziehStartId, setZiehStartId] = useState<string | null>(null)
   const [ziehStartPos, setZiehStartPos] = useState<LatLng | null>(null)
   const [aktivMenu, setAktivMenu] = useState<AktivMenu>(null)
+  // Manuell neuen Hausanschluss zeichnen
+  const [neuerHsStart, setNeuerHsStart] = useState<NeuerHsStart>(null)
 
   const trasseRef = useRef<LatLng[]>([])
   const trassePfadeRef = useRef<LatLng[][]>([])
   const editPfadeRef = useRef<LatLng[][]>([])
   const editSingleRef = useRef<LatLng[]>([])
   const prevEditRef = useRef(false)
-  // Dirty-Flag: ORS-Originalgeometrie bleibt erhalten wenn nichts geändert (Feature G)
   const editiertRef = useRef(false)
 
   useEffect(() => { trasseRef.current = trasse }, [trasse])
@@ -215,7 +220,6 @@ const MapView = memo(function MapView({
     } else if (wasActive && !editierbarAktiv) {
       const ep = editPfadeRef.current
       const es = editSingleRef.current
-      // Nur propagieren wenn tatsächlich etwas geändert — ORS-Geometrie bleibt sonst exakt erhalten
       if (editiertRef.current) {
         if (ep.length > 0) onTrassePfadeGeaendert(ep.filter((p) => p.length >= 2))
         else if (es.length >= 2) onTrasseGeaendert(es)
@@ -225,6 +229,7 @@ const MapView = memo(function MapView({
       setDeletedStack([])
       setZiehStartId(null)
       setZiehStartPos(null)
+      setNeuerHsStart(null)
       setAktivMenu(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -232,7 +237,10 @@ const MapView = memo(function MapView({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { setZiehStartId(null); setZiehStartPos(null); setAktivMenu(null) }
+      if (e.key === 'Escape') {
+        setZiehStartId(null); setZiehStartPos(null)
+        setNeuerHsStart(null); setAktivMenu(null)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -244,6 +252,21 @@ const MapView = memo(function MapView({
     setEditPfade((prev) => [...prev, [ziehStartPos, zielPos]])
     setZiehStartId(null)
     setZiehStartPos(null)
+  }
+
+  function handleNeuerHsZiel(zielPos: LatLng) {
+    if (!neuerHsStart) return
+    const wp: LatLng[] = [neuerHsStart.pos, zielPos]
+    const neuerHs: Hausstich = {
+      id: crypto.randomUUID(),
+      addressUuid: neuerHsStart.adresseUuid,
+      hausKoordinate: neuerHsStart.pos,
+      trassenPunkt: zielPos,
+      wegpunkte: wp,
+      laengeMeter: berechneLinieLaenge(wp),
+    }
+    onHausanschluesseGeaendert([...hausanschluesse, neuerHs])
+    setNeuerHsStart(null)
   }
 
   // --- Trasse ---
@@ -391,6 +414,8 @@ const MapView = memo(function MapView({
     opacity: aktiv ? 1 : 0.55,
   })
 
+  const imZeichenModus = !!ziehStartId || !!neuerHsStart
+
   return (
     <div className="relative w-full h-full">
       {/* Ortssuche */}
@@ -411,7 +436,7 @@ const MapView = memo(function MapView({
         {suchFehler && <span className="text-xs" style={{ color: '#ef4444' }}>Nicht gefunden</span>}
       </div>
 
-      {/* Rechte Buttons: Karte + Layer-Toggles */}
+      {/* Rechte Buttons */}
       <div className="absolute top-3 right-3 z-1000 flex flex-col gap-2">
         <button onClick={() => setTileVariante((v) => (v === 'satellit' ? 'osm' : 'satellit'))}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
@@ -452,7 +477,7 @@ const MapView = memo(function MapView({
       </div>
 
       <MapContainer center={[51.1657, 10.4515]} zoom={6} style={{ height: '100%', width: '100%' }}
-        className={startpunktSetzenAktiv || ziehStartId ? 'cursor-crosshair' : ''}>
+        className={startpunktSetzenAktiv || imZeichenModus ? 'cursor-crosshair' : ''}>
 
         {tileVariante === 'satellit' ? (
           <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" attribution="© Esri" maxNativeZoom={19} maxZoom={21} />
@@ -465,6 +490,7 @@ const MapView = memo(function MapView({
 
         <KlickHandler aktiv={startpunktSetzenAktiv} onKlick={onStartpunktGesetzt}
           ziehModus={!!ziehStartId} onZiehZiel={handleZiehZiel}
+          hsZeichenModus={!!neuerHsStart} onHsZeichenZiel={handleNeuerHsZiel}
           menuOffen={!!aktivMenu} onMenuSchliessen={() => setAktivMenu(null)} />
         <AutoZoom adressen={adressen} />
         <TopographieWMS sichtbar={topoSichtbar} />
@@ -473,18 +499,44 @@ const MapView = memo(function MapView({
         {/* Adressen */}
         {adressenSichtbar && adressen.map((a) => {
           const aktiv = aktiveOrteKeys.length === 0 || aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)
+          const istHsStart = neuerHsStart?.adresseUuid === a.uuid
           return (
-            <CircleMarker key={a.uuid} center={[a.lat, a.lon]} radius={aktiv ? 6 : 4}
-              pathOptions={{ fillColor: aktiv ? adressFarbe : '#6b7280', color: aktiv ? adressFarbe : '#4b5563', weight: 1.5, fillOpacity: aktiv ? 0.85 : 0.3 }}>
+            <CircleMarker key={a.uuid} center={[a.lat, a.lon]}
+              radius={istHsStart ? 9 : aktiv ? 6 : 4}
+              pathOptions={{
+                fillColor: istHsStart ? '#fbbf24' : aktiv ? adressFarbe : '#6b7280',
+                color: istHsStart ? '#f59e0b' : aktiv ? adressFarbe : '#4b5563',
+                weight: istHsStart ? 3 : 1.5,
+                fillOpacity: aktiv ? 0.85 : 0.3,
+              }}
+              eventHandlers={editierbarAktiv ? {
+                click: (e) => {
+                  e.originalEvent?.stopPropagation?.()
+                  if (ziehStartId) { handleZiehZiel({ lat: a.lat, lng: a.lon }); return }
+                  if (neuerHsStart) {
+                    // Andere Adresse antippen wechselt den Startpunkt
+                    setNeuerHsStart({ adresseUuid: a.uuid, pos: { lat: a.lat, lng: a.lon }, name: `${a.strasse} ${a.nr}` })
+                    return
+                  }
+                  zeigeMenu(e as unknown as L.LeafletMouseEvent, [
+                    { label: '🔴 Hausanschluss zeichnen', farbe: '#fca5a5', action: () => {
+                      setNeuerHsStart({ adresseUuid: a.uuid, pos: { lat: a.lat, lng: a.lon }, name: `${a.strasse} ${a.nr}` })
+                      setAktivMenu(null)
+                    }},
+                  ])
+                },
+              } : {}}>
               <Tooltip>{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}, {a.ortsname}</Tooltip>
-              <Popup>
-                <div className="text-sm">
-                  <p className="font-semibold">{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}</p>
-                  <p>{a.plz} {a.ortsname}</p>
-                  {a.ortsteil && <p className="text-gray-500">{a.ortsteil}</p>}
-                  <p className="mt-1 text-blue-600">Haushalte: {a.hh}</p>
-                </div>
-              </Popup>
+              {!editierbarAktiv && (
+                <Popup>
+                  <div className="text-sm">
+                    <p className="font-semibold">{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}</p>
+                    <p>{a.plz} {a.ortsname}</p>
+                    {a.ortsteil && <p className="text-gray-500">{a.ortsteil}</p>}
+                    <p className="mt-1 text-blue-600">Haushalte: {a.hh}</p>
+                  </div>
+                </Popup>
+              )}
             </CircleMarker>
           )
         })}
@@ -507,6 +559,7 @@ const MapView = memo(function MapView({
                   if (ziehStartId) return
                   e.originalEvent.stopPropagation()
                   const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                  if (neuerHsStart) { handleNeuerHsZiel(pos); return }
                   zeigeMenu(e, [
                     { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handlePfadPunktEinfuegen(pi, pos); setAktivMenu(null) } },
                     { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handlePfadLoeschen(pi); setAktivMenu(null) } },
@@ -525,6 +578,7 @@ const MapView = memo(function MapView({
                 if (ziehStartId) return
                 e.originalEvent.stopPropagation()
                 const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                if (neuerHsStart) { handleNeuerHsZiel(pos); return }
                 zeigeMenu(e, [
                   { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleSinglePunktEinfuegen(pos); setAktivMenu(null) } },
                 ])
@@ -538,12 +592,13 @@ const MapView = memo(function MapView({
             const hid = `ep-${pi}-${i}`
             const istAktiv = ziehStartId === hid
             return (
-              <Marker key={`ep-h-${pi}-${i}`} position={[p.lat, p.lng]} draggable={!ziehStartId}
+              <Marker key={`ep-h-${pi}-${i}`} position={[p.lat, p.lng]} draggable={!imZeichenModus}
                 icon={istAktiv ? editHandleAktivIcon : editHandleIcon}
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
                     if (ziehStartId) { handleZiehZiel(p); return }
+                    if (neuerHsStart) { handleNeuerHsZiel(p); return }
                     zeigeMenu(e, [
                       { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handlePfadPunktLoeschen(pi, i); setAktivMenu(null) } },
                       { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
@@ -563,12 +618,13 @@ const MapView = memo(function MapView({
           const hid = `es-${i}`
           const istAktiv = ziehStartId === hid
           return (
-            <Marker key={`es-h-${i}`} position={[p.lat, p.lng]} draggable={!ziehStartId}
+            <Marker key={`es-h-${i}`} position={[p.lat, p.lng]} draggable={!imZeichenModus}
               icon={istAktiv ? editHandleAktivIcon : editHandleIcon}
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
                   if (ziehStartId) { handleZiehZiel(p); return }
+                  if (neuerHsStart) { handleNeuerHsZiel(p); return }
                   zeigeMenu(e, [
                     { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleSinglePunktLoeschen(i); setAktivMenu(null) } },
                     { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
@@ -591,6 +647,7 @@ const MapView = memo(function MapView({
               eventHandlers={editierbarAktiv ? {
                 click: (e) => {
                   e.originalEvent.stopPropagation()
+                  if (neuerHsStart) return
                   const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
                   zeigeMenu(e, [
                     { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleHsPunktEinfuegen(h.id, pos); setAktivMenu(null) } },
@@ -612,11 +669,12 @@ const MapView = memo(function MapView({
             const icon = isFirst ? hsHausIcon : isLast ? hsTrasseIcon : editHandleIcon
             const tip = isFirst ? '🏠 Haus-Ende' : isLast ? '📡 Kabel-Ende' : 'Zwischenpunkt'
             return (
-              <Marker key={`hs-wp-${h.id}-${idx}`} position={[p.lat, p.lng]} draggable icon={icon}
+              <Marker key={`hs-wp-${h.id}-${idx}`} position={[p.lat, p.lng]} draggable={!imZeichenModus} icon={icon}
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
                     if (ziehStartId) { handleZiehZiel(p); return }
+                    if (neuerHsStart) { handleNeuerHsZiel(p); return }
                     zeigeMenu(e, [
                       { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleHsPunktLoeschen(h.id, idx); setAktivMenu(null) } },
                     ])
@@ -651,7 +709,7 @@ const MapView = memo(function MapView({
       )}
 
       {/* Kontextmenü */}
-      {editierbarAktiv && aktivMenu && !ziehStartId && (
+      {editierbarAktiv && aktivMenu && !imZeichenModus && (
         <div style={{
           position: 'absolute',
           left: Math.min(aktivMenu.screenX - 50, window.innerWidth - 185),
@@ -678,14 +736,18 @@ const MapView = memo(function MapView({
       {editierbarAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg"
           style={{
-            backgroundColor: ziehStartId ? '#431407' : '#111827',
-            border: `1px solid ${ziehStartId ? '#f97316' : '#374151'}`,
+            backgroundColor: ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : '#111827',
+            border: `1px solid ${ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : '#374151'}`,
             padding: '10px 16px',
             maxWidth: '92vw',
           }}>
           {ziehStartId ? (
             <p style={{ color: '#fed7aa', fontSize: 12, margin: 0 }}>
-              🖊️ <b>Zeichenmodus</b> — Auf Karte tippen = neues Segment &nbsp;·&nbsp; Punkt antippen = Abbrechen &nbsp;·&nbsp; ESC
+              🖊️ <b>Zeichenmodus</b> — Auf Karte tippen = neues Segment &nbsp;·&nbsp; Punkt antippen = verbinden &nbsp;·&nbsp; ESC
+            </p>
+          ) : neuerHsStart ? (
+            <p style={{ color: '#fde68a', fontSize: 12, margin: 0 }}>
+              🏠 <b>Hausanschluss zeichnen</b> — {neuerHsStart.name} &nbsp;·&nbsp; Ziel antippen (Trasse, Punkt oder Karte) &nbsp;·&nbsp; ESC
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -693,7 +755,10 @@ const MapView = memo(function MapView({
                 <span style={{ color: '#93c5fd', fontWeight: 600 }}>Trasse &amp; Hausanschluss</span>
               </p>
               <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
-                <b style={{ color: '#d1d5db' }}>Punkt antippen</b> → Menü (Löschen / Neuer Strich)
+                <b style={{ color: '#d1d5db' }}>Adresspunkt antippen</b> → Neuer Hausanschluss zeichnen
+              </p>
+              <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
+                <b style={{ color: '#d1d5db' }}>Trassenpunkt antippen</b> → Menü (Löschen / Neuer Strich)
               </p>
               <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
                 <b style={{ color: '#d1d5db' }}>Linie antippen</b> → Menü (Punkt einfügen / Löschen)
