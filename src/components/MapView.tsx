@@ -59,6 +59,8 @@ type NeuerHsStart = { adresseUuid: string; pos: LatLng; name: string } | null
 
 const GELB = '#facc15'
 const MAX_HANDLES = 80
+// Schwellenwert: ≤ 300 Punkte → Klein-Projekt (alle Handles sofort sichtbar)
+const KLEIN_PROJEKT_SCHWELLE = 300
 
 interface MapViewProps {
   adressen: Address[]
@@ -176,12 +178,13 @@ const MapView = memo(function MapView({
   const [hausanschluesseSichtbar, setHausanschluesseSichtbar] = useState(true)
   const [adressenSichtbar, setAdressenSichtbar] = useState(true)
 
-  // Lokale Arbeitskopie der Pfade während Edit-Modus
+  // Lokale Arbeitskopie der Pfade im Edit-Modus
   const [localPfade, setLocalPfade] = useState<LatLng[][]>([])
-  // Welches Segment ist aktuell ausgewählt (-1 = einzelne Trasse)
+  // Groß-Projekt: ausgewähltes Segment (Tap-to-Select)
   const [editSegmentIdx, setEditSegmentIdx] = useState<number | null>(null)
-  // Punkte des ausgewählten Segments (editierbare Kopie)
   const [editPunkte, setEditPunkte] = useState<LatLng[]>([])
+  // Klein-Projekt (≤ KLEIN_PROJEKT_SCHWELLE Punkte): alle Handles sofort sichtbar
+  const [kleinProjekt, setKleinProjekt] = useState(false)
 
   const [deletedStack, setDeletedStack] = useState<Hausstich[]>([])
   const [ziehStartId, setZiehStartId] = useState<string | null>(null)
@@ -205,7 +208,6 @@ const MapView = memo(function MapView({
   useEffect(() => { editSegmentIdxRef.current = editSegmentIdx }, [editSegmentIdx])
   useEffect(() => { editPunkteRef.current = editPunkte }, [editPunkte])
 
-  // handleDeselect: speichert editPunkte zurück in localPfade und hebt Auswahl auf
   const handleDeselect = useCallback(() => {
     const segIdx = editSegmentIdxRef.current
     const punkte = editPunkteRef.current
@@ -227,7 +229,6 @@ const MapView = memo(function MapView({
     prevEditRef.current = editierbarAktiv
 
     if (!wasActive && editierbarAktiv) {
-      // Edit-Modus EIN: lokale Arbeitskopie anlegen — kein Dezimieren
       const pfade = trassePfadeRef.current
       const t = trasseRef.current
       setDeletedStack([])
@@ -240,20 +241,23 @@ const MapView = memo(function MapView({
       if (pfade.length > 0) {
         startedWithSingleRef.current = false
         const kopie = pfade.map((pf) => [...pf])
+        const gesamtPunkte = kopie.reduce((s, pf) => s + pf.length, 0)
+        setKleinProjekt(gesamtPunkte <= KLEIN_PROJEKT_SCHWELLE)
         localPfadeRef.current = kopie
         setLocalPfade(kopie)
       } else if (t.length >= 2) {
         startedWithSingleRef.current = true
         const kopie = [[...t]]
+        setKleinProjekt(t.length <= KLEIN_PROJEKT_SCHWELLE)
         localPfadeRef.current = kopie
         setLocalPfade(kopie)
       } else {
         startedWithSingleRef.current = false
+        setKleinProjekt(false)
         localPfadeRef.current = []
         setLocalPfade([])
       }
     } else if (wasActive && !editierbarAktiv) {
-      // Edit-Modus AUS: aktuelle Änderungen speichern
       let finalPfade = localPfadeRef.current
       const segIdx = editSegmentIdxRef.current
       const punkte = editPunkteRef.current
@@ -261,7 +265,6 @@ const MapView = memo(function MapView({
         finalPfade = finalPfade.map((pf, i) => i === segIdx ? punkte : pf)
         editiertRef.current = true
       }
-
       if (editiertRef.current) {
         const gueltig = finalPfade.filter((pf) => pf.length >= 2)
         if (startedWithSingleRef.current && gueltig.length === 1) {
@@ -270,13 +273,13 @@ const MapView = memo(function MapView({
           onTrassePfadeGeaendert(gueltig)
         }
       }
-
       localPfadeRef.current = []
       setLocalPfade([])
       setEditSegmentIdx(null)
       editSegmentIdxRef.current = null
       setEditPunkte([])
       editPunkteRef.current = []
+      setKleinProjekt(false)
       setDeletedStack([])
       setZiehStartId(null)
       setZiehStartPos(null)
@@ -298,8 +301,8 @@ const MapView = memo(function MapView({
     return () => window.removeEventListener('keydown', onKey)
   }, [handleDeselect])
 
+  // ── Groß-Projekt: Segment auswählen ──────────────────────────────────────
   function handleSegmentAuswaehlen(idx: number) {
-    // Aktuelles Segment speichern bevor wechsel
     const segIdx = editSegmentIdxRef.current
     const punkte = editPunkteRef.current
     let aktuelllePfade = localPfadeRef.current
@@ -318,44 +321,7 @@ const MapView = memo(function MapView({
     setAktivesSegment(`pfad-${idx}`)
   }
 
-  function handleZiehZiel(zielPos: LatLng) {
-    if (!ziehStartPos) return
-    // Aktuelles Segment zuerst speichern
-    let aktuelllePfade = localPfadeRef.current
-    const segIdx = editSegmentIdxRef.current
-    const punkte = editPunkteRef.current
-    if (segIdx !== null && punkte.length >= 2) {
-      aktuelllePfade = aktuelllePfade.map((pf, i) => i === segIdx ? punkte : pf)
-    }
-    const newSegment: LatLng[] = [ziehStartPos, zielPos]
-    const neuePfade = [...aktuelllePfade, newSegment]
-    localPfadeRef.current = neuePfade
-    setLocalPfade(neuePfade)
-    setEditSegmentIdx(neuePfade.length - 1)
-    editSegmentIdxRef.current = neuePfade.length - 1
-    setEditPunkte(newSegment)
-    editPunkteRef.current = newSegment
-    setAktivesSegment(`pfad-${neuePfade.length - 1}`)
-    editiertRef.current = true
-    setZiehStartId(null)
-    setZiehStartPos(null)
-  }
-
-  function handleNeuerHsZiel(zielPos: LatLng) {
-    if (!neuerHsStart) return
-    const wp: LatLng[] = [neuerHsStart.pos, zielPos]
-    const neuerHs: Hausstich = {
-      id: crypto.randomUUID(),
-      addressUuid: neuerHsStart.adresseUuid,
-      hausKoordinate: neuerHsStart.pos,
-      trassenPunkt: zielPos,
-      wegpunkte: wp,
-      laengeMeter: berechneLinieLaenge(wp),
-    }
-    onHausanschluesseGeaendert([...hausanschluesse, neuerHs])
-    setNeuerHsStart(null)
-  }
-
+  // ── Groß-Projekt: ausgewähltes Segment bearbeiten ────────────────────────
   function handleEditPunktBewegt(i: number, pos: LatLng) {
     editiertRef.current = true
     const neu = editPunkteRef.current.map((p, idx) => idx === i ? pos : p)
@@ -401,6 +367,96 @@ const MapView = memo(function MapView({
     setAktivesSegment(null)
   }
 
+  // ── Klein-Projekt: direkte Bearbeitung aller Punkte ──────────────────────
+  function handleKleinPunktBewegt(pfadIdx: number, punktIdx: number, pos: LatLng) {
+    editiertRef.current = true
+    const neuePfade = localPfadeRef.current.map((pf, pi) =>
+      pi === pfadIdx ? pf.map((p, i) => i === punktIdx ? pos : p) : pf
+    )
+    localPfadeRef.current = neuePfade
+    setLocalPfade(neuePfade)
+  }
+
+  function handleKleinPunktLoeschen(pfadIdx: number, punktIdx: number) {
+    editiertRef.current = true
+    const neuePfade = localPfadeRef.current.map((pf, pi) => {
+      if (pi !== pfadIdx) return pf
+      if (pf.length <= 2) return [] as LatLng[]
+      return pf.filter((_, i) => i !== punktIdx)
+    }).filter((pf) => pf.length >= 2)
+    localPfadeRef.current = neuePfade
+    setLocalPfade(neuePfade)
+    setAktivesSegment(null)
+  }
+
+  function handleKleinSegmentLoeschen(pfadIdx: number) {
+    editiertRef.current = true
+    const neuePfade = localPfadeRef.current.filter((_, i) => i !== pfadIdx)
+    localPfadeRef.current = neuePfade
+    setLocalPfade(neuePfade)
+    setAktivesSegment(null)
+  }
+
+  function handleKleinPunktEinfuegen(pfadIdx: number, klickPos: LatLng) {
+    const pfad = localPfadeRef.current[pfadIdx]
+    if (!pfad || pfad.length < 2) return
+    try {
+      const line = turf.lineString(pfad.map((p) => [p.lng, p.lat]))
+      const nearest = turf.nearestPointOnLine(line, turf.point([klickPos.lng, klickPos.lat]))
+      const insertIdx = (nearest.properties.index ?? 0) + 1
+      editiertRef.current = true
+      const neuePfade = localPfadeRef.current.map((pf, pi) => {
+        if (pi !== pfadIdx) return pf
+        const neu = [...pf]
+        neu.splice(insertIdx, 0, klickPos)
+        return neu
+      })
+      localPfadeRef.current = neuePfade
+      setLocalPfade(neuePfade)
+    } catch { /* ignore */ }
+  }
+
+  // ── Zeichnen (beide Modi) ─────────────────────────────────────────────────
+  function handleZiehZiel(zielPos: LatLng) {
+    if (!ziehStartPos) return
+    let aktuelllePfade = localPfadeRef.current
+    const segIdx = editSegmentIdxRef.current
+    const punkte = editPunkteRef.current
+    if (segIdx !== null && punkte.length >= 2) {
+      aktuelllePfade = aktuelllePfade.map((pf, i) => i === segIdx ? punkte : pf)
+    }
+    const newSegment: LatLng[] = [ziehStartPos, zielPos]
+    const neuePfade = [...aktuelllePfade, newSegment]
+    localPfadeRef.current = neuePfade
+    setLocalPfade(neuePfade)
+    if (!kleinProjekt) {
+      setEditSegmentIdx(neuePfade.length - 1)
+      editSegmentIdxRef.current = neuePfade.length - 1
+      setEditPunkte(newSegment)
+      editPunkteRef.current = newSegment
+      setAktivesSegment(`pfad-${neuePfade.length - 1}`)
+    }
+    editiertRef.current = true
+    setZiehStartId(null)
+    setZiehStartPos(null)
+  }
+
+  function handleNeuerHsZiel(zielPos: LatLng) {
+    if (!neuerHsStart) return
+    const wp: LatLng[] = [neuerHsStart.pos, zielPos]
+    const neuerHs: Hausstich = {
+      id: crypto.randomUUID(),
+      addressUuid: neuerHsStart.adresseUuid,
+      hausKoordinate: neuerHsStart.pos,
+      trassenPunkt: zielPos,
+      wegpunkte: wp,
+      laengeMeter: berechneLinieLaenge(wp),
+    }
+    onHausanschluesseGeaendert([...hausanschluesse, neuerHs])
+    setNeuerHsStart(null)
+  }
+
+  // ── Hausanschlüsse ────────────────────────────────────────────────────────
   function hausstichWp(h: Hausstich): LatLng[] {
     return h.wegpunkte && h.wegpunkte.length >= 2 ? h.wegpunkte : [h.hausKoordinate, h.trassenPunkt]
   }
@@ -480,52 +536,38 @@ const MapView = memo(function MapView({
   })
 
   const layerBtnStyle = (aktiv: boolean): React.CSSProperties => ({
-    backgroundColor: aktiv ? '#1e3a5f' : '#1a1a1a',
-    color: '#f9fafb',
-    border: `1px solid ${aktiv ? '#3b82f6' : '#374151'}`,
-    opacity: aktiv ? 1 : 0.55,
+    backgroundColor: aktiv ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb',
+    border: `1px solid ${aktiv ? '#3b82f6' : '#374151'}`, opacity: aktiv ? 1 : 0.55,
   })
 
   const imZeichenModus = !!ziehStartId || !!neuerHsStart
 
-  // Handle-Dezimierung: max MAX_HANDLES Handles pro Segment (nur Marker, nicht die Linie)
-  const handleSchritt = editPunkte.length > MAX_HANDLES
-    ? Math.ceil(editPunkte.length / MAX_HANDLES) : 1
+  // Handle-Dezimierung für Groß-Projekt (nur für ausgewähltes Segment)
+  const handleSchritt = editPunkte.length > MAX_HANDLES ? Math.ceil(editPunkte.length / MAX_HANDLES) : 1
   const sichtbareHandleIdx: number[] = []
   for (let i = 0; i < editPunkte.length; i++) {
-    if (i === 0 || i === editPunkte.length - 1 || i % handleSchritt === 0) {
-      sichtbareHandleIdx.push(i)
-    }
+    if (i === 0 || i === editPunkte.length - 1 || i % handleSchritt === 0) sichtbareHandleIdx.push(i)
   }
-
-  // Welche Pfade zeigt TrasseNetzwerk: in Edit-Modus localPfade (ohne ausgewähltes Segment)
-  const visualPfade = editierbarAktiv
-    ? localPfade.filter((_, i) => i !== editSegmentIdx)
-    : trassePfade
 
   return (
     <div className="relative w-full h-full">
-      {/* Suchleiste */}
       <div className="absolute top-3 left-1/2 -translate-x-1/2 z-1000 flex gap-2 items-center">
-        <input
-          type="text" value={suchQuery}
+        <input type="text" value={suchQuery}
           onChange={(e) => { setSuchQuery(e.target.value); setSuchFehler(false) }}
           onKeyDown={(e) => e.key === 'Enter' && handleSuche()}
           placeholder="Ort oder Adresse suchen…"
           className="w-56 px-3 py-1.5 rounded-lg text-xs outline-none shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: `1px solid ${suchFehler ? '#ef4444' : '#374151'}` }}
-        />
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: `1px solid ${suchFehler ? '#ef4444' : '#374151'}` }} />
         <button onClick={handleSuche} disabled={suchLaden}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-colors disabled:opacity-50"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg disabled:opacity-50"
           style={{ backgroundColor: '#3b82f6', color: '#fff', border: 'none' }}>
           {suchLaden ? '…' : '🔍'}
         </button>
         {suchFehler && <span className="text-xs" style={{ color: '#ef4444' }}>Nicht gefunden</span>}
       </div>
 
-      {/* Layer-Buttons */}
       <div className="absolute top-3 right-3 z-1000 flex flex-col gap-2">
-        <button onClick={() => setTileVariante((v) => (v === 'satellit' ? 'osm' : 'satellit'))}
+        <button onClick={() => setTileVariante((v) => v === 'satellit' ? 'osm' : 'satellit')}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
           style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #374151' }}>
           {tileVariante === 'satellit' ? '🗺️ Karte' : '🛰️ Satellit'}
@@ -542,22 +584,19 @@ const MapView = memo(function MapView({
         </button>
         <div style={{ borderTop: '1px solid #374151', margin: '2px 0' }} />
         <button onClick={() => setTrasseSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
           style={layerBtnStyle(trasseSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: trasseFarbe, display: 'inline-block', flexShrink: 0 }} />
-          Trasse
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: trasseFarbe, display: 'inline-block', flexShrink: 0 }} />Trasse
         </button>
         <button onClick={() => setHausanschluesseSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
           style={layerBtnStyle(hausanschluesseSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: hausanschlussfarbe, display: 'inline-block', flexShrink: 0 }} />
-          Hausanschlüsse
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: hausanschlussfarbe, display: 'inline-block', flexShrink: 0 }} />Hausanschlüsse
         </button>
         <button onClick={() => setAdressenSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
           style={layerBtnStyle(adressenSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: adressFarbe, display: 'inline-block', flexShrink: 0 }} />
-          Adressen
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: adressFarbe, display: 'inline-block', flexShrink: 0 }} />Adressen
         </button>
       </div>
 
@@ -570,98 +609,151 @@ const MapView = memo(function MapView({
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='© OpenStreetMap' maxNativeZoom={19} maxZoom={21} />
         )}
         {ortsnamenSichtbar && (
-          <TileLayer url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}" attribution="© Esri" maxNativeZoom={19} maxZoom={21} opacity={1} />
+          <TileLayer url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}" attribution="© Esri" maxNativeZoom={19} maxZoom={21} />
         )}
 
         <KlickHandler aktiv={startpunktSetzenAktiv} onKlick={onStartpunktGesetzt}
           ziehModus={!!ziehStartId} onZiehZiel={handleZiehZiel}
           hsZeichenModus={!!neuerHsStart} onHsZeichenZiel={handleNeuerHsZiel}
           menuOffen={!!aktivMenu} onMenuSchliessen={() => setAktivMenu(null)}
-          onMapKlick={editierbarAktiv ? handleDeselect : undefined} />
+          onMapKlick={editierbarAktiv && !kleinProjekt ? handleDeselect : undefined} />
         <AutoZoom adressen={adressen} />
         <TopographieWMS sichtbar={topoSichtbar} />
         <FlyTo ziel={flugZiel} />
 
-        {/* Trasse — immer als Canvas (gleiche Ansicht in Normal- und Edit-Modus) */}
-        {trasseSichtbar && visualPfade.length > 0 && (
-          <TrasseNetzwerk pfade={visualPfade} farbe={trasseFarbe} opacity={editierbarAktiv ? 0.55 : 0.9} />
-        )}
-        {trasseSichtbar && !editierbarAktiv && trassePfade.length === 0 && trasse.length >= 2 && (
-          <Polyline positions={trasse.map((p) => [p.lat, p.lng] as [number, number])} pathOptions={{ color: trasseFarbe, weight: 4, opacity: 0.9 }} />
+        {/* ── TRASSE: Normal-Modus ── */}
+        {trasseSichtbar && !editierbarAktiv && (
+          trassePfade.length > 0
+            ? <TrasseNetzwerk pfade={trassePfade} farbe={trasseFarbe} opacity={0.9} />
+            : trasse.length >= 2
+              ? <Polyline positions={trasse.map((p) => [p.lat, p.lng] as [number, number])} pathOptions={{ color: trasseFarbe, weight: 4, opacity: 0.9 }} />
+              : null
         )}
 
-        {/* Edit-Modus: unsichtbare breite Klick-Flächen für alle Segmente */}
-        {editierbarAktiv && localPfade.map((pfad, pi) =>
-          pfad.length >= 2 ? (
-            <Polyline key={`hit-${pi}`}
+        {/* ── TRASSE: Edit-Modus Groß-Projekt (Tap-to-Select) ── */}
+        {trasseSichtbar && editierbarAktiv && !kleinProjekt && (
+          <>
+            {/* Canvas für nicht-ausgewählte Segmente */}
+            <TrasseNetzwerk
+              pfade={localPfade.filter((_, i) => i !== editSegmentIdx)}
+              farbe={trasseFarbe} opacity={0.55} />
+            {/* Unsichtbare Klick-Flächen */}
+            {localPfade.map((pfad, pi) =>
+              pfad.length >= 2 ? (
+                <Polyline key={`hit-${pi}`}
+                  positions={pfad.map((p) => [p.lat, p.lng] as [number, number])}
+                  pathOptions={{ color: '#000', weight: 14, opacity: 0.01 }}
+                  eventHandlers={{
+                    click: (e) => {
+                      e.originalEvent.stopPropagation()
+                      const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                      if (ziehStartId) { handleZiehZiel(pos); return }
+                      if (neuerHsStart) { handleNeuerHsZiel(pos); return }
+                      handleSegmentAuswaehlen(pi)
+                      if (editSegmentIdxRef.current === pi) {
+                        zeigeMenu(e, [
+                          { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
+                          { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
+                        ])
+                      }
+                    },
+                  }} />
+              ) : null
+            )}
+            {/* Gelbe Linie für ausgewähltes Segment */}
+            {editSegmentIdx !== null && editPunkte.length >= 2 && (
+              <Polyline key={`yellow-${editSegmentIdx}`}
+                positions={editPunkte.map((p) => [p.lat, p.lng] as [number, number])}
+                pathOptions={{ color: GELB, weight: 5, opacity: 1 }}
+                eventHandlers={{
+                  click: (e) => {
+                    e.originalEvent.stopPropagation()
+                    if (ziehStartId || neuerHsStart) return
+                    const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                    zeigeMenu(e, [
+                      { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
+                      { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
+                    ])
+                  },
+                }} />
+            )}
+            {/* Handles nur für ausgewähltes Segment (max MAX_HANDLES) */}
+            {editSegmentIdx !== null && sichtbareHandleIdx.map((i) => {
+              const p = editPunkte[i]
+              if (!p) return null
+              const hid = `ep-${editSegmentIdx}-${i}`
+              const istAktiv = ziehStartId === hid
+              return (
+                <Marker key={hid} position={[p.lat, p.lng]} draggable={!imZeichenModus}
+                  icon={istAktiv ? editHandleAktivIcon : editHandleIcon}
+                  eventHandlers={{
+                    click: (e) => {
+                      if (e.originalEvent) e.originalEvent.stopPropagation()
+                      if (ziehStartId) { handleZiehZiel(p); return }
+                      if (neuerHsStart) { handleNeuerHsZiel(p); return }
+                      zeigeMenu(e, [
+                        { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleEditPunktLoeschen(i); setAktivMenu(null) } },
+                        { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
+                      ])
+                    },
+                    dragstart: () => setAktivMenu(null),
+                    dragend: (e) => { const ll = (e.target as L.Marker).getLatLng(); handleEditPunktBewegt(i, { lat: ll.lat, lng: ll.lng }) },
+                  }}>
+                  {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
+                </Marker>
+              )
+            })}
+          </>
+        )}
+
+        {/* ── TRASSE: Edit-Modus Klein-Projekt (alle Handles sofort) ── */}
+        {trasseSichtbar && editierbarAktiv && kleinProjekt && localPfade.map((pfad, pi) => {
+          const segKey = `pfad-${pi}`
+          const istAktiv = aktivesSegment === segKey
+          return pfad.length >= 2 ? (
+            <Polyline key={`kp-line-${pi}`}
               positions={pfad.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{ color: '#000', weight: 14, opacity: 0.01 }}
+              pathOptions={{ color: istAktiv ? GELB : trasseFarbe, weight: istAktiv ? 5 : 4, opacity: 0.95 }}
               eventHandlers={{
                 click: (e) => {
                   e.originalEvent.stopPropagation()
                   const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
                   if (ziehStartId) { handleZiehZiel(pos); return }
                   if (neuerHsStart) { handleNeuerHsZiel(pos); return }
-                  handleSegmentAuswaehlen(pi)
-                  // Menü nur wenn Segment bereits ausgewählt war
-                  if (editSegmentIdxRef.current === pi) {
-                    zeigeMenu(e, [
-                      { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
-                      { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
-                    ])
-                  }
+                  setAktivesSegment(segKey)
+                  zeigeMenu(e, [
+                    { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleKleinPunktEinfuegen(pi, pos); setAktivMenu(null) } },
+                    { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleKleinSegmentLoeschen(pi); setAktivMenu(null) } },
+                  ])
                 },
               }} />
           ) : null
-        )}
-
-        {/* Ausgewähltes Segment: gelbe Linie (volle Qualität aus editPunkte) */}
-        {editierbarAktiv && editSegmentIdx !== null && editPunkte.length >= 2 && (
-          <Polyline key={`yellow-${editSegmentIdx}`}
-            positions={editPunkte.map((p) => [p.lat, p.lng] as [number, number])}
-            pathOptions={{ color: GELB, weight: 5, opacity: 1 }}
-            eventHandlers={{
-              click: (e) => {
-                e.originalEvent.stopPropagation()
-                if (ziehStartId || neuerHsStart) return
-                const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
-                zeigeMenu(e, [
-                  { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
-                  { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
-                ])
-              },
-            }} />
-        )}
-
-        {/* Handles für ausgewähltes Segment (max MAX_HANDLES Stück) */}
-        {editierbarAktiv && editSegmentIdx !== null && sichtbareHandleIdx.map((i) => {
-          const p = editPunkte[i]
-          if (!p) return null
-          const hid = `ep-${editSegmentIdx}-${i}`
-          const istAktiv = ziehStartId === hid
-          return (
-            <Marker key={hid} position={[p.lat, p.lng]} draggable={!imZeichenModus}
-              icon={istAktiv ? editHandleAktivIcon : editHandleIcon}
-              eventHandlers={{
-                click: (e) => {
-                  if (e.originalEvent) e.originalEvent.stopPropagation()
-                  if (ziehStartId) { handleZiehZiel(p); return }
-                  if (neuerHsStart) { handleNeuerHsZiel(p); return }
-                  zeigeMenu(e, [
-                    { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleEditPunktLoeschen(i); setAktivMenu(null) } },
-                    { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
-                  ])
-                },
-                dragstart: () => setAktivMenu(null),
-                dragend: (e) => {
-                  const ll = (e.target as L.Marker).getLatLng()
-                  handleEditPunktBewegt(i, { lat: ll.lat, lng: ll.lng })
-                },
-              }}>
-              {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
-            </Marker>
-          )
         })}
+        {editierbarAktiv && kleinProjekt && localPfade.flatMap((pfad, pi) =>
+          pfad.map((p, i) => {
+            const hid = `kp-${pi}-${i}`
+            const istAktiv = ziehStartId === hid
+            return (
+              <Marker key={hid} position={[p.lat, p.lng]} draggable={!imZeichenModus}
+                icon={istAktiv ? editHandleAktivIcon : editHandleIcon}
+                eventHandlers={{
+                  click: (e) => {
+                    if (e.originalEvent) e.originalEvent.stopPropagation()
+                    if (ziehStartId) { handleZiehZiel(p); return }
+                    if (neuerHsStart) { handleNeuerHsZiel(p); return }
+                    zeigeMenu(e, [
+                      { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleKleinPunktLoeschen(pi, i); setAktivMenu(null) } },
+                      { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
+                    ])
+                  },
+                  dragstart: () => setAktivMenu(null),
+                  dragend: (e) => { const ll = (e.target as L.Marker).getLatLng(); handleKleinPunktBewegt(pi, i, { lat: ll.lat, lng: ll.lng }) },
+                }}>
+                {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
+              </Marker>
+            )
+          })
+        )}
 
         {/* Adressen */}
         {adressenSichtbar && adressen.map((a) => {
@@ -673,8 +765,7 @@ const MapView = memo(function MapView({
               pathOptions={{
                 fillColor: istHsStart ? '#fbbf24' : aktiv ? adressFarbe : '#6b7280',
                 color: istHsStart ? '#f59e0b' : aktiv ? adressFarbe : '#4b5563',
-                weight: istHsStart ? 3 : 1.5,
-                fillOpacity: aktiv ? 0.85 : 0.3,
+                weight: istHsStart ? 3 : 1.5, fillOpacity: aktiv ? 0.85 : 0.3,
               }}
               eventHandlers={editierbarAktiv ? {
                 click: (e) => {
@@ -728,7 +819,7 @@ const MapView = memo(function MapView({
                   e.originalEvent.stopPropagation()
                   if (neuerHsStart) return
                   const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
-                  handleDeselect()
+                  if (!kleinProjekt) handleDeselect()
                   setAktivesSegment(segKey)
                   zeigeMenu(e, [
                     { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleHsPunktEinfuegen(h.id, pos); setAktivMenu(null) } },
@@ -745,10 +836,8 @@ const MapView = memo(function MapView({
         {hausanschluesseSichtbar && editierbarAktiv && hausanschluesse.flatMap((h) => {
           const wp = hausstichWp(h)
           return wp.map((p, idx) => {
-            const isFirst = idx === 0
-            const isLast = idx === wp.length - 1
+            const isFirst = idx === 0, isLast = idx === wp.length - 1
             const icon = isFirst ? hsHausIcon : isLast ? hsTrasseIcon : editHandleIcon
-            const tip = isFirst ? '🏠 Haus-Ende' : isLast ? '📡 Kabel-Ende' : 'Zwischenpunkt'
             return (
               <Marker key={`hs-wp-${h.id}-${idx}`} position={[p.lat, p.lng]} draggable={!imZeichenModus} icon={icon}
                 eventHandlers={{
@@ -761,12 +850,9 @@ const MapView = memo(function MapView({
                     ])
                   },
                   dragstart: () => setAktivMenu(null),
-                  dragend: (e) => {
-                    const ll = (e.target as L.Marker).getLatLng()
-                    handleHsWpBewegen(h.id, idx, { lat: ll.lat, lng: ll.lng })
-                  },
+                  dragend: (e) => { const ll = (e.target as L.Marker).getLatLng(); handleHsWpBewegen(h.id, idx, { lat: ll.lat, lng: ll.lng }) },
                 }}>
-                <Tooltip>{tip}</Tooltip>
+                <Tooltip>{isFirst ? '🏠 Haus-Ende' : isLast ? '📡 Kabel-Ende' : 'Zwischenpunkt'}</Tooltip>
               </Marker>
             )
           })
@@ -784,10 +870,10 @@ const MapView = memo(function MapView({
         <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg max-w-xs"
           style={{
             backgroundColor: '#1a1a1a',
-            color: trasseMethode.startsWith('OSM') ? '#4ade80' : trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '#f87171' : '#fbbf24',
-            border: `1px solid ${trasseMethode.startsWith('OSM') ? '#16a34a' : trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '#dc2626' : '#d97706'}`,
+            color: trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '#f87171' : trasseMethode.includes('Erweitert') || trasseMethode.startsWith('ORS') ? '#4ade80' : '#fbbf24',
+            border: `1px solid ${trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '#dc2626' : trasseMethode.includes('Erweitert') || trasseMethode.startsWith('ORS') ? '#16a34a' : '#d97706'}`,
           }}>
-          {trasseMethode.startsWith('OSM') || trasseMethode.includes('Erweitert') ? '✅' : trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '❌' : '⚠️'} {trasseMethode}
+          {trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '❌' : '✅'} {trasseMethode}
           {(trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen')) && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
         </div>
       )}
@@ -798,17 +884,13 @@ const MapView = memo(function MapView({
           position: 'absolute',
           left: Math.min(aktivMenu.screenX - 50, window.innerWidth - 185),
           top: Math.max(aktivMenu.screenY - aktivMenu.aktionen.length * 46 - 10, 60),
-          zIndex: 2000,
-          backgroundColor: '#1a1a1a',
+          zIndex: 2000, backgroundColor: '#1a1a1a',
           border: `1px solid ${aktivesSegment ? GELB : '#374151'}`,
-          borderRadius: '10px',
-          overflow: 'hidden',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.9)',
-          minWidth: '170px',
+          borderRadius: '10px', overflow: 'hidden',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.9)', minWidth: '170px',
         }}>
           {aktivMenu.aktionen.map((a, idx) => (
-            <button key={idx}
-              onPointerDown={(e) => { e.stopPropagation(); a.action() }}
+            <button key={idx} onPointerDown={(e) => { e.stopPropagation(); a.action() }}
               style={btnStyle(a.farbe, idx < aktivMenu.aktionen.length - 1)}>
               {a.label}
             </button>
@@ -822,8 +904,7 @@ const MapView = memo(function MapView({
           style={{
             backgroundColor: ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : '#111827',
             border: `1px solid ${ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : '#374151'}`,
-            padding: '10px 16px',
-            maxWidth: '92vw',
+            padding: '10px 16px', maxWidth: '92vw',
           }}>
           {ziehStartId ? (
             <p style={{ color: '#fed7aa', fontSize: 12, margin: 0 }}>
@@ -831,20 +912,21 @@ const MapView = memo(function MapView({
             </p>
           ) : neuerHsStart ? (
             <p style={{ color: '#fde68a', fontSize: 12, margin: 0 }}>
-              🏠 <b>Hausanschluss zeichnen</b> — {neuerHsStart.name} &nbsp;·&nbsp; Ziel antippen (Trasse, Punkt oder Karte) &nbsp;·&nbsp; ESC
+              🏠 <b>Hausanschluss zeichnen</b> — {neuerHsStart.name} &nbsp;·&nbsp; Ziel antippen &nbsp;·&nbsp; ESC
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               <p style={{ color: '#d1d5db', fontSize: 12, margin: 0 }}>
-                <span style={{ color: '#93c5fd', fontWeight: 600 }}>Trasse &amp; Hausanschluss bearbeiten</span>
+                <span style={{ color: '#93c5fd', fontWeight: 600 }}>
+                  {kleinProjekt ? '✏️ Klein-Projekt' : '✏️ Groß-Projekt'} — Trasse &amp; Hausanschlüsse bearbeiten
+                </span>
                 {aktivesSegment && <span style={{ color: GELB, marginLeft: 8, fontWeight: 600 }}>● Segment markiert</span>}
               </p>
               <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
-                <b style={{ color: '#d1d5db' }}>Segment antippen</b> → <span style={{ color: GELB }}>gelb</span> + Handles
-                &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → verschieben
-                &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt antippen</b> → Menü (Löschen / Neuer Strich)
-                &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Gelbe Linie antippen</b> → Menü (Punkt einfügen / Löschen)
-                &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>ESC</b> → Auswahl aufheben
+                {kleinProjekt
+                  ? <><b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → verschieben &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt antippen</b> → Menü &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Linie antippen</b> → Menü</>
+                  : <><b style={{ color: '#d1d5db' }}>Segment antippen</b> → <span style={{ color: GELB }}>gelb</span> + Handles &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → verschieben &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>ESC</b> → Auswahl aufheben</>
+                }
               </p>
               {deletedStack.length > 0 && (
                 <button onClick={handleHsUndo}
