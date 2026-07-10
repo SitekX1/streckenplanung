@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { memo, useEffect, useRef, useState } from 'react'
 import {
@@ -56,6 +56,8 @@ function berechneLinieLaenge(wp: LatLng[]): number {
 type MenuAktion = { label: string; farbe: string; action: () => void }
 type AktivMenu = { screenX: number; screenY: number; aktionen: MenuAktion[] } | null
 type NeuerHsStart = { adresseUuid: string; pos: LatLng; name: string } | null
+
+const GELB = '#facc15'
 
 interface MapViewProps {
   adressen: Address[]
@@ -167,7 +169,6 @@ const MapView = memo(function MapView({
   const [suchFehler, setSuchFehler] = useState(false)
   const [flugZiel, setFlugZiel] = useState<LatLng | null>(null)
 
-  // Layer-Sichtbarkeit
   const [trasseSichtbar, setTrasseSichtbar] = useState(true)
   const [hausanschluesseSichtbar, setHausanschluesseSichtbar] = useState(true)
   const [adressenSichtbar, setAdressenSichtbar] = useState(true)
@@ -178,8 +179,8 @@ const MapView = memo(function MapView({
   const [ziehStartId, setZiehStartId] = useState<string | null>(null)
   const [ziehStartPos, setZiehStartPos] = useState<LatLng | null>(null)
   const [aktivMenu, setAktivMenu] = useState<AktivMenu>(null)
-  // Manuell neuen Hausanschluss zeichnen
   const [neuerHsStart, setNeuerHsStart] = useState<NeuerHsStart>(null)
+  const [aktivesSegment, setAktivesSegment] = useState<string | null>(null)
 
   const trasseRef = useRef<LatLng[]>([])
   const trassePfadeRef = useRef<LatLng[][]>([])
@@ -202,6 +203,7 @@ const MapView = memo(function MapView({
       const t = trasseRef.current
       setDeletedStack([])
       editiertRef.current = false
+      setAktivesSegment(null)
       if (pfade.length > 0) {
         const gueltig = pfade.filter((p) => p.length >= 2)
         const gesamtPunkte = gueltig.reduce((s, p) => s + p.length, 0)
@@ -231,6 +233,7 @@ const MapView = memo(function MapView({
       setZiehStartPos(null)
       setNeuerHsStart(null)
       setAktivMenu(null)
+      setAktivesSegment(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
@@ -239,7 +242,7 @@ const MapView = memo(function MapView({
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         setZiehStartId(null); setZiehStartPos(null)
-        setNeuerHsStart(null); setAktivMenu(null)
+        setNeuerHsStart(null); setAktivMenu(null); setAktivesSegment(null)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -269,7 +272,6 @@ const MapView = memo(function MapView({
     setNeuerHsStart(null)
   }
 
-  // --- Trasse ---
   function handlePfadPunktBewegt(pfadIdx: number, punktIdx: number, pos: LatLng) {
     editiertRef.current = true
     setEditPfade((prev) =>
@@ -291,6 +293,7 @@ const MapView = memo(function MapView({
   function handlePfadLoeschen(pfadIdx: number) {
     editiertRef.current = true
     setEditPfade((prev) => prev.filter((_, i) => i !== pfadIdx))
+    setAktivesSegment(null)
   }
 
   function handlePfadPunktEinfuegen(pfadIdx: number, klickPos: LatLng) {
@@ -329,7 +332,6 @@ const MapView = memo(function MapView({
     } catch { /* ignore */ }
   }
 
-  // --- Hausanschlüsse ---
   function hausstichWp(h: Hausstich): LatLng[] {
     return h.wegpunkte && h.wegpunkte.length >= 2 ? h.wegpunkte : [h.hausKoordinate, h.trassenPunkt]
   }
@@ -374,6 +376,7 @@ const MapView = memo(function MapView({
     const deleted = hausanschluesse.find((h) => h.id === id)
     if (deleted) setDeletedStack((prev) => [...prev, deleted].slice(-10))
     onHausanschluesseGeaendert(hausanschluesse.filter((h) => h.id !== id))
+    setAktivesSegment(null)
   }
 
   function handleHsUndo() {
@@ -416,9 +419,13 @@ const MapView = memo(function MapView({
 
   const imZeichenModus = !!ziehStartId || !!neuerHsStart
 
+  const segStyle = (key: string, basisFarbe: string, basisWeight: number) =>
+    aktivesSegment === key
+      ? { color: GELB, weight: basisWeight + 4, opacity: 1 }
+      : { color: basisFarbe, weight: basisWeight, opacity: 0.95 }
+
   return (
     <div className="relative w-full h-full">
-      {/* Ortssuche */}
       <div className="absolute top-3 left-1/2 -translate-x-1/2 z-1000 flex gap-2 items-center">
         <input
           type="text" value={suchQuery}
@@ -436,7 +443,6 @@ const MapView = memo(function MapView({
         {suchFehler && <span className="text-xs" style={{ color: '#ef4444' }}>Nicht gefunden</span>}
       </div>
 
-      {/* Rechte Buttons */}
       <div className="absolute top-3 right-3 z-1000 flex flex-col gap-2">
         <button onClick={() => setTileVariante((v) => (v === 'satellit' ? 'osm' : 'satellit'))}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
@@ -453,9 +459,7 @@ const MapView = memo(function MapView({
           style={{ backgroundColor: ortsnamenSichtbar ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb', border: `1px solid ${ortsnamenSichtbar ? '#3b82f6' : '#374151'}` }}>
           🏷️ Ortsnamen
         </button>
-
         <div style={{ borderTop: '1px solid #374151', margin: '2px 0' }} />
-
         <button onClick={() => setTrasseSichtbar((v) => !v)}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
           style={layerBtnStyle(trasseSichtbar)}>
@@ -514,7 +518,6 @@ const MapView = memo(function MapView({
                   e.originalEvent?.stopPropagation?.()
                   if (ziehStartId) { handleZiehZiel({ lat: a.lat, lng: a.lon }); return }
                   if (neuerHsStart) {
-                    // Andere Adresse antippen wechselt den Startpunkt
                     setNeuerHsStart({ adresseUuid: a.uuid, pos: { lat: a.lat, lng: a.lon }, name: `${a.strasse} ${a.nr}` })
                     return
                   }
@@ -549,17 +552,18 @@ const MapView = memo(function MapView({
           <Polyline positions={trasse.map((p) => [p.lat, p.lng] as [number, number])} pathOptions={{ color: trasseFarbe, weight: 4, opacity: 0.9 }} />
         )}
 
-        {/* Trasse Edit — MST-Linien */}
+        {/* Trasse Edit — MST-Linien mit Gelb-Highlight */}
         {editierbarAktiv && editPfade.map((pfad, pi) =>
           pfad.length >= 2 ? (
             <Polyline key={`ep-${pi}`} positions={pfad.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{ color: trasseFarbe, weight: 5, opacity: 0.9 }}
+              pathOptions={segStyle(`pfad-${pi}`, trasseFarbe, 5)}
               eventHandlers={{
                 click: (e) => {
                   if (ziehStartId) return
                   e.originalEvent.stopPropagation()
                   const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
                   if (neuerHsStart) { handleNeuerHsZiel(pos); return }
+                  setAktivesSegment(`pfad-${pi}`)
                   zeigeMenu(e, [
                     { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handlePfadPunktEinfuegen(pi, pos); setAktivMenu(null) } },
                     { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handlePfadLoeschen(pi); setAktivMenu(null) } },
@@ -569,16 +573,17 @@ const MapView = memo(function MapView({
           ) : null
         )}
 
-        {/* Trasse Edit — Einzel-Linie */}
+        {/* Trasse Edit — Einzel-Linie mit Gelb-Highlight */}
         {editierbarAktiv && editSingle.length >= 2 && (
           <Polyline positions={editSingle.map((p) => [p.lat, p.lng] as [number, number])}
-            pathOptions={{ color: trasseFarbe, weight: 5, opacity: 0.9 }}
+            pathOptions={segStyle('single', trasseFarbe, 5)}
             eventHandlers={{
               click: (e) => {
                 if (ziehStartId) return
                 e.originalEvent.stopPropagation()
                 const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
                 if (neuerHsStart) { handleNeuerHsZiel(pos); return }
+                setAktivesSegment('single')
                 zeigeMenu(e, [
                   { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleSinglePunktEinfuegen(pos); setAktivMenu(null) } },
                 ])
@@ -638,17 +643,19 @@ const MapView = memo(function MapView({
           )
         })}
 
-        {/* Hausanschlüsse — Linien */}
+        {/* Hausanschlüsse — Linien mit Gelb-Highlight */}
         {hausanschluesseSichtbar && hausanschluesse.map((h) => {
           const wp = hausstichWp(h)
+          const segKey = `hs-${h.id}`
           return (
             <Polyline key={h.id} positions={wp.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{ color: hausanschlussfarbe, weight: editierbarAktiv ? 3 : 2, opacity: editierbarAktiv ? 1 : 0.8 }}
+              pathOptions={segStyle(segKey, hausanschlussfarbe, editierbarAktiv ? 3 : 2)}
               eventHandlers={editierbarAktiv ? {
                 click: (e) => {
                   e.originalEvent.stopPropagation()
                   if (neuerHsStart) return
                   const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                  setAktivesSegment(segKey)
                   zeigeMenu(e, [
                     { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleHsPunktEinfuegen(h.id, pos); setAktivMenu(null) } },
                     { label: '🗑️ Linie löschen', farbe: '#f87171', action: () => { handleHsLoeschen(h.id); setAktivMenu(null) } },
@@ -708,7 +715,7 @@ const MapView = memo(function MapView({
         </div>
       )}
 
-      {/* Kontextmenü */}
+      {/* Kontextmenü — Rahmen wird gelb wenn Segment aktiv */}
       {editierbarAktiv && aktivMenu && !imZeichenModus && (
         <div style={{
           position: 'absolute',
@@ -716,7 +723,7 @@ const MapView = memo(function MapView({
           top: Math.max(aktivMenu.screenY - aktivMenu.aktionen.length * 46 - 10, 60),
           zIndex: 2000,
           backgroundColor: '#1a1a1a',
-          border: '1px solid #374151',
+          border: `1px solid ${aktivesSegment ? GELB : '#374151'}`,
           borderRadius: '10px',
           overflow: 'hidden',
           boxShadow: '0 8px 24px rgba(0,0,0,0.9)',
@@ -737,7 +744,7 @@ const MapView = memo(function MapView({
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg"
           style={{
             backgroundColor: ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : '#111827',
-            border: `1px solid ${ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : '#374151'}`,
+            border: `1px solid ${ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : '#374151'}`,
             padding: '10px 16px',
             maxWidth: '92vw',
           }}>
@@ -753,18 +760,10 @@ const MapView = memo(function MapView({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               <p style={{ color: '#d1d5db', fontSize: 12, margin: 0 }}>
                 <span style={{ color: '#93c5fd', fontWeight: 600 }}>Trasse &amp; Hausanschluss</span>
+                {aktivesSegment && <span style={{ color: GELB, marginLeft: 8, fontWeight: 600 }}>● Segment markiert</span>}
               </p>
               <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
-                <b style={{ color: '#d1d5db' }}>Adresspunkt antippen</b> → Neuer Hausanschluss zeichnen
-              </p>
-              <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
-                <b style={{ color: '#d1d5db' }}>Trassenpunkt antippen</b> → Menü (Löschen / Neuer Strich)
-              </p>
-              <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
-                <b style={{ color: '#d1d5db' }}>Linie antippen</b> → Menü (Punkt einfügen / Löschen)
-              </p>
-              <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
-                <b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → Position ändern
+                <b style={{ color: '#d1d5db' }}>Linie antippen</b> → <span style={{ color: GELB }}>gelb markieren</span> + Menü &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>ESC</b> → weg
               </p>
               {deletedStack.length > 0 && (
                 <button onClick={handleHsUndo}
