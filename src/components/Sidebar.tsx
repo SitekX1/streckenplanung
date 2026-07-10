@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { useRef } from 'react'
 import { OrtInfo } from '../lib/types'
@@ -6,6 +6,7 @@ import { OrtInfo } from '../lib/types'
 interface SidebarProps {
   adressenCount: number
   gefilterteAdressenAnzahl: number
+  neueAdressenOhneHsAnzahl: number
   orte: OrtInfo[]
   aktiveOrteKeys: string[]
   startpunktGesetzt: boolean
@@ -31,12 +32,13 @@ interface SidebarProps {
   onStartpunktZuruecksetzen: () => void
   onTrasseGenerieren: () => void
   onHausanschluesseGenerieren: () => void
+  onHausanschluesseHinzufuegen?: () => void
   onEditierbarToggle: () => void
   onAllesZuruecksetzen: () => void
   onKMLExport: () => void
   onProjektSpeichern: () => void
   onProjektLaden: (file: File) => void
-  onTrasseErweitern?: (file: File) => void
+  onTrasseErweitern?: () => void
 }
 
 function formatMeter(meter: number): string {
@@ -49,6 +51,7 @@ function formatMeter(meter: number): string {
 export default function Sidebar({
   adressenCount,
   gefilterteAdressenAnzahl,
+  neueAdressenOhneHsAnzahl,
   orte,
   aktiveOrteKeys,
   onOrtToggle,
@@ -74,6 +77,7 @@ export default function Sidebar({
   onStartpunktZuruecksetzen,
   onTrasseGenerieren,
   onHausanschluesseGenerieren,
+  onHausanschluesseHinzufuegen,
   onEditierbarToggle,
   onAllesZuruecksetzen,
   onKMLExport,
@@ -83,7 +87,6 @@ export default function Sidebar({
 }: SidebarProps) {
   const excelInputRef = useRef<HTMLInputElement>(null)
   const projektLadenRef = useRef<HTMLInputElement>(null)
-  const trasseErweiternRef = useRef<HTMLInputElement>(null)
 
   const hatDaten = adressenCount > 0
   const kannTrasseGenerieren = startpunktGesetzt && hatDaten
@@ -280,25 +283,16 @@ export default function Sidebar({
                     ✏️ {editierbarAktiv ? 'Bearbeitung aktiv' : 'Trasse bearbeiten'}
                   </button>
                   {onTrasseErweitern && (
-                    <>
-                      <button
-                        onClick={() => trasseErweiternRef.current?.click()}
-                        className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left"
-                      >
-                        🔗 Trasse erweitern
-                      </button>
-                      <input
-                        ref={trasseErweiternRef}
-                        type="file"
-                        accept=".xlsx,.xls"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0]
-                          if (file) onTrasseErweitern(file)
-                          e.target.value = ''
-                        }}
-                      />
-                    </>
+                    <button
+                      onClick={onTrasseErweitern}
+                      disabled={neueAdressenOhneHsAnzahl === 0}
+                      className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      🔗 Trasse erweitern
+                      {neueAdressenOhneHsAnzahl > 0 && (
+                        <span className="ml-1.5 text-[10px] text-blue-400">({neueAdressenOhneHsAnzahl} Adr.)</span>
+                      )}
+                    </button>
                   )}
                   {editierbarAktiv && (
                     <p className="px-1 text-[10px] text-blue-400 leading-tight">
@@ -353,8 +347,25 @@ export default function Sidebar({
                     disabled={!trasseVorhanden}
                     className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40"
                   >
-                    ↺ Neu generieren
+                    ↺ Alle neu generieren
                   </button>
+                  {onHausanschluesseHinzufuegen && (
+                    <button
+                      onClick={onHausanschluesseHinzufuegen}
+                      disabled={!trasseVorhanden || neueAdressenOhneHsAnzahl === 0}
+                      className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{
+                        backgroundColor: neueAdressenOhneHsAnzahl > 0 ? '#1e3a5f' : '#1f2937',
+                        color: neueAdressenOhneHsAnzahl > 0 ? '#93c5fd' : '#6b7280',
+                        border: `1px solid ${neueAdressenOhneHsAnzahl > 0 ? '#3b82f6' : '#374151'}`,
+                      }}
+                    >
+                      ➕ Für aktive Orte hinzufügen
+                      {neueAdressenOhneHsAnzahl > 0 && (
+                        <span className="ml-1.5 text-[10px]">({neueAdressenOhneHsAnzahl} Adr.)</span>
+                      )}
+                    </button>
+                  )}
                   {editierbarAktiv && (
                     <p className="px-1 text-[10px] text-red-400 leading-tight">
                       Klick auf rote Linie löscht den Hausanschluss

@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { memo, useEffect, useRef, useState } from 'react'
 import {
@@ -498,7 +498,7 @@ const MapView = memo(function MapView({
 
         {/* Adressen */}
         {adressenSichtbar && adressen.map((a) => {
-          const aktiv = aktiveOrteKeys.length === 0 || aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)
+          const aktiv = aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)
           const istHsStart = neuerHsStart?.adresseUuid === a.uuid
           return (
             <CircleMarker key={a.uuid} center={[a.lat, a.lon]}

@@ -152,44 +152,37 @@ export default function Home() {
     setTimeout(() => setTrasseProgress(0), 500)
   }, [startpunkt, adressen, aktiveOrteKeys, orte.length])
 
-  const handleTrasseErweitern = useCallback(async (file: File) => {
+  // Trasse zu aktiven Orten erweitern, die noch keine Hausanschlüsse haben
+  const handleTrasseErweitern = useCallback(async () => {
     const vorhandenePfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (vorhandenePfade.length === 0 || !startpunkt) return
+
+    const bearbeiteteUuids = new Set(hausanschluesse.map((h) => h.addressUuid))
+    const gefilterteNeue = adressen.filter(
+      (a) =>
+        aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`) &&
+        !bearbeiteteUuids.has(a.uuid)
+    )
+
+    if (gefilterteNeue.length === 0) {
+      setTrasseMethode('Keine neuen Adressen für ausgewählte Orte')
+      return
+    }
 
     setTrasseProgress(2)
     setTrasseMethode('ORS-Routing (Erweiterung läuft…)')
 
     try {
-      const neueAdressen = await parseExcelFile(file)
-      // Duplikate herausfiltern (gleiche PLZ + Straße + Nr)
-      const existingKeys = new Set(adressen.map((a) => `${a.plz}_${a.strasse}_${a.nr}_${a.nr_zusatz}`))
-      const gefilterteNeue = neueAdressen.filter(
-        (a) => !existingKeys.has(`${a.plz}_${a.strasse}_${a.nr}_${a.nr_zusatz}`)
-      )
-      if (gefilterteNeue.length === 0) {
-        setTrasseMethode('Keine neuen Adressen gefunden')
-        setTrasseProgress(0)
-        return
-      }
-
       const neuePfade = await berechneBaumORS(
         startpunkt,
         gefilterteNeue,
         (p) => setTrasseProgress(2 + Math.round(p * 0.95)),
         vorhandenePfade
       )
-
       const allePfade = [...vorhandenePfade, ...neuePfade]
       setTrassePfade(allePfade)
       setTrasse(allePfade.flat())
       setTrasseMethode(`ORS-Baum Erweitert · ${allePfade.length} Segmente`)
-
-      const alleAdressen = [...adressen, ...gefilterteNeue]
-      setAdressen(alleAdressen)
-      const orteListe = extractOrte(alleAdressen)
-      setOrte(orteListe)
-      setAktiveOrteKeys(orteListe.map((o) => o.key))
-
       setLaengen(berechneLaengen(allePfade, hausanschluesse))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -198,7 +191,7 @@ export default function Home() {
 
     setTrasseProgress(100)
     setTimeout(() => setTrasseProgress(0), 500)
-  }, [startpunkt, trassePfade, trasse, adressen, hausanschluesse])
+  }, [startpunkt, trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse])
 
   const handleHausanschluesseGenerieren = useCallback(async () => {
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
@@ -223,6 +216,31 @@ export default function Home() {
 
     setTimeout(() => setHausanschluesseProgress(0), 500)
   }, [trassePfade, trasse, adressen, aktiveOrteKeys, orte.length])
+
+  // Hausanschlüsse nur für aktive Orte hinzufügen (bestehende bleiben erhalten)
+  const handleHausanschluesseHinzufuegen = useCallback(async () => {
+    const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
+    if (pfade.length === 0) return
+
+    const bearbeiteteUuids = new Set(hausanschluesse.map((h) => h.addressUuid))
+    const gefilterteAdressen = adressen.filter(
+      (a) =>
+        aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`) &&
+        !bearbeiteteUuids.has(a.uuid)
+    )
+
+    if (gefilterteAdressen.length === 0) return
+
+    setHausanschluesseProgress(1)
+    const neueHs = await berechneHausanschluesse(pfade, gefilterteAdressen, (p) =>
+      setHausanschluesseProgress(p)
+    )
+    const alleHs = [...hausanschluesse, ...neueHs]
+    setHausanschluesse(alleHs)
+    setHausanschluesseProgress(100)
+    setLaengen(berechneLaengen(pfade, alleHs))
+    setTimeout(() => setHausanschluesseProgress(0), 500)
+  }, [trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse])
 
   const handleTrasseGeaendert = useCallback(
     (punkte: LatLng[]) => {
@@ -317,17 +335,25 @@ export default function Home() {
     setAktiveOrteKeys(orteListe.map((o) => o.key))
   }, [])
 
-  // Gefilterte Adressanzahl für Hausanschluss-Zähler
   const gefilterteAdressenAnzahl =
     aktiveOrteKeys.length === orte.length
       ? adressen.length
       : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)).length
+
+  // Anzahl aktiver Adressen ohne bestehenden Hausanschluss (für "Erweitern"/"Hinzufügen")
+  const bearbeiteteUuids = new Set(hausanschluesse.map((h) => h.addressUuid))
+  const neueAdressenOhneHsAnzahl = adressen.filter(
+    (a) =>
+      aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`) &&
+      !bearbeiteteUuids.has(a.uuid)
+  ).length
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#0f0f0f]">
       <Sidebar
         adressenCount={adressen.length}
         gefilterteAdressenAnzahl={gefilterteAdressenAnzahl}
+        neueAdressenOhneHsAnzahl={neueAdressenOhneHsAnzahl}
         orte={orte}
         aktiveOrteKeys={aktiveOrteKeys}
         startpunktGesetzt={startpunkt !== null}
@@ -353,6 +379,7 @@ export default function Home() {
         onStartpunktZuruecksetzen={handleStartpunktZuruecksetzen}
         onTrasseGenerieren={handleTrasseGenerieren}
         onHausanschluesseGenerieren={handleHausanschluesseGenerieren}
+        onHausanschluesseHinzufuegen={handleHausanschluesseHinzufuegen}
         onEditierbarToggle={handleEditierbarToggle}
         onAllesZuruecksetzen={handleAllesZuruecksetzen}
         onKMLExport={handleKMLExport}
