@@ -543,7 +543,7 @@ const MapView = memo(function MapView({
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
-                    if (ziehStartId) { setZiehStartId(null); setZiehStartPos(null); return }
+                    if (ziehStartId) { handleZiehZiel(p); return }
                     zeigeMenu(e, [
                       { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handlePfadPunktLoeschen(pi, i); setAktivMenu(null) } },
                       { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
@@ -568,7 +568,7 @@ const MapView = memo(function MapView({
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
-                  if (ziehStartId) { setZiehStartId(null); setZiehStartPos(null); return }
+                  if (ziehStartId) { handleZiehZiel(p); return }
                   zeigeMenu(e, [
                     { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleSinglePunktLoeschen(i); setAktivMenu(null) } },
                     { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
@@ -616,6 +616,7 @@ const MapView = memo(function MapView({
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
+                    if (ziehStartId) { handleZiehZiel(p); return }
                     zeigeMenu(e, [
                       { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleHsPunktLoeschen(h.id, idx); setAktivMenu(null) } },
                     ])
