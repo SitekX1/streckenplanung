@@ -432,19 +432,22 @@ const MapView = memo(function MapView({
         <div style={{ borderTop: '1px solid #374151', margin: '2px 0' }} />
 
         <button onClick={() => setTrasseSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
           style={layerBtnStyle(trasseSichtbar)}>
-          🔵 Trasse
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: trasseFarbe, display: 'inline-block', flexShrink: 0 }} />
+          Trasse
         </button>
         <button onClick={() => setHausanschluesseSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
           style={layerBtnStyle(hausanschluesseSichtbar)}>
-          🔴 Hausanschlüsse
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: hausanschlussfarbe, display: 'inline-block', flexShrink: 0 }} />
+          Hausanschlüsse
         </button>
         <button onClick={() => setAdressenSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all flex items-center gap-1.5"
           style={layerBtnStyle(adressenSichtbar)}>
-          🟢 Adressen
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: adressFarbe, display: 'inline-block', flexShrink: 0 }} />
+          Adressen
         </button>
       </div>
 
