@@ -22,6 +22,8 @@ interface SidebarProps {
   adressFarbe: string
   trasseFarbe: string
   hausanschlussfarbe: string
+  canUndo: boolean
+  undoCount: number
   onAdressFarbeAendern: (farbe: string) => void
   onTrasseFarbeAendern: (farbe: string) => void
   onHausanschlussFarbeAendern: (farbe: string) => void
@@ -39,6 +41,7 @@ interface SidebarProps {
   onProjektSpeichern: () => void
   onProjektLaden: (file: File) => void
   onTrasseErweitern?: () => void
+  onUndo: () => void
 }
 
 function formatMeter(meter: number): string {
@@ -69,6 +72,8 @@ export default function Sidebar({
   adressFarbe,
   trasseFarbe,
   hausanschlussfarbe,
+  canUndo,
+  undoCount,
   onAdressFarbeAendern,
   onTrasseFarbeAendern,
   onHausanschlussFarbeAendern,
@@ -84,6 +89,7 @@ export default function Sidebar({
   onProjektSpeichern,
   onProjektLaden,
   onTrasseErweitern,
+  onUndo,
 }: SidebarProps) {
   const excelInputRef = useRef<HTMLInputElement>(null)
   const projektLadenRef = useRef<HTMLInputElement>(null)
@@ -135,6 +141,14 @@ export default function Sidebar({
               💾 Projekt speichern
             </button>
             <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ color: canUndo ? '#fbbf24' : '#6b7280' }}
+            >
+              ↩ Zurück{canUndo ? ` (${undoCount})` : ''}
+            </button>
+            <button
               onClick={() => {
                 if (hatDaten && !confirm('Alle Daten löschen und neu anfangen?')) return
                 onAllesZuruecksetzen()
@@ -174,7 +188,7 @@ export default function Sidebar({
             </p>
           )}
 
-          {/* Orts-Filter — nur anzeigen wenn mehrere Orte vorhanden */}
+          {/* Orts-Filter */}
           {orte.length > 1 && (
             <div className="mt-3">
               <div className="flex items-center justify-between px-1 mb-1.5">
@@ -223,6 +237,15 @@ export default function Sidebar({
         {/* Sektion: Schritte */}
         <div>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">Schritte</p>
+
+          {/* Hinweis Bearbeitungsmodus */}
+          {editierbarAktiv && (
+            <div className="mb-3 px-3 py-2 rounded-lg text-xs"
+              style={{ backgroundColor: '#1e2a1f', border: '1px solid #16a34a', color: '#86efac' }}>
+              ✏️ Bearbeitung aktiv — Generierung gesperrt
+            </div>
+          )}
+
           <div className="flex flex-col gap-4">
 
             {/* Schritt 1 */}
@@ -267,7 +290,8 @@ export default function Sidebar({
                   </div>
                   <button
                     onClick={onTrasseGenerieren}
-                    className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left"
+                    disabled={editierbarAktiv}
+                    className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     ↺ Neu generieren
                   </button>
@@ -280,24 +304,19 @@ export default function Sidebar({
                       border: `1px solid ${editierbarAktiv ? '#3b82f6' : '#374151'}`,
                     }}
                   >
-                    ✏️ {editierbarAktiv ? 'Bearbeitung aktiv' : 'Trasse bearbeiten'}
+                    ✏️ {editierbarAktiv ? 'Bearbeitung beenden' : 'Trasse bearbeiten'}
                   </button>
                   {onTrasseErweitern && (
                     <button
                       onClick={onTrasseErweitern}
-                      disabled={neueAdressenOhneHsAnzahl === 0}
+                      disabled={neueAdressenOhneHsAnzahl === 0 || editierbarAktiv}
                       className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       🔗 Trasse erweitern
-                      {neueAdressenOhneHsAnzahl > 0 && (
+                      {neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv && (
                         <span className="ml-1.5 text-[10px] text-blue-400">({neueAdressenOhneHsAnzahl} Adr.)</span>
                       )}
                     </button>
-                  )}
-                  {editierbarAktiv && (
-                    <p className="px-1 text-[10px] text-blue-400 leading-tight">
-                      Punkte ziehen · Klick auf Linie fügt Punkt ein · Doppelklick auf Punkt löscht
-                    </p>
                   )}
                 </div>
               ) : isGeneratingTrasse ? (
@@ -313,7 +332,7 @@ export default function Sidebar({
               ) : (
                 <button
                   onClick={onTrasseGenerieren}
-                  disabled={!kannTrasseGenerieren}
+                  disabled={!kannTrasseGenerieren || editierbarAktiv}
                   className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   🔵 Trasse generieren
@@ -344,24 +363,24 @@ export default function Sidebar({
                   </div>
                   <button
                     onClick={onHausanschluesseGenerieren}
-                    disabled={!trasseVorhanden}
-                    className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40"
+                    disabled={!trasseVorhanden || editierbarAktiv}
+                    className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     ↺ Alle neu generieren
                   </button>
                   {onHausanschluesseHinzufuegen && (
                     <button
                       onClick={onHausanschluesseHinzufuegen}
-                      disabled={!trasseVorhanden || neueAdressenOhneHsAnzahl === 0}
+                      disabled={!trasseVorhanden || neueAdressenOhneHsAnzahl === 0 || editierbarAktiv}
                       className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
                       style={{
-                        backgroundColor: neueAdressenOhneHsAnzahl > 0 ? '#1e3a5f' : '#1f2937',
-                        color: neueAdressenOhneHsAnzahl > 0 ? '#93c5fd' : '#6b7280',
-                        border: `1px solid ${neueAdressenOhneHsAnzahl > 0 ? '#3b82f6' : '#374151'}`,
+                        backgroundColor: neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? '#1e3a5f' : '#1f2937',
+                        color: neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? '#93c5fd' : '#6b7280',
+                        border: `1px solid ${neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? '#3b82f6' : '#374151'}`,
                       }}
                     >
                       ➕ Für aktive Orte hinzufügen
-                      {neueAdressenOhneHsAnzahl > 0 && (
+                      {neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv && (
                         <span className="ml-1.5 text-[10px]">({neueAdressenOhneHsAnzahl} Adr.)</span>
                       )}
                     </button>
@@ -375,7 +394,7 @@ export default function Sidebar({
               ) : (
                 <button
                   onClick={onHausanschluesseGenerieren}
-                  disabled={!trasseVorhanden}
+                  disabled={!trasseVorhanden || editierbarAktiv}
                   className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   🔴 Hausanschlüsse generieren

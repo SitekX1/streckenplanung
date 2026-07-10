@@ -26,6 +26,9 @@ function extractOrte(adressen: Address[]): OrtInfo[] {
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'))
 }
 
+type Laengen = { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number }
+type HistorySnapshot = { trassePfade: LatLng[][]; trasse: LatLng[]; hausanschluesse: Hausstich[]; laengen: Laengen }
+
 export default function Home() {
   const [adressen, setAdressen] = useState<Address[]>([])
   const [orte, setOrte] = useState<OrtInfo[]>([])
@@ -37,17 +40,30 @@ export default function Home() {
   const [hausanschluesse, setHausanschluesse] = useState<Hausstich[]>([])
   const [trasseProgress, setTrasseProgress] = useState(0)
   const [hausanschluesseProgress, setHausanschluesseProgress] = useState(0)
-  const [laengen, setLaengen] = useState({
-    trassenLaenge: 0,
-    hausanschluesseLaenge: 0,
-    gesamt: 0,
-  })
+  const [laengen, setLaengen] = useState<Laengen>({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0 })
   const [editierbarAktiv, setEditierbarAktiv] = useState(false)
   const [trasseMethode, setTrasseMethode] = useState('')
   const [projektName] = useState('Neues Projekt')
   const [adressFarbe, setAdressFarbe] = useState('#22c55e')
   const [trasseFarbe, setTrasseFarbe] = useState('#3b82f6')
   const [hausanschlussfarbe, setHausanschlussfarbe] = useState('#ef4444')
+  const [history, setHistory] = useState<HistorySnapshot[]>([])
+
+  const pushHistory = useCallback(() => {
+    setHistory((prev) => [...prev.slice(-9), { trassePfade, trasse, hausanschluesse, laengen }])
+  }, [trassePfade, trasse, hausanschluesse, laengen])
+
+  const handleUndo = useCallback(() => {
+    setHistory((prev) => {
+      if (prev.length === 0) return prev
+      const snap = prev[prev.length - 1]
+      setTrassePfade(snap.trassePfade)
+      setTrasse(snap.trasse)
+      setHausanschluesse(snap.hausanschluesse)
+      setLaengen(snap.laengen)
+      return prev.slice(0, -1)
+    })
+  }, [])
 
   const handleExcelImport = useCallback(async (file: File) => {
     const ergebnis = await parseExcelFile(file)
@@ -87,6 +103,7 @@ export default function Home() {
   const handleTrasseGenerieren = useCallback(async () => {
     if (!startpunkt || adressen.length === 0) return
 
+    pushHistory()
     setEditierbarAktiv(false)
     setHausanschluesse([])
     setTrasseProgress(2)
@@ -150,9 +167,8 @@ export default function Home() {
     setTrasseProgress(100)
     setLaengen(berechneLaengen(pfade, []))
     setTimeout(() => setTrasseProgress(0), 500)
-  }, [startpunkt, adressen, aktiveOrteKeys, orte.length])
+  }, [startpunkt, adressen, aktiveOrteKeys, orte.length, pushHistory])
 
-  // Trasse zu aktiven Orten erweitern, die noch keine Hausanschlüsse haben
   const handleTrasseErweitern = useCallback(async () => {
     const vorhandenePfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (vorhandenePfade.length === 0 || !startpunkt) return
@@ -169,6 +185,7 @@ export default function Home() {
       return
     }
 
+    pushHistory()
     setTrasseProgress(2)
     setTrasseMethode('ORS-Routing (Erweiterung läuft…)')
 
@@ -191,12 +208,13 @@ export default function Home() {
 
     setTrasseProgress(100)
     setTimeout(() => setTrasseProgress(0), 500)
-  }, [startpunkt, trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse])
+  }, [startpunkt, trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse, pushHistory])
 
   const handleHausanschluesseGenerieren = useCallback(async () => {
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (pfade.length === 0) return
 
+    pushHistory()
     setHausanschluesseProgress(1)
 
     const gefilterteAdressen =
@@ -210,14 +228,10 @@ export default function Home() {
 
     setHausanschluesse(ergebnis)
     setHausanschluesseProgress(100)
-
-    const neueLaengen = berechneLaengen(pfade, ergebnis)
-    setLaengen(neueLaengen)
-
+    setLaengen(berechneLaengen(pfade, ergebnis))
     setTimeout(() => setHausanschluesseProgress(0), 500)
-  }, [trassePfade, trasse, adressen, aktiveOrteKeys, orte.length])
+  }, [trassePfade, trasse, adressen, aktiveOrteKeys, orte.length, pushHistory])
 
-  // Hausanschlüsse nur für aktive Orte hinzufügen (bestehende bleiben erhalten)
   const handleHausanschluesseHinzufuegen = useCallback(async () => {
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (pfade.length === 0) return
@@ -231,6 +245,7 @@ export default function Home() {
 
     if (gefilterteAdressen.length === 0) return
 
+    pushHistory()
     setHausanschluesseProgress(1)
     const neueHs = await berechneHausanschluesse(pfade, gefilterteAdressen, (p) =>
       setHausanschluesseProgress(p)
@@ -240,34 +255,33 @@ export default function Home() {
     setHausanschluesseProgress(100)
     setLaengen(berechneLaengen(pfade, alleHs))
     setTimeout(() => setHausanschluesseProgress(0), 500)
-  }, [trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse])
+  }, [trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse, pushHistory])
 
   const handleTrasseGeaendert = useCallback(
     (punkte: LatLng[]) => {
+      pushHistory()
       setTrasse(punkte)
       setTrassePfade([])
-      const neueLaengen = berechneLaengen([punkte], hausanschluesse)
-      setLaengen(neueLaengen)
+      setLaengen(berechneLaengen([punkte], hausanschluesse))
     },
-    [hausanschluesse]
+    [hausanschluesse, pushHistory]
   )
 
   const handleTrassePfadeGeaendert = useCallback(
     (pfade: LatLng[][]) => {
+      pushHistory()
       setTrassePfade(pfade)
       setTrasse(pfade.flat())
-      const neueLaengen = berechneLaengen(pfade, hausanschluesse)
-      setLaengen(neueLaengen)
+      setLaengen(berechneLaengen(pfade, hausanschluesse))
     },
-    [hausanschluesse]
+    [hausanschluesse, pushHistory]
   )
 
   const handleHausanschluesseGeaendert = useCallback(
     (updated: Hausstich[]) => {
       setHausanschluesse(updated)
       const pfade = trassePfade.length > 0 ? trassePfade : [trasse]
-      const neueLaengen = berechneLaengen(pfade, updated)
-      setLaengen(neueLaengen)
+      setLaengen(berechneLaengen(pfade, updated))
     },
     [trassePfade, trasse]
   )
@@ -289,6 +303,7 @@ export default function Home() {
     setHausanschluesseProgress(0)
     setLaengen({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0 })
     setEditierbarAktiv(false)
+    setHistory([])
   }, [])
 
   const handleKMLExport = useCallback(() => {
@@ -327,9 +342,9 @@ export default function Home() {
     setTrassePfade(projekt.trassePfade ?? [])
     setHausanschluesse(projekt.hausanschluesse)
     const pfade = projekt.trassePfade?.length ? projekt.trassePfade : [projekt.trasse]
-    const neueLaengen = berechneLaengen(pfade, projekt.hausanschluesse)
-    setLaengen(neueLaengen)
+    setLaengen(berechneLaengen(pfade, projekt.hausanschluesse))
     setEditierbarAktiv(false)
+    setHistory([])
     const orteListe = extractOrte(projekt.adressen)
     setOrte(orteListe)
     setAktiveOrteKeys(orteListe.map((o) => o.key))
@@ -340,7 +355,6 @@ export default function Home() {
       ? adressen.length
       : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)).length
 
-  // Anzahl aktiver Adressen ohne bestehenden Hausanschluss (für "Erweitern"/"Hinzufügen")
   const bearbeiteteUuids = new Set(hausanschluesse.map((h) => h.addressUuid))
   const neueAdressenOhneHsAnzahl = adressen.filter(
     (a) =>
@@ -369,6 +383,8 @@ export default function Home() {
         adressFarbe={adressFarbe}
         trasseFarbe={trasseFarbe}
         hausanschlussfarbe={hausanschlussfarbe}
+        canUndo={history.length > 0}
+        undoCount={history.length}
         onAdressFarbeAendern={setAdressFarbe}
         onTrasseFarbeAendern={setTrasseFarbe}
         onHausanschlussFarbeAendern={setHausanschlussfarbe}
@@ -386,6 +402,7 @@ export default function Home() {
         onProjektSpeichern={handleProjektSpeichern}
         onProjektLaden={handleProjektLaden}
         onTrasseErweitern={handleTrasseErweitern}
+        onUndo={handleUndo}
       />
       <main className="flex-1 relative overflow-hidden">
         <MapView
