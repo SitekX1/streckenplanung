@@ -1,8 +1,12 @@
 import * as turf from '@turf/turf'
 import { LatLng, Address } from './types'
 
-// ORS erlaubt 50 Waypoints — 45 mit Puffer
 const MAX_WAYPOINTS = 45
+const RATE_LIMIT_DELAY_MS = 1700 // ~35 req/min — sicher unter ORS-Limit von 40/min
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 async function routeOrs(waypoints: LatLng[]): Promise<LatLng[]> {
   const body = JSON.stringify({
@@ -28,11 +32,11 @@ async function routeOrs(waypoints: LatLng[]): Promise<LatLng[]> {
 }
 
 // Nächsten Punkt auf dem gesamten Trassennetz finden (auch Mittelpunkte von Segmenten)
-function naechsterNetzpunkt(pfade: LatLng[][], start: LatLng, ziel: LatLng): LatLng {
-  if (pfade.length === 0) return start
+function naechsterNetzpunkt(pfade: LatLng[][], ziel: LatLng, fallback: LatLng): LatLng {
+  if (pfade.length === 0) return fallback
 
   const zielPt = turf.point([ziel.lng, ziel.lat])
-  let bestPunkt = start
+  let bestPunkt = fallback
   let bestDist = Infinity
 
   for (const pfad of pfade) {
@@ -52,7 +56,7 @@ function naechsterNetzpunkt(pfade: LatLng[][], start: LatLng, ziel: LatLng): Lat
   return bestPunkt
 }
 
-// Nearest-Neighbor-Sortierung ab Startpunkt
+// Nearest-Neighbor-Sortierung innerhalb eines Dorfes ab Einstiegspunkt
 function sortiereNaechsterNachbar(start: LatLng, adressen: Address[]): Address[] {
   const remaining = [...adressen]
   const sortiert: Address[] = []
@@ -77,10 +81,21 @@ function sortiereNaechsterNachbar(start: LatLng, adressen: Address[]): Address[]
   return sortiert
 }
 
-// ORS-Baum: bis zu 45 Adressen pro API-Aufruf → wesentlich weniger Anfragen als OSRM.
-// Jeder Batch startet vom nächsten Punkt auf dem bestehenden Netz (Abzweig mitten auf Straßen).
-// ORS routet dann optimal durch alle Adressen im Batch — kein Hin-und-Zurück.
-// vorhandenePfade: für "Trasse erweitern" — neue Pfade docken ans bestehende Netz an.
+function zentrum(adressen: Address[]): LatLng {
+  const lat = adressen.reduce((s, a) => s + a.lat, 0) / adressen.length
+  const lng = adressen.reduce((s, a) => s + a.lon, 0) / adressen.length
+  return { lat, lng }
+}
+
+function distanzQuadrat(a: LatLng, b: LatLng): number {
+  const dlat = a.lat - b.lat
+  const dlng = a.lng - b.lng
+  return dlat * dlat + dlng * dlng
+}
+
+// ORS-Baum: Dorf für Dorf — jedes Dorf bekommt seinen eigenen Ast ab Ortseingang.
+// Rate-Limit: 1,7s Delay zwischen Batches → max ~35 Anfragen/Min (ORS-Limit: 40/Min).
+// vorhandenePfade: für "Trasse erweitern" — neue Äste docken ans bestehende Netz an.
 export async function berechneBaumORS(
   start: LatLng,
   adressen: Address[],
@@ -89,45 +104,98 @@ export async function berechneBaumORS(
 ): Promise<LatLng[][]> {
   if (adressen.length === 0) return []
 
-  const sortiert = sortiereNaechsterNachbar(start, adressen)
-  const pfade: LatLng[][] = vorhandenePfade ? [...vorhandenePfade] : []
-  const neuePfade: LatLng[][] = []
-
-  const batches: Address[][] = []
-  for (let i = 0; i < sortiert.length; i += MAX_WAYPOINTS) {
-    batches.push(sortiert.slice(i, i + MAX_WAYPOINTS))
+  // 1. Adressen nach Dorf gruppieren (PLZ + Ortsname + Ortsteil)
+  const dorfMap = new Map<string, Address[]>()
+  for (const a of adressen) {
+    const key = `${a.plz}_${a.ortsname}_${a.ortsteil ?? ''}`
+    if (!dorfMap.has(key)) dorfMap.set(key, [])
+    dorfMap.get(key)!.push(a)
   }
 
+  // 2. Dörfer nach Entfernung zum Startpunkt sortieren (Nearest-Neighbor über Zentren)
+  const restDörfer = Array.from(dorfMap.values())
+  const sortierteDörfer: Address[][] = []
+  let aktuellerPunkt = start
+
+  while (restDörfer.length > 0) {
+    let bestIdx = 0
+    let bestD = Infinity
+    for (let i = 0; i < restDörfer.length; i++) {
+      const d = distanzQuadrat(aktuellerPunkt, zentrum(restDörfer[i]))
+      if (d < bestD) { bestD = d; bestIdx = i }
+    }
+    sortierteDörfer.push(restDörfer[bestIdx])
+    aktuellerPunkt = zentrum(restDörfer[bestIdx])
+    restDörfer.splice(bestIdx, 1)
+  }
+
+  // Gesamt-Batch-Anzahl für Fortschrittsanzeige
+  const gesamtBatches = sortierteDörfer.reduce(
+    (s, d) => s + Math.ceil(d.length / MAX_WAYPOINTS), 0
+  )
+  let batchCounter = 0
+
+  const pfade: LatLng[][] = vorhandenePfade ? [...vorhandenePfade] : []
+  const neuePfade: LatLng[][] = []
   let fehlerAnzahl = 0
   let letzterFehler = ''
 
-  for (let b = 0; b < batches.length; b++) {
-    const batch = batches[b]
+  // 3. Dorf für Dorf routen — jedes Dorf als eigener Ast
+  for (const dorfAdressen of sortierteDörfer) {
+    const dorfZentrum = zentrum(dorfAdressen)
 
-    const erstesZiel: LatLng = { lat: batch[0].lat, lng: batch[0].lon }
-    const branch = naechsterNetzpunkt(pfade, start, erstesZiel)
+    // Einstieg: nächster Punkt auf bestehendem Netz oder Startpunkt
+    const einstieg = pfade.length > 0
+      ? naechsterNetzpunkt(pfade, dorfZentrum, start)
+      : start
 
-    const waypoints: LatLng[] = [
-      branch,
-      ...batch.map((a) => ({ lat: a.lat, lng: a.lon })),
-    ]
+    // Adressen im Dorf ab Einstiegspunkt nearest-neighbor sortieren
+    const sortiertAdressen = sortiereNaechsterNachbar(einstieg, dorfAdressen)
 
-    try {
-      const route = await routeOrs(waypoints)
-      if (route.length >= 2) { pfade.push(route); neuePfade.push(route) }
-    } catch (e) {
-      fehlerAnzahl++
-      letzterFehler = e instanceof Error ? e.message : String(e)
-      console.warn(`ORS Batch ${b + 1} fehlgeschlagen:`, letzterFehler)
-      pfade.push(waypoints)
-      neuePfade.push(waypoints)
+    // In ORS-Batches aufteilen (max 45 Wegpunkte)
+    const batches: Address[][] = []
+    for (let i = 0; i < sortiertAdressen.length; i += MAX_WAYPOINTS) {
+      batches.push(sortiertAdressen.slice(i, i + MAX_WAYPOINTS))
     }
 
-    onProgress?.(Math.round(((b + 1) / batches.length) * 100))
+    let dorfEinstieg = einstieg
+
+    for (let b = 0; b < batches.length; b++) {
+      const batch = batches[b]
+      const waypoints: LatLng[] = [
+        dorfEinstieg,
+        ...batch.map((a) => ({ lat: a.lat, lng: a.lon })),
+      ]
+
+      // Rate-Limit-Delay vor jedem Aufruf außer dem ersten
+      if (batchCounter > 0) {
+        await sleep(RATE_LIMIT_DELAY_MS)
+      }
+
+      try {
+        const route = await routeOrs(waypoints)
+        if (route.length >= 2) {
+          pfade.push(route)
+          neuePfade.push(route)
+          // Nächster Batch startet am Routenende
+          dorfEinstieg = route[route.length - 1]
+        }
+      } catch (e) {
+        fehlerAnzahl++
+        letzterFehler = e instanceof Error ? e.message : String(e)
+        console.warn(`ORS Batch ${batchCounter + 1} fehlgeschlagen:`, letzterFehler)
+        // Fallback: Luftlinie (sichtbar durch orangefarbene Warnung in UI)
+        pfade.push(waypoints)
+        neuePfade.push(waypoints)
+        dorfEinstieg = { lat: batch[batch.length - 1].lat, lng: batch[batch.length - 1].lon }
+      }
+
+      batchCounter++
+      onProgress?.(Math.round((batchCounter / gesamtBatches) * 100))
+    }
   }
 
-  // Wenn alle Batches fehlgeschlagen sind → Fehler nach oben weitergeben
-  if (fehlerAnzahl === batches.length) {
+  if (fehlerAnzahl === gesamtBatches) {
     throw new Error(`ORS nicht verfügbar: ${letzterFehler}`)
   }
 

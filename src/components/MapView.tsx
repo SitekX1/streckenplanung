@@ -759,11 +759,14 @@ const MapView = memo(function MapView({
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               <p style={{ color: '#d1d5db', fontSize: 12, margin: 0 }}>
-                <span style={{ color: '#93c5fd', fontWeight: 600 }}>Trasse &amp; Hausanschluss</span>
+                <span style={{ color: '#93c5fd', fontWeight: 600 }}>Trasse &amp; Hausanschluss bearbeiten</span>
                 {aktivesSegment && <span style={{ color: GELB, marginLeft: 8, fontWeight: 600 }}>● Segment markiert</span>}
               </p>
               <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
-                <b style={{ color: '#d1d5db' }}>Linie antippen</b> → <span style={{ color: GELB }}>gelb markieren</span> + Menü &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>ESC</b> → weg
+                <b style={{ color: '#d1d5db' }}>Linie antippen</b> → <span style={{ color: GELB }}>gelb</span> + Menü (Punkt einfügen / Segment löschen)
+                &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt antippen</b> → Menü (Löschen / Neuer Strich)
+                &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → verschieben
+                &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>ESC</b> → Markierung weg
               </p>
               {deletedStack.length > 0 && (
                 <button onClick={handleHsUndo}
