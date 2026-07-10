@@ -95,6 +95,9 @@ export async function berechneBaumORS(
     batches.push(sortiert.slice(i, i + MAX_WAYPOINTS))
   }
 
+  let fehlerAnzahl = 0
+  let letzterFehler = ''
+
   for (let b = 0; b < batches.length; b++) {
     const batch = batches[b]
 
@@ -110,12 +113,18 @@ export async function berechneBaumORS(
       const route = await routeOrs(waypoints)
       if (route.length >= 2) pfade.push(route)
     } catch (e) {
-      // Fallback: direkte Verbindungslinie wenn ORS fehlschlägt
-      console.warn(`ORS Batch ${b + 1} fehlgeschlagen:`, e)
+      fehlerAnzahl++
+      letzterFehler = e instanceof Error ? e.message : String(e)
+      console.warn(`ORS Batch ${b + 1} fehlgeschlagen:`, letzterFehler)
       pfade.push(waypoints)
     }
 
     onProgress?.(Math.round(((b + 1) / batches.length) * 100))
+  }
+
+  // Wenn alle Batches fehlgeschlagen sind → Fehler nach oben weitergeben
+  if (fehlerAnzahl === batches.length) {
+    throw new Error(`ORS nicht verfügbar: ${letzterFehler}`)
   }
 
   return pfade

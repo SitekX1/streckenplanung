@@ -133,12 +133,20 @@ export default function Home() {
       console.warn('Overpass nicht verfügbar, ORS-Baum:', fehlerText)
       setTrasseMethode('ORS-Routing (Straßendaten werden geladen…)')
       setTrasseProgress(3)
-      pfade = await berechneBaumORS(
-        startpunkt,
-        gefilterteAdressen,
-        (p) => setTrasseProgress(3 + Math.round(p * 0.95))
-      )
-      setTrasseMethode('ORS-Baum — Straßen folgen ✓, Abzweige optimiert')
+      try {
+        pfade = await berechneBaumORS(
+          startpunkt,
+          gefilterteAdressen,
+          (p) => setTrasseProgress(3 + Math.round(p * 0.95))
+        )
+        setTrasseMethode('ORS-Baum — Straßen folgen ✓, Abzweige optimiert')
+      } catch (orsErr) {
+        const orsText = orsErr instanceof Error ? orsErr.message : String(orsErr)
+        setTrasseMethode(`Fehler: ${orsText}`)
+        setTrasseProgress(100)
+        setTimeout(() => setTrasseProgress(0), 500)
+        return
+      }
     }
 
     setTrassePfade(pfade)

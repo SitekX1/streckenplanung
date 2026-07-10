@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 export const maxDuration = 30
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.ORS_API_KEY
+  const apiKey = process.env.ORS_API_KEY?.trim()
   if (!apiKey) {
     return NextResponse.json({ error: 'ORS_API_KEY nicht konfiguriert' }, { status: 500 })
   }
