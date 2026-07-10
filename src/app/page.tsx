@@ -26,6 +26,59 @@ function extractOrte(adressen: Address[]): OrtInfo[] {
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'))
 }
 
+// Entfernt doppelte Straßensegmente aus allen Pfaden und baut das Netz als echten Baum.
+// Gleiche Segmente (unabhängig von der Richtung) werden nur einmal behalten.
+function deduplicatePfade(pfade: LatLng[][]): LatLng[][] {
+  if (pfade.length <= 1) return pfade
+  const r = (v: number) => Math.round(v * 100000) / 100000 // ~1m Präzision
+  const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+  const seen = new Set<string>()
+  const edges: [LatLng, LatLng][] = []
+  const pos = new Map<string, LatLng>()
+  for (const pfad of pfade) {
+    for (let i = 0; i < pfad.length - 1; i++) {
+      const a = pfad[i], b = pfad[i + 1]
+      const ka = nk(a), kb = nk(b)
+      if (ka === kb) continue
+      pos.set(ka, a); pos.set(kb, b)
+      const sk = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`
+      if (!seen.has(sk)) { seen.add(sk); edges.push([a, b]) }
+    }
+  }
+  if (edges.length === 0) return pfade
+  // Adjazenzliste aufbauen
+  const adj = new Map<string, Array<{ k: string; i: number }>>()
+  for (let i = 0; i < edges.length; i++) {
+    const ka = nk(edges[i][0]), kb = nk(edges[i][1])
+    if (!adj.has(ka)) adj.set(ka, [])
+    if (!adj.has(kb)) adj.set(kb, [])
+    adj.get(ka)!.push({ k: kb, i }); adj.get(kb)!.push({ k: ka, i })
+  }
+  // Ketten rekonstruieren: Blätter (Grad 1) zuerst, dann Kreuzungen
+  const used = new Set<number>()
+  const chains: LatLng[][] = []
+  const keys = Array.from(adj.keys())
+  const queue = [
+    ...keys.filter(k => adj.get(k)!.length === 1),
+    ...keys.filter(k => adj.get(k)!.length !== 1),
+  ]
+  for (const startK of queue) {
+    for (const { k: nextK, i: ei } of adj.get(startK) ?? []) {
+      if (used.has(ei)) continue
+      const chain: LatLng[] = [pos.get(startK)!, pos.get(nextK)!]
+      used.add(ei)
+      let cur = nextK, prev = startK
+      while (true) {
+        const nx = (adj.get(cur) ?? []).filter(n => n.k !== prev && !used.has(n.i))
+        if (nx.length !== 1) break // Blatt oder Kreuzung → Kette endet hier
+        chain.push(pos.get(nx[0].k)!); used.add(nx[0].i); prev = cur; cur = nx[0].k
+      }
+      chains.push(chain)
+    }
+  }
+  return chains.length > 0 ? chains : pfade
+}
+
 type Laengen = { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number }
 type HistorySnapshot = { trassePfade: LatLng[][]; trasse: LatLng[]; hausanschluesse: Hausstich[]; laengen: Laengen }
 
@@ -162,10 +215,11 @@ export default function Home() {
       }
     }
 
-    setTrassePfade(pfade)
-    setTrasse(pfade.flat())
+    const dedupPfade = deduplicatePfade(pfade)
+    setTrassePfade(dedupPfade)
+    setTrasse(dedupPfade.flat())
     setTrasseProgress(100)
-    setLaengen(berechneLaengen(pfade, []))
+    setLaengen(berechneLaengen(dedupPfade, []))
     setTimeout(() => setTrasseProgress(0), 500)
   }, [startpunkt, adressen, aktiveOrteKeys, orte.length, pushHistory])
 
@@ -196,7 +250,7 @@ export default function Home() {
         (p) => setTrasseProgress(2 + Math.round(p * 0.95)),
         vorhandenePfade
       )
-      const allePfade = [...vorhandenePfade, ...neuePfade]
+      const allePfade = deduplicatePfade([...vorhandenePfade, ...neuePfade])
       setTrassePfade(allePfade)
       setTrasse(allePfade.flat())
       setTrasseMethode(`ORS-Baum Erweitert · ${allePfade.length} Segmente`)
