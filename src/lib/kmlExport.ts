@@ -13,6 +13,16 @@ function koordinatenZuString(coords: { lat: number; lng: number }[]): string {
   return coords.map((p) => `${p.lng},${p.lat},0`).join('\n          ')
 }
 
+function segmentLaenge(pts: { lat: number; lng: number }[]): number {
+  let total = 0
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dLat = (pts[i + 1].lat - pts[i].lat) * 111_000
+    const dLng = (pts[i + 1].lng - pts[i].lng) * Math.cos((pts[i].lat * Math.PI) / 180) * 111_000
+    total += Math.sqrt(dLat * dLat + dLng * dLng)
+  }
+  return total
+}
+
 function downloadBlob(inhalt: string, dateiname: string, mimeType: string): void {
   const blob = new Blob([inhalt], { type: mimeType })
   const url = URL.createObjectURL(blob)
@@ -85,6 +95,7 @@ ${adressenPlacemarks}
               (pfad, i) => `<Placemark>
       <styleUrl>#trasse</styleUrl>
       <name>Trasse Segment ${i + 1}</name>
+      <description>Länge: ${segmentLaenge(pfad).toFixed(1)} m</description>
       <LineString>
         <coordinates>
           ${koordinatenZuString(pfad)}
@@ -96,6 +107,7 @@ ${adressenPlacemarks}
         : `<Placemark>
       <styleUrl>#trasse</styleUrl>
       <name>Trasse</name>
+      <description>Länge: ${segmentLaenge(projekt.trasse).toFixed(1)} m</description>
       <LineString>
         <coordinates>
           ${koordinatenZuString(projekt.trasse)}
