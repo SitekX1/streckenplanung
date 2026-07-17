@@ -59,8 +59,8 @@ type NeuerHsStart = { adresseUuid: string; pos: LatLng; name: string } | null
 
 const GELB = '#facc15'
 const MAX_HANDLES = 80
-// Schwellenwert: ≤ 300 Punkte → Klein-Projekt (alle Handles sofort sichtbar)
-const KLEIN_PROJEKT_SCHWELLE = 300
+// Schwellenwert: ≤ 1000 Punkte → Klein-Projekt (alle Handles sofort sichtbar)
+const KLEIN_PROJEKT_SCHWELLE = 1000
 
 interface MapViewProps {
   adressen: Address[]
@@ -353,6 +353,33 @@ const MapView = memo(function MapView({
     } catch { /* ignore */ }
   }
 
+  // Trennt das ausgewählte Segment an der geklickten Stelle in zwei eigenständige
+  // Pfade auf (kein Punkt-Löschen, kein Gesamt-Löschen — nur die Verbindung dazwischen).
+  function handleEditVerbindungTrennen(klickPos: LatLng) {
+    const segIdx = editSegmentIdxRef.current
+    if (segIdx === null) return
+    const aktuell = editPunkteRef.current
+    if (aktuell.length < 3) return
+    try {
+      const line = turf.lineString(aktuell.map((p) => [p.lng, p.lat]))
+      const nearest = turf.nearestPointOnLine(line, turf.point([klickPos.lng, klickPos.lat]))
+      const idx = nearest.properties.index ?? 0
+      const teilA = aktuell.slice(0, idx + 1)
+      const teilB = aktuell.slice(idx + 1)
+      if (teilA.length < 2 || teilB.length < 2) return
+      editiertRef.current = true
+      const neuePfade = localPfadeRef.current.map((pf, i) => i === segIdx ? teilA : pf)
+      neuePfade.push(teilB)
+      localPfadeRef.current = neuePfade
+      setLocalPfade(neuePfade)
+      setEditSegmentIdx(null)
+      editSegmentIdxRef.current = null
+      setEditPunkte([])
+      editPunkteRef.current = []
+      setAktivesSegment(null)
+    } catch { /* ignore */ }
+  }
+
   function handleSegmentLoeschen() {
     const segIdx = editSegmentIdxRef.current
     if (segIdx === null) return
@@ -395,6 +422,26 @@ const MapView = memo(function MapView({
     localPfadeRef.current = neuePfade
     setLocalPfade(neuePfade)
     setAktivesSegment(null)
+  }
+
+  // Trennt den Pfad an der geklickten Stelle in zwei eigenständige Pfade auf.
+  function handleKleinVerbindungTrennen(pfadIdx: number, klickPos: LatLng) {
+    const pfad = localPfadeRef.current[pfadIdx]
+    if (!pfad || pfad.length < 3) return
+    try {
+      const line = turf.lineString(pfad.map((p) => [p.lng, p.lat]))
+      const nearest = turf.nearestPointOnLine(line, turf.point([klickPos.lng, klickPos.lat]))
+      const idx = nearest.properties.index ?? 0
+      const teilA = pfad.slice(0, idx + 1)
+      const teilB = pfad.slice(idx + 1)
+      if (teilA.length < 2 || teilB.length < 2) return
+      editiertRef.current = true
+      const neuePfade = localPfadeRef.current.map((pf, i) => i === pfadIdx ? teilA : pf)
+      neuePfade.push(teilB)
+      localPfadeRef.current = neuePfade
+      setLocalPfade(neuePfade)
+      setAktivesSegment(null)
+    } catch { /* ignore */ }
   }
 
   function handleKleinPunktEinfuegen(pfadIdx: number, klickPos: LatLng) {
@@ -645,7 +692,7 @@ const MapView = memo(function MapView({
                   pathOptions={{ color: '#000', weight: 14, opacity: 0.01 }}
                   eventHandlers={{
                     click: (e) => {
-                      e.originalEvent.stopPropagation()
+                      L.DomEvent.stopPropagation(e)
                       const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
                       if (ziehStartId) { handleZiehZiel(pos); return }
                       if (neuerHsStart) { handleNeuerHsZiel(pos); return }
@@ -653,6 +700,7 @@ const MapView = memo(function MapView({
                       if (editSegmentIdxRef.current === pi) {
                         zeigeMenu(e, [
                           { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
+                          { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleEditVerbindungTrennen(pos); setAktivMenu(null) } },
                           { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
                         ])
                       }
@@ -667,11 +715,12 @@ const MapView = memo(function MapView({
                 pathOptions={{ color: GELB, weight: 5, opacity: 1 }}
                 eventHandlers={{
                   click: (e) => {
-                    e.originalEvent.stopPropagation()
+                    L.DomEvent.stopPropagation(e)
                     if (ziehStartId || neuerHsStart) return
                     const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
                     zeigeMenu(e, [
                       { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
+                      { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleEditVerbindungTrennen(pos); setAktivMenu(null) } },
                       { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
                     ])
                   },
@@ -716,13 +765,14 @@ const MapView = memo(function MapView({
               pathOptions={{ color: istAktiv ? GELB : trasseFarbe, weight: istAktiv ? 5 : 4, opacity: 0.95 }}
               eventHandlers={{
                 click: (e) => {
-                  e.originalEvent.stopPropagation()
+                  L.DomEvent.stopPropagation(e)
                   const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
                   if (ziehStartId) { handleZiehZiel(pos); return }
                   if (neuerHsStart) { handleNeuerHsZiel(pos); return }
                   setAktivesSegment(segKey)
                   zeigeMenu(e, [
                     { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleKleinPunktEinfuegen(pi, pos); setAktivMenu(null) } },
+                    { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleKleinVerbindungTrennen(pi, pos); setAktivMenu(null) } },
                     { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleKleinSegmentLoeschen(pi); setAktivMenu(null) } },
                   ])
                 },
@@ -769,7 +819,7 @@ const MapView = memo(function MapView({
               }}
               eventHandlers={editierbarAktiv ? {
                 click: (e) => {
-                  e.originalEvent?.stopPropagation?.()
+                  L.DomEvent.stopPropagation(e)
                   if (ziehStartId) { handleZiehZiel({ lat: a.lat, lng: a.lon }); return }
                   if (neuerHsStart) {
                     setNeuerHsStart({ adresseUuid: a.uuid, pos: { lat: a.lat, lng: a.lon }, name: `${a.strasse} ${a.nr}` })
@@ -816,7 +866,7 @@ const MapView = memo(function MapView({
               }}
               eventHandlers={editierbarAktiv ? {
                 click: (e) => {
-                  e.originalEvent.stopPropagation()
+                  L.DomEvent.stopPropagation(e)
                   if (neuerHsStart) return
                   const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
                   if (!kleinProjekt) handleDeselect()

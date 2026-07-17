@@ -116,6 +116,59 @@ function teileBeispruenge(sortiert: Address[]): Address[][] {
   return gruppen
 }
 
+// Gruppiert Adressen eines Dorfes nach Straße. Adressen ohne Straßennamen
+// bekommen ihre eigene Einzel-Gruppe (kein künstliches Zusammenwürfeln).
+function gruppiereNachStrasse(adressen: Address[]): Address[][] {
+  const map = new Map<string, Address[]>()
+  for (const a of adressen) {
+    const key = a.strasse || `_${a.uuid}`
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(a)
+  }
+  return Array.from(map.values())
+}
+
+// Reduziert eine (NN-sortierte, sprungfreie) Adressgruppe auf die für ORS nötigen
+// Stützpunkte: nur Anfang und Ende. ORS folgt dazwischen ohnehin dem echten
+// Straßenverlauf — die Häuser dazwischen werden per Hausanschluss angebunden,
+// statt dass die Trasse selbst bei jedem einzelnen Haus vorbeigeführt wird.
+function reduziereAufStuetzpunkte(gruppe: Address[]): Address[] {
+  return gruppe.length > 2 ? [gruppe[0], gruppe[gruppe.length - 1]] : gruppe
+}
+
+// Plant für ein Dorf die Reihenfolge der (nach Straße gruppierten, auf Stützpunkte
+// reduzierten) ORS-Wegpunkt-Gruppen. Reine Distanz-/Gruppierungslogik ohne Netzwerk-
+// Zustand — wird sowohl für die Batch-Zählung (Progress) als auch als Blaupause für
+// die eigentliche Ausführung verwendet (dort wird der Einstieg je Gruppe live per
+// naechsterNetzpunkt() auf das bereits gebaute Netz neu bestimmt).
+function planeDorfGruppen(dorfAdressen: Address[], dorfEinstieg: LatLng): Address[][] {
+  const restStrassen = gruppiereNachStrasse(dorfAdressen)
+  const sortierteStrassen: Address[][] = []
+  let sortierPunkt = dorfEinstieg
+  while (restStrassen.length > 0) {
+    let bestIdx = 0, bestD = Infinity
+    for (let i = 0; i < restStrassen.length; i++) {
+      const d = distanzQuadrat(sortierPunkt, zentrum(restStrassen[i]))
+      if (d < bestD) { bestD = d; bestIdx = i }
+    }
+    sortierteStrassen.push(restStrassen[bestIdx])
+    sortierPunkt = zentrum(restStrassen[bestIdx])
+    restStrassen.splice(bestIdx, 1)
+  }
+
+  const gruppen: Address[][] = []
+  let laufpunkt = dorfEinstieg
+  for (const strassenAdressen of sortierteStrassen) {
+    const sortiert = sortiereNaechsterNachbar(laufpunkt, strassenAdressen)
+    for (const teil of teileBeispruenge(sortiert)) {
+      gruppen.push(reduziereAufStuetzpunkte(teil))
+    }
+    const letzte = sortiert[sortiert.length - 1]
+    laufpunkt = { lat: letzte.lat, lng: letzte.lon }
+  }
+  return gruppen
+}
+
 export async function berechneBaumORS(
   start: LatLng,
   adressen: Address[],
@@ -146,7 +199,9 @@ export async function berechneBaumORS(
   }
 
   const gesamtBatches = sortierteDörfer.reduce(
-    (s, d) => s + Math.ceil(d.length / MAX_WAYPOINTS), 0
+    (s, d) => s + planeDorfGruppen(d, zentrum(d)).reduce(
+      (s2, g) => s2 + Math.ceil(g.length / MAX_WAYPOINTS), 0
+    ), 0
   )
   let batchCounter = 0
   const pfade: LatLng[][] = vorhandenePfade ? [...vorhandenePfade] : []
@@ -156,14 +211,13 @@ export async function berechneBaumORS(
 
   for (const dorfAdressen of sortierteDörfer) {
     const dorfZentrum = zentrum(dorfAdressen)
-    const einstieg = pfade.length > 0 ? naechsterNetzpunkt(pfade, dorfZentrum, start) : start
-    const sortiertAdressen = sortiereNaechsterNachbar(einstieg, dorfAdressen)
-    const gruppen = teileBeispruenge(sortiertAdressen)
+    const dorfEinstieg = pfade.length > 0 ? naechsterNetzpunkt(pfade, dorfZentrum, start) : start
+    const gruppen = planeDorfGruppen(dorfAdressen, dorfEinstieg)
 
     for (let g = 0; g < gruppen.length; g++) {
       const gruppe = gruppen[g]
       const gruppenEinstieg = g === 0
-        ? einstieg
+        ? dorfEinstieg
         : (pfade.length > 0 ? naechsterNetzpunkt(pfade, zentrum(gruppe), start) : start)
 
       const batches: Address[][] = []
