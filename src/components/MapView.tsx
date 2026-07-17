@@ -916,17 +916,21 @@ const MapView = memo(function MapView({
         </div>
       )}
 
-      {trasseMethode && !editierbarAktiv && (
-        <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg max-w-xs"
-          style={{
-            backgroundColor: '#1a1a1a',
-            color: trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '#f87171' : trasseMethode.includes('Erweitert') || trasseMethode.startsWith('ORS') ? '#4ade80' : '#fbbf24',
-            border: `1px solid ${trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '#dc2626' : trasseMethode.includes('Erweitert') || trasseMethode.startsWith('ORS') ? '#16a34a' : '#d97706'}`,
-          }}>
-          {trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen') ? '❌' : '✅'} {trasseMethode}
-          {(trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen')) && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
-        </div>
-      )}
+      {trasseMethode && !editierbarAktiv && (() => {
+        const istFehler = trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen')
+        const istWarnung = !istFehler && trasseMethode.includes('⚠️')
+        const istErfolg = !istFehler && !istWarnung && (trasseMethode.includes('Erweitert') || trasseMethode.startsWith('ORS'))
+        const farbe = istFehler ? '#f87171' : istWarnung ? '#fbbf24' : istErfolg ? '#4ade80' : '#fbbf24'
+        const rand = istFehler ? '#dc2626' : istWarnung ? '#d97706' : istErfolg ? '#16a34a' : '#d97706'
+        return (
+          <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg max-w-xs"
+            style={{ backgroundColor: '#1a1a1a', color: farbe, border: `1px solid ${rand}` }}>
+            {istFehler ? '❌' : istWarnung ? '⚠️' : '✅'} {trasseMethode.replace('⚠️ ', '')}
+            {istFehler && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
+            {istWarnung && <div style={{ marginTop: 4, color: '#fde68a' }}>Per Luftlinie angebundene Adressen im Edit-Modus prüfen/korrigieren</div>}
+          </div>
+        )
+      })()}
 
       {/* Kontextmenü */}
       {editierbarAktiv && aktivMenu && !imZeichenModus && (

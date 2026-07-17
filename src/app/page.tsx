@@ -193,7 +193,11 @@ export default function Home() {
 
       if (ergebnis.pfade.length === 0) throw new Error('Keine Pfade erzeugt')
       pfade = ergebnis.pfade
-      setTrasseMethode(`OSM Straßennetz · ${pfade.length} Segmente`)
+      setTrasseMethode(
+        ergebnis.luftlinienAnzahl > 0
+          ? `OSM Straßennetz · ${pfade.length} Segmente · ⚠️ ${ergebnis.luftlinienAnzahl} Adresse(n) ohne Straßenanbindung per Luftlinie verbunden — bitte prüfen`
+          : `OSM Straßennetz · ${pfade.length} Segmente`
+      )
     } catch (err) {
       const fehlerText = err instanceof Error ? err.message : String(err)
       console.warn('Overpass nicht verfügbar, ORS-Baum:', fehlerText)
