@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useRef, useState } from 'react'
 import {
   MapContainer, TileLayer, CircleMarker, Marker, Polyline,
   Tooltip, Popup, useMapEvents, useMap,
@@ -689,7 +689,7 @@ const MapView = memo(function MapView({
               pfad.length >= 2 ? (
                 <Polyline key={`hit-${pi}`}
                   positions={pfad.map((p) => [p.lat, p.lng] as [number, number])}
-                  pathOptions={{ color: '#000', weight: 14, opacity: 0.01 }}
+                  pathOptions={{ color: '#000', weight: 20, opacity: 0.01 }}
                   eventHandlers={{
                     click: (e) => {
                       L.DomEvent.stopPropagation(e)
@@ -708,23 +708,29 @@ const MapView = memo(function MapView({
                   }} />
               ) : null
             )}
-            {/* Gelbe Linie für ausgewähltes Segment */}
+            {/* Gelbe Linie für ausgewähltes Segment (+ breite unsichtbare Tipp-Fläche) */}
             {editSegmentIdx !== null && editPunkte.length >= 2 && (
-              <Polyline key={`yellow-${editSegmentIdx}`}
-                positions={editPunkte.map((p) => [p.lat, p.lng] as [number, number])}
-                pathOptions={{ color: GELB, weight: 5, opacity: 1 }}
-                eventHandlers={{
-                  click: (e) => {
-                    L.DomEvent.stopPropagation(e)
-                    if (ziehStartId || neuerHsStart) return
-                    const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
-                    zeigeMenu(e, [
-                      { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
-                      { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleEditVerbindungTrennen(pos); setAktivMenu(null) } },
-                      { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
-                    ])
-                  },
-                }} />
+              <>
+                <Polyline key={`yellow-hit-${editSegmentIdx}`}
+                  positions={editPunkte.map((p) => [p.lat, p.lng] as [number, number])}
+                  pathOptions={{ color: '#000', weight: 20, opacity: 0.01 }}
+                  eventHandlers={{
+                    click: (e) => {
+                      L.DomEvent.stopPropagation(e)
+                      if (ziehStartId || neuerHsStart) return
+                      const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                      zeigeMenu(e, [
+                        { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
+                        { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleEditVerbindungTrennen(pos); setAktivMenu(null) } },
+                        { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
+                      ])
+                    },
+                  }} />
+                <Polyline key={`yellow-${editSegmentIdx}`}
+                  positions={editPunkte.map((p) => [p.lat, p.lng] as [number, number])}
+                  interactive={false}
+                  pathOptions={{ color: GELB, weight: 5, opacity: 1 }} />
+              </>
             )}
             {/* Handles nur für ausgewähltes Segment (max MAX_HANDLES) */}
             {editSegmentIdx !== null && sichtbareHandleIdx.map((i) => {
@@ -759,25 +765,34 @@ const MapView = memo(function MapView({
         {trasseSichtbar && editierbarAktiv && kleinProjekt && localPfade.map((pfad, pi) => {
           const segKey = `pfad-${pi}`
           const istAktiv = aktivesSegment === segKey
-          return pfad.length >= 2 ? (
-            <Polyline key={`kp-line-${pi}`}
-              positions={pfad.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{ color: istAktiv ? GELB : trasseFarbe, weight: istAktiv ? 5 : 4, opacity: 0.95 }}
-              eventHandlers={{
-                click: (e) => {
-                  L.DomEvent.stopPropagation(e)
-                  const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
-                  if (ziehStartId) { handleZiehZiel(pos); return }
-                  if (neuerHsStart) { handleNeuerHsZiel(pos); return }
-                  setAktivesSegment(segKey)
-                  zeigeMenu(e, [
-                    { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleKleinPunktEinfuegen(pi, pos); setAktivMenu(null) } },
-                    { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleKleinVerbindungTrennen(pi, pos); setAktivMenu(null) } },
-                    { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleKleinSegmentLoeschen(pi); setAktivMenu(null) } },
-                  ])
-                },
-              }} />
-          ) : null
+          if (pfad.length < 2) return null
+          const positions = pfad.map((p) => [p.lat, p.lng] as [number, number])
+          return (
+            <Fragment key={`kp-${pi}`}>
+              {/* Breite unsichtbare Klick-/Tipp-Fläche — deutlich einfacher zu treffen als die duenne Linie, wichtig auf Touch-Geraeten */}
+              <Polyline key={`kp-hit-${pi}`}
+                positions={positions}
+                pathOptions={{ color: '#000', weight: 20, opacity: 0.01 }}
+                eventHandlers={{
+                  click: (e) => {
+                    L.DomEvent.stopPropagation(e)
+                    const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                    if (ziehStartId) { handleZiehZiel(pos); return }
+                    if (neuerHsStart) { handleNeuerHsZiel(pos); return }
+                    setAktivesSegment(segKey)
+                    zeigeMenu(e, [
+                      { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleKleinPunktEinfuegen(pi, pos); setAktivMenu(null) } },
+                      { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleKleinVerbindungTrennen(pi, pos); setAktivMenu(null) } },
+                      { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleKleinSegmentLoeschen(pi); setAktivMenu(null) } },
+                    ])
+                  },
+                }} />
+              <Polyline key={`kp-line-${pi}`}
+                positions={positions}
+                interactive={false}
+                pathOptions={{ color: istAktiv ? GELB : trasseFarbe, weight: istAktiv ? 5 : 4, opacity: 0.95 }} />
+            </Fragment>
+          )
         })}
         {editierbarAktiv && kleinProjekt && localPfade.flatMap((pfad, pi) =>
           pfad.map((p, i) => {
@@ -857,28 +872,36 @@ const MapView = memo(function MapView({
           const wp = hausstichWp(h)
           const segKey = `hs-${h.id}`
           const istAktiv = aktivesSegment === segKey
+          const positions = wp.map((p) => [p.lat, p.lng] as [number, number])
+          const hsKlick = (e: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(e)
+            if (neuerHsStart) return
+            const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+            if (!kleinProjekt) handleDeselect()
+            setAktivesSegment(segKey)
+            zeigeMenu(e, [
+              { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleHsPunktEinfuegen(h.id, pos); setAktivMenu(null) } },
+              { label: '🗑️ Linie löschen', farbe: '#f87171', action: () => { handleHsLoeschen(h.id); setAktivMenu(null) } },
+            ])
+          }
           return (
-            <Polyline key={h.id} positions={wp.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{
-                color: istAktiv ? GELB : hausanschlussfarbe,
-                weight: istAktiv ? (editierbarAktiv ? 7 : 6) : (editierbarAktiv ? 3 : 2),
-                opacity: 0.95,
-              }}
-              eventHandlers={editierbarAktiv ? {
-                click: (e) => {
-                  L.DomEvent.stopPropagation(e)
-                  if (neuerHsStart) return
-                  const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
-                  if (!kleinProjekt) handleDeselect()
-                  setAktivesSegment(segKey)
-                  zeigeMenu(e, [
-                    { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleHsPunktEinfuegen(h.id, pos); setAktivMenu(null) } },
-                    { label: '🗑️ Linie löschen', farbe: '#f87171', action: () => { handleHsLoeschen(h.id); setAktivMenu(null) } },
-                  ])
-                },
-              } : {}}>
-              <Tooltip>{editierbarAktiv ? 'Antippen = Menü · ' : ''}Hausanschluss: {h.laengeMeter.toFixed(1)} m</Tooltip>
-            </Polyline>
+            <Fragment key={h.id}>
+              <Polyline positions={positions}
+                pathOptions={{
+                  color: istAktiv ? GELB : hausanschlussfarbe,
+                  weight: istAktiv ? (editierbarAktiv ? 7 : 6) : (editierbarAktiv ? 3 : 2),
+                  opacity: 0.95,
+                }}
+                eventHandlers={editierbarAktiv ? { click: hsKlick } : {}}>
+                <Tooltip>{editierbarAktiv ? 'Antippen = Menü · ' : ''}Hausanschluss: {h.laengeMeter.toFixed(1)} m</Tooltip>
+              </Polyline>
+              {/* Breite unsichtbare Tipp-Fläche — die duenne HS-Linie ist auf Touch-Geraeten schwer zu treffen */}
+              {editierbarAktiv && (
+                <Polyline positions={positions}
+                  pathOptions={{ color: '#000', weight: 18, opacity: 0.01 }}
+                  eventHandlers={{ click: hsKlick }} />
+              )}
+            </Fragment>
           )
         })}
 
