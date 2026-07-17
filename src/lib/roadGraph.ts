@@ -127,17 +127,71 @@ export class RoadGraph {
   }
 }
 
-export function buildRoadGraph(netz: OsmNetz): RoadGraph {
-  const graph = new RoadGraph()
+// Toleranz fürs Knoten-Snapping in Grad (~1.5-2m). OSM-Wege werden oft
+// unabhängig voneinander digitalisiert und teilen sich an echten Kreuzungen/
+// Einmündungen dadurch nicht immer denselben Node — obwohl sie sich am
+// selben Punkt treffen. Ohne Snapping zerfällt der Graph dort künstlich in
+// viele kleine, eigentlich verbundene Inseln (sichtbar als Häuser-Cluster
+// ganz ohne Trasse, obwohl direkt neben einer Straße liegend).
+const SNAP_TOLERANZ_GRAD = 0.00002
+
+// Führt Knoten, die innerhalb der Toleranz beieinander liegen, auf einen
+// gemeinsamen kanonischen Knoten zusammen (3x3-Grid-Nachbarschaftssuche,
+// damit Punkte nahe einer Zellgrenze nicht fälschlich getrennt bleiben).
+function snappeKnoten(netz: OsmNetz): Map<number, number> {
+  const grid = new Map<string, number[]>()
+  const kanonisch = new Map<number, number>()
+  const koordinaten = new Map<number, LatLng>()
 
   for (const [id, node] of netz.nodeMap) {
-    graph.addNode(id, { lat: node.lat, lng: node.lng })
+    const cx = Math.floor(node.lat / SNAP_TOLERANZ_GRAD)
+    const cy = Math.floor(node.lng / SNAP_TOLERANZ_GRAD)
+    let gefunden: number | null = null
+
+    for (let dx = -1; dx <= 1 && gefunden === null; dx++) {
+      for (let dy = -1; dy <= 1 && gefunden === null; dy++) {
+        const kandidaten = grid.get(`${cx + dx}_${cy + dy}`)
+        if (!kandidaten) continue
+        for (const kandId of kandidaten) {
+          const kc = koordinaten.get(kandId)!
+          if (Math.abs(kc.lat - node.lat) < SNAP_TOLERANZ_GRAD && Math.abs(kc.lng - node.lng) < SNAP_TOLERANZ_GRAD) {
+            gefunden = kandId
+            break
+          }
+        }
+      }
+    }
+
+    if (gefunden !== null) {
+      kanonisch.set(id, gefunden)
+    } else {
+      kanonisch.set(id, id)
+      koordinaten.set(id, { lat: node.lat, lng: node.lng })
+      const key = `${cx}_${cy}`
+      if (!grid.has(key)) grid.set(key, [])
+      grid.get(key)!.push(id)
+    }
+  }
+
+  return kanonisch
+}
+
+export function buildRoadGraph(netz: OsmNetz): RoadGraph {
+  const graph = new RoadGraph()
+  const kanonisch = snappeKnoten(netz)
+
+  for (const [id, node] of netz.nodeMap) {
+    const kid = kanonisch.get(id) ?? id
+    if (!graph.coordinates.has(kid)) {
+      graph.addNode(kid, { lat: node.lat, lng: node.lng })
+    }
   }
 
   for (const way of netz.ways) {
     for (let i = 0; i < way.nodeIds.length - 1; i++) {
-      const a = way.nodeIds[i]
-      const b = way.nodeIds[i + 1]
+      const a = kanonisch.get(way.nodeIds[i]) ?? way.nodeIds[i]
+      const b = kanonisch.get(way.nodeIds[i + 1]) ?? way.nodeIds[i + 1]
+      if (a === b) continue
       const ca = graph.coordinates.get(a)
       const cb = graph.coordinates.get(b)
       if (ca && cb) {
