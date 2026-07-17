@@ -123,35 +123,53 @@ export async function fetchOsmNetz(bounds: {
   const query = `[out:json][timeout:50];(way["highway"~"${HIGHWAY_FILTER}"](${bbox}););out body;>;out skel qt;`
   const body = `data=${encodeURIComponent(query)}`
 
-  let responseText: string | null = null
+  const OSM_MAX_RETRIES = 1
+  const OSM_RETRY_DELAY_MS = 8000
 
-  // 2. Browser-direkt versuchen (alle Endpoints parallel — umgeht Vercel-IP-Limits)
-  try {
-    responseText = await Promise.any(
-      OVERPASS_ENDPOINTS.map(async (endpoint) => {
-        const res = await fetch(endpoint, {
-          method: 'POST', body,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          signal: AbortSignal.timeout(35_000),
+  let responseText: string | null = null
+  let letzterFehler: unknown = null
+
+  for (let versuch = 0; versuch <= OSM_MAX_RETRIES && !responseText; versuch++) {
+    if (versuch > 0) await new Promise((r) => setTimeout(r, OSM_RETRY_DELAY_MS))
+
+    // 2. Browser-direkt versuchen (alle Endpoints parallel — umgeht Vercel-IP-Limits)
+    try {
+      responseText = await Promise.any(
+        OVERPASS_ENDPOINTS.map(async (endpoint) => {
+          const res = await fetch(endpoint, {
+            method: 'POST', body,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            signal: AbortSignal.timeout(35_000),
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          return res.text()
         })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.text()
-      })
-    )
-  } catch {
-    // 3. Vercel-Proxy als Fallback (falls CORS oder lokale Firewall)
-    const proxyRes = await fetch('/api/osm-proxy', {
-      method: 'POST', body,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    })
-    if (!proxyRes.ok) {
-      const err = await proxyRes.json().catch(() => ({ error: `HTTP ${proxyRes.status}` }))
-      throw new Error((err as { error?: string }).error ?? `HTTP ${proxyRes.status}`)
+      )
+      continue
+    } catch (e) {
+      letzterFehler = e
     }
-    responseText = await proxyRes.text()
+
+    // 3. Vercel-Proxy als Fallback (falls CORS oder lokale Firewall) — alle Overpass-Server
+    // sind kurzzeitig manchmal komplett überlastet, daher die äußere Retry-Schleife.
+    try {
+      const proxyRes = await fetch('/api/osm-proxy', {
+        method: 'POST', body,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      })
+      if (!proxyRes.ok) {
+        const err = await proxyRes.json().catch(() => ({ error: `HTTP ${proxyRes.status}` }))
+        throw new Error((err as { error?: string }).error ?? `HTTP ${proxyRes.status}`)
+      }
+      responseText = await proxyRes.text()
+    } catch (e) {
+      letzterFehler = e
+    }
   }
 
-  if (!responseText) throw new Error('Keine Daten erhalten')
+  if (!responseText) {
+    throw new Error(letzterFehler instanceof Error ? letzterFehler.message : 'Keine Daten erhalten')
+  }
 
   // 4. In IndexedDB speichern — nächster Aufruf mit gleicher Fläche ist sofort
   await cachePut(cacheKey, responseText)

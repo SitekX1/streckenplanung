@@ -9,7 +9,10 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function routeOrs(waypoints: LatLng[]): Promise<LatLng[]> {
+const ORS_MAX_RETRIES = 2
+const ORS_RETRY_DELAY_MS = 2500
+
+async function routeOrs(waypoints: LatLng[], versuch = 0): Promise<LatLng[]> {
   const body = JSON.stringify({ coordinates: waypoints.map((p) => [p.lng, p.lat]) })
   const res = await fetch('/api/ors-proxy', {
     method: 'POST',
@@ -19,7 +22,15 @@ async function routeOrs(waypoints: LatLng[]): Promise<LatLng[]> {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-    throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`)
+    const message = (err as { error?: string }).error ?? `HTTP ${res.status}`
+    // 502/503/504 sind meist voruebergehende Serverprobleme (ORS-Server ueberlastet) —
+    // kurz warten und erneut versuchen, statt das Segment sofort auf eine Luftlinie
+    // zurueckfallen zu lassen.
+    if ((res.status === 502 || res.status === 503 || res.status === 504) && versuch < ORS_MAX_RETRIES) {
+      await sleep(ORS_RETRY_DELAY_MS * (versuch + 1))
+      return routeOrs(waypoints, versuch + 1)
+    }
+    throw new Error(message)
   }
   const data = await res.json()
   const coords = data.features?.[0]?.geometry?.coordinates as [number, number][] | undefined
