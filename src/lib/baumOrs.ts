@@ -1,20 +1,22 @@
 import * as turf from '@turf/turf'
 import { LatLng, Address } from './types'
 
-const MAX_WAYPOINTS = 45
-const RATE_LIMIT_DELAY_MS = 1700
+// Mapbox Directions API: max. 25 Koordinaten/Request, 300 Requests/Minute
+// (deutlich grosszuegiger als ORS' 40 Requests/Minute) — Marge eingebaut.
+const MAX_WAYPOINTS = 23
+const RATE_LIMIT_DELAY_MS = 250
 const SPRUNG_SCHWELLE_M = 500 // Sprung > 500m zwischen NN-Adressen → eigene Abzweigung
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-const ORS_MAX_RETRIES = 2
-const ORS_RETRY_DELAY_MS = 2500
+const MAPBOX_MAX_RETRIES = 2
+const MAPBOX_RETRY_DELAY_MS = 2500
 
 async function routeOrs(waypoints: LatLng[], versuch = 0): Promise<LatLng[]> {
   const body = JSON.stringify({ coordinates: waypoints.map((p) => [p.lng, p.lat]) })
-  const res = await fetch('/api/ors-proxy', {
+  const res = await fetch('/api/mapbox-proxy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,
@@ -23,18 +25,18 @@ async function routeOrs(waypoints: LatLng[], versuch = 0): Promise<LatLng[]> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
     const message = (err as { error?: string }).error ?? `HTTP ${res.status}`
-    // 502/503/504 sind meist voruebergehende Serverprobleme (ORS-Server ueberlastet) —
-    // kurz warten und erneut versuchen, statt das Segment sofort auf eine Luftlinie
+    // 429 (Rate Limit) und 502/503/504 (voruebergehende Serverprobleme) — kurz
+    // warten und erneut versuchen, statt das Segment sofort auf eine Luftlinie
     // zurueckfallen zu lassen.
-    if ((res.status === 502 || res.status === 503 || res.status === 504) && versuch < ORS_MAX_RETRIES) {
-      await sleep(ORS_RETRY_DELAY_MS * (versuch + 1))
+    if ((res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) && versuch < MAPBOX_MAX_RETRIES) {
+      await sleep(MAPBOX_RETRY_DELAY_MS * (versuch + 1))
       return routeOrs(waypoints, versuch + 1)
     }
     throw new Error(message)
   }
   const data = await res.json()
-  const coords = data.features?.[0]?.geometry?.coordinates as [number, number][] | undefined
-  if (!coords?.length) throw new Error('ORS: leere Antwort')
+  const coords = data.routes?.[0]?.geometry?.coordinates as [number, number][] | undefined
+  if (!coords?.length) throw new Error('Mapbox: leere Antwort')
   return coords.map(([lng, lat]) => ({ lat, lng }))
 }
 

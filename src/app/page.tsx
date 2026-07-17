@@ -200,8 +200,8 @@ export default function Home() {
       )
     } catch (err) {
       const fehlerText = err instanceof Error ? err.message : String(err)
-      console.warn('Overpass nicht verfügbar, ORS-Baum:', fehlerText)
-      setTrasseMethode('ORS-Routing (Straßendaten werden geladen…)')
+      console.warn('Overpass nicht verfügbar, Mapbox-Baum:', fehlerText)
+      setTrasseMethode('Mapbox-Routing (Straßendaten werden geladen…)')
       setTrasseProgress(3)
       try {
         pfade = await berechneBaumORS(
@@ -209,7 +209,7 @@ export default function Home() {
           gefilterteAdressen,
           (p) => setTrasseProgress(3 + Math.round(p * 0.95))
         )
-        setTrasseMethode('ORS-Baum — Straßen folgen ✓, Abzweige optimiert')
+        setTrasseMethode('Mapbox-Baum — Straßen folgen ✓, Abzweige optimiert')
       } catch (orsErr) {
         const orsText = orsErr instanceof Error ? orsErr.message : String(orsErr)
         setTrasseMethode(`Fehler: ${orsText}`)
@@ -245,7 +245,7 @@ export default function Home() {
 
     pushHistory()
     setTrasseProgress(2)
-    setTrasseMethode('ORS-Routing (Erweiterung läuft…)')
+    setTrasseMethode('Mapbox-Routing (Erweiterung läuft…)')
 
     try {
       const neuePfade = await berechneBaumORS(
@@ -257,7 +257,7 @@ export default function Home() {
       const allePfade = deduplicatePfade([...vorhandenePfade, ...neuePfade])
       setTrassePfade(allePfade)
       setTrasse(allePfade.flat())
-      setTrasseMethode(`ORS-Baum Erweitert · ${allePfade.length} Segmente`)
+      setTrasseMethode(`Mapbox-Baum Erweitert · ${allePfade.length} Segmente`)
       setLaengen(berechneLaengen(allePfade, hausanschluesse))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)

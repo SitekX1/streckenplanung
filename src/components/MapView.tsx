@@ -919,7 +919,7 @@ const MapView = memo(function MapView({
       {trasseMethode && !editierbarAktiv && (() => {
         const istFehler = trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen')
         const istWarnung = !istFehler && trasseMethode.includes('⚠️')
-        const istErfolg = !istFehler && !istWarnung && (trasseMethode.includes('Erweitert') || trasseMethode.startsWith('ORS'))
+        const istErfolg = !istFehler && !istWarnung && (trasseMethode.includes('Erweitert') || trasseMethode.startsWith('Mapbox'))
         const farbe = istFehler ? '#f87171' : istWarnung ? '#fbbf24' : istErfolg ? '#4ade80' : '#fbbf24'
         const rand = istFehler ? '#dc2626' : istWarnung ? '#d97706' : istErfolg ? '#16a34a' : '#d97706'
         return (

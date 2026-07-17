@@ -21,10 +21,14 @@ export interface OsmNetz {
 const HIGHWAY_FILTER =
   'primary|secondary|tertiary|unclassified|residential|service|living_street|road'
 
+// private.coffee spiegelt kumi.systems — beide teilen sich teils dieselbe
+// Infrastruktur. maps.mail.ru (VK Maps) läuft komplett unabhängig davon und
+// gibt zusätzliche echte Redundanz, falls beide gleichzeitig ausfallen.
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ]
 
 // IndexedDB-Cache: einmal geladen → 48h gespeichert, kein Overpass-Abruf mehr nötig
