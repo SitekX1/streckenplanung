@@ -7,6 +7,7 @@ interface SidebarProps {
   adressenCount: number
   gefilterteAdressenAnzahl: number
   neueAdressenOhneHsAnzahl: number
+  neueAdressenFuerTrasseAnzahl: number
   orte: OrtInfo[]
   aktiveOrteKeys: string[]
   startpunktGesetzt: boolean
@@ -55,6 +56,7 @@ export default function Sidebar({
   adressenCount,
   gefilterteAdressenAnzahl,
   neueAdressenOhneHsAnzahl,
+  neueAdressenFuerTrasseAnzahl,
   orte,
   aktiveOrteKeys,
   onOrtToggle,
@@ -309,12 +311,12 @@ export default function Sidebar({
                   {onTrasseErweitern && (
                     <button
                       onClick={onTrasseErweitern}
-                      disabled={neueAdressenOhneHsAnzahl === 0 || editierbarAktiv}
+                      disabled={neueAdressenFuerTrasseAnzahl === 0 || editierbarAktiv}
                       className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       🔗 Trasse erweitern
-                      {neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv && (
-                        <span className="ml-1.5 text-[10px] text-blue-400">({neueAdressenOhneHsAnzahl} Adr.)</span>
+                      {neueAdressenFuerTrasseAnzahl > 0 && !editierbarAktiv && (
+                        <span className="ml-1.5 text-[10px] text-blue-400">({neueAdressenFuerTrasseAnzahl} Adr.)</span>
                       )}
                     </button>
                   )}

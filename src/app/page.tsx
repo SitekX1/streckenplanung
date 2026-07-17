@@ -80,7 +80,13 @@ function deduplicatePfade(pfade: LatLng[][]): LatLng[][] {
 }
 
 type Laengen = { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number }
-type HistorySnapshot = { trassePfade: LatLng[][]; trasse: LatLng[]; hausanschluesse: Hausstich[]; laengen: Laengen }
+type HistorySnapshot = {
+  trassePfade: LatLng[][]
+  trasse: LatLng[]
+  hausanschluesse: Hausstich[]
+  laengen: Laengen
+  trasseAdressenUuids: string[]
+}
 
 export default function Home() {
   const [adressen, setAdressen] = useState<Address[]>([])
@@ -101,10 +107,18 @@ export default function Home() {
   const [trasseFarbe, setTrasseFarbe] = useState('#3b82f6')
   const [hausanschlussfarbe, setHausanschlussfarbe] = useState('#ef4444')
   const [history, setHistory] = useState<HistorySnapshot[]>([])
+  // Adress-UUIDs, die bereits Teil einer generierten/erweiterten Trasse sind —
+  // getrennt von "hat Hausanschluss", da das zwei verschiedene Arbeitsschritte
+  // sind. Nur damit weiß "Trasse erweitern", ob es wirklich neue (noch nicht
+  // angebundene) Adressen/Orte gibt, statt einfach "hat noch keinen Hausanschluss".
+  const [trasseAdressenUuids, setTrasseAdressenUuids] = useState<Set<string>>(new Set())
 
   const pushHistory = useCallback(() => {
-    setHistory((prev) => [...prev.slice(-9), { trassePfade, trasse, hausanschluesse, laengen }])
-  }, [trassePfade, trasse, hausanschluesse, laengen])
+    setHistory((prev) => [
+      ...prev.slice(-9),
+      { trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids: [...trasseAdressenUuids] },
+    ])
+  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids])
 
   const handleUndo = useCallback(() => {
     setHistory((prev) => {
@@ -114,6 +128,7 @@ export default function Home() {
       setTrasse(snap.trasse)
       setHausanschluesse(snap.hausanschluesse)
       setLaengen(snap.laengen)
+      setTrasseAdressenUuids(new Set(snap.trasseAdressenUuids))
       return prev.slice(0, -1)
     })
   }, [])
@@ -222,6 +237,7 @@ export default function Home() {
     const dedupPfade = deduplicatePfade(pfade)
     setTrassePfade(dedupPfade)
     setTrasse(dedupPfade.flat())
+    setTrasseAdressenUuids(new Set(gefilterteAdressen.map((a) => a.uuid)))
     setTrasseProgress(100)
     setLaengen(berechneLaengen(dedupPfade, []))
     setTimeout(() => setTrasseProgress(0), 500)
@@ -231,11 +247,10 @@ export default function Home() {
     const vorhandenePfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (vorhandenePfade.length === 0 || !startpunkt) return
 
-    const bearbeiteteUuids = new Set(hausanschluesse.map((h) => h.addressUuid))
     const gefilterteNeue = adressen.filter(
       (a) =>
         aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`) &&
-        !bearbeiteteUuids.has(a.uuid)
+        !trasseAdressenUuids.has(a.uuid)
     )
 
     if (gefilterteNeue.length === 0) {
@@ -257,6 +272,7 @@ export default function Home() {
       const allePfade = deduplicatePfade([...vorhandenePfade, ...neuePfade])
       setTrassePfade(allePfade)
       setTrasse(allePfade.flat())
+      setTrasseAdressenUuids((prev) => new Set([...prev, ...gefilterteNeue.map((a) => a.uuid)]))
       setTrasseMethode(`Mapbox-Baum Erweitert · ${allePfade.length} Segmente`)
       setLaengen(berechneLaengen(allePfade, hausanschluesse))
     } catch (e) {
@@ -266,7 +282,7 @@ export default function Home() {
 
     setTrasseProgress(100)
     setTimeout(() => setTrasseProgress(0), 500)
-  }, [startpunkt, trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse, pushHistory])
+  }, [startpunkt, trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse, trasseAdressenUuids, pushHistory])
 
   const handleHausanschluesseGenerieren = useCallback(async () => {
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
@@ -362,6 +378,7 @@ export default function Home() {
     setLaengen({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0 })
     setEditierbarAktiv(false)
     setHistory([])
+    setTrasseAdressenUuids(new Set())
   }, [])
 
   const handleKMLExport = useCallback(() => {
@@ -403,6 +420,12 @@ export default function Home() {
     setLaengen(berechneLaengen(pfade, projekt.hausanschluesse))
     setEditierbarAktiv(false)
     setHistory([])
+    // Bei geladenen Projekten ist unbekannt, welche Adressen genau zur Trasse
+    // gehören — sicherer Default: bei vorhandener Trasse gilt sie als
+    // vollständig für alle geladenen Adressen (sonst würde "Trasse erweitern"
+    // fälschlich sofort aktiv sein).
+    const hatTrasse = (projekt.trassePfade?.length ?? 0) > 0 || projekt.trasse.length >= 2
+    setTrasseAdressenUuids(hatTrasse ? new Set(projekt.adressen.map((a) => a.uuid)) : new Set())
     const orteListe = extractOrte(projekt.adressen)
     setOrte(orteListe)
     setAktiveOrteKeys(orteListe.map((o) => o.key))
@@ -420,12 +443,24 @@ export default function Home() {
       !bearbeiteteUuids.has(a.uuid)
   ).length
 
+  // Für "Trasse erweitern": Adressen, die noch nicht Teil einer generierten/
+  // erweiterten Trasse sind — bewusst getrennt von neueAdressenOhneHsAnzahl,
+  // da "hat noch keinen Hausanschluss" (normal direkt nach Trasse generieren,
+  // bevor Hausanschlüsse berechnet wurden) etwas anderes ist als "gehört noch
+  // gar nicht zur Trasse" (neues Dorf aktiviert / neue Excel-Liste importiert).
+  const neueAdressenFuerTrasseAnzahl = adressen.filter(
+    (a) =>
+      aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`) &&
+      !trasseAdressenUuids.has(a.uuid)
+  ).length
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#0f0f0f]">
       <Sidebar
         adressenCount={adressen.length}
         gefilterteAdressenAnzahl={gefilterteAdressenAnzahl}
         neueAdressenOhneHsAnzahl={neueAdressenOhneHsAnzahl}
+        neueAdressenFuerTrasseAnzahl={neueAdressenFuerTrasseAnzahl}
         orte={orte}
         aktiveOrteKeys={aktiveOrteKeys}
         startpunktGesetzt={startpunkt !== null}
