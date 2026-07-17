@@ -178,9 +178,9 @@ export default function Home() {
       if (graph.coordinates.size === 0) throw new Error('Leerer Graph')
       setTrasseProgress(22)
 
-      const startNodeId = graph.nearestNode(startpunkt)
+      const startNodeId = graph.nearestPointOnGraph(startpunkt)
       const terminalIds = gefilterteAdressen.map((a) =>
-        graph.nearestNode({ lat: a.lat, lng: a.lon })
+        graph.nearestPointOnGraph({ lat: a.lat, lng: a.lon })
       )
       setTrasseProgress(25)
 

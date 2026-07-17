@@ -54,6 +54,7 @@ function haversine(a: LatLng, b: LatLng): number {
 export class RoadGraph {
   adjacency: Map<number, Array<{ to: number; dist: number }>> = new Map()
   coordinates: Map<number, LatLng> = new Map()
+  private naechsteVirtuelleId = -1
 
   addNode(id: number, coord: LatLng) {
     this.coordinates.set(id, coord)
@@ -63,6 +64,13 @@ export class RoadGraph {
   addEdge(a: number, b: number, dist: number, oneway: boolean) {
     this.adjacency.get(a)?.push({ to: b, dist })
     if (!oneway) this.adjacency.get(b)?.push({ to: a, dist })
+  }
+
+  private removeEdge(a: number, b: number) {
+    const listA = this.adjacency.get(a)
+    if (listA) this.adjacency.set(a, listA.filter((e) => e.to !== b))
+    const listB = this.adjacency.get(b)
+    if (listB) this.adjacency.set(b, listB.filter((e) => e.to !== a))
   }
 
   // Nächsten Graphknoten zu einer Koordinate finden.
@@ -78,6 +86,80 @@ export class RoadGraph {
       if (d2 < bestDist) { bestDist = d2; bestId = id }
     }
     return bestId
+  }
+
+  // Nächsten Punkt auf dem GESAMTEN Straßennetz finden (nicht nur auf
+  // existierenden Knoten) — bei Bedarf wird mitten auf einer Kante ein neuer
+  // virtueller Knoten eingefügt. Ohne das würde nearestNode() ein Haus an
+  // einer nur grob digitalisierten Straße (wenige OSM-Knoten) fälschlich an
+  // den nächstgelegenen BELIEBIGEN Knoten anhängen — und das kann eine private
+  // Einfahrt oder eine ganz andere Straße sein, wenn die eigene Straße zufällig
+  // weiter entfernte Stützpunkte hat. Ergebnis: die Trasse "erreicht" das Haus
+  // zwar (kein Fehler, kein Luftlinien-Fallback), aber über die falsche Straße.
+  nearestPointOnGraph(coord: LatLng): number {
+    const cosLat = Math.cos((coord.lat * Math.PI) / 180)
+    let bestDist2 = Infinity
+    let bestA = -1
+    let bestB = -1
+    let bestT = 0
+    const gesehen = new Set<string>()
+
+    for (const [a, kanten] of this.adjacency) {
+      for (const { to: b } of kanten) {
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`
+        if (gesehen.has(key)) continue
+        gesehen.add(key)
+
+        const ca = this.coordinates.get(a)
+        const cb = this.coordinates.get(b)
+        if (!ca || !cb) continue
+
+        // Flache Projektion auf das Liniensegment a→b
+        const bx = (cb.lng - ca.lng) * cosLat
+        const by = cb.lat - ca.lat
+        const px = (coord.lng - ca.lng) * cosLat
+        const py = coord.lat - ca.lat
+        const len2 = bx * bx + by * by
+        let t = len2 > 0 ? (px * bx + py * by) / len2 : 0
+        t = Math.max(0, Math.min(1, t))
+        const dx = px - t * bx
+        const dy = py - t * by
+        const dist2 = dx * dx + dy * dy
+
+        if (dist2 < bestDist2) {
+          bestDist2 = dist2
+          bestA = a
+          bestB = b
+          bestT = t
+        }
+      }
+    }
+
+    if (bestA === -1) return this.nearestNode(coord)
+    // Nahe genug an einem vorhandenen Endpunkt → keinen neuen Knoten anlegen
+    if (bestT < 1e-4) return bestA
+    if (bestT > 1 - 1e-4) return bestB
+
+    const ca = this.coordinates.get(bestA)!
+    const cb = this.coordinates.get(bestB)!
+    const projCoord: LatLng = {
+      lat: ca.lat + bestT * (cb.lat - ca.lat),
+      lng: ca.lng + bestT * (cb.lng - ca.lng),
+    }
+
+    const warBeidseitig = (this.adjacency.get(bestB) ?? []).some((e) => e.to === bestA)
+    const neueId = this.naechsteVirtuelleId--
+    this.addNode(neueId, projCoord)
+    this.removeEdge(bestA, bestB)
+    this.addEdge(bestA, neueId, haversine(ca, projCoord), false)
+    this.addEdge(neueId, bestB, haversine(projCoord, cb), false)
+    if (!warBeidseitig) {
+      // urspruengliche Kante war nur a→b (oneway) → Rueckrichtung entfernen,
+      // Reihenfolge a→neueId→b bleibt erhalten
+      this.removeEdge(neueId, bestA)
+      this.removeEdge(bestB, neueId)
+    }
+    return neueId
   }
 
   // Multi-Source-Dijkstra: startet von ALLEN Baumknoten gleichzeitig.
