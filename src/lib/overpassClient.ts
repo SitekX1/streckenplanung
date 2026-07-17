@@ -111,15 +111,30 @@ function parseOsmResponse(data: {
   return { nodeMap, ways }
 }
 
+// Overpass bricht große Abfragen bei internem Timeout ab und liefert trotzdem
+// ein valides JSON mit den bis dahin gesammelten (unvollständigen!) Daten plus
+// einem "remark"-Feld. Ohne diese Prüfung würde so eine Teil-Antwort als
+// vollständig gecacht (48h) und immer wieder als "Erfolg" ausgeliefert, obwohl
+// z.B. ganze Straßenzüge fehlen.
+function istUnvollstaendigeAntwort(text: string): boolean {
+  try {
+    const data = JSON.parse(text) as { remark?: string }
+    return typeof data.remark === 'string' && data.remark.toLowerCase().includes('timeout')
+  } catch {
+    return false
+  }
+}
+
 export async function fetchOsmNetz(bounds: {
   minLat: number; maxLat: number; minLng: number; maxLng: number
 }): Promise<OsmNetz> {
   const cacheKey = [bounds.minLat, bounds.maxLat, bounds.minLng, bounds.maxLng]
     .map((v) => v.toFixed(4)).join('_')
 
-  // 1. Cache prüfen — wenn vorhanden, sofort zurückgeben
+  // 1. Cache prüfen — wenn vorhanden, sofort zurückgeben (außer der gecachte
+  // Snapshot war selbst durch einen Overpass-Timeout unvollständig)
   const cached = await cacheGet(cacheKey)
-  if (cached) {
+  if (cached && !istUnvollstaendigeAntwort(cached)) {
     return parseOsmResponse(JSON.parse(cached))
   }
 
@@ -138,7 +153,7 @@ export async function fetchOsmNetz(bounds: {
 
     // 2. Browser-direkt versuchen (alle Endpoints parallel — umgeht Vercel-IP-Limits)
     try {
-      responseText = await Promise.any(
+      const direktText = await Promise.any(
         OVERPASS_ENDPOINTS.map(async (endpoint) => {
           const res = await fetch(endpoint, {
             method: 'POST', body,
@@ -149,7 +164,12 @@ export async function fetchOsmNetz(bounds: {
           return res.text()
         })
       )
-      continue
+      if (istUnvollstaendigeAntwort(direktText)) {
+        letzterFehler = new Error('Overpass-Antwort durch internen Timeout unvollständig')
+      } else {
+        responseText = direktText
+        continue
+      }
     } catch (e) {
       letzterFehler = e
     }
@@ -165,7 +185,12 @@ export async function fetchOsmNetz(bounds: {
         const err = await proxyRes.json().catch(() => ({ error: `HTTP ${proxyRes.status}` }))
         throw new Error((err as { error?: string }).error ?? `HTTP ${proxyRes.status}`)
       }
-      responseText = await proxyRes.text()
+      const proxyText = await proxyRes.text()
+      if (istUnvollstaendigeAntwort(proxyText)) {
+        letzterFehler = new Error('Overpass-Antwort durch internen Timeout unvollständig')
+      } else {
+        responseText = proxyText
+      }
     } catch (e) {
       letzterFehler = e
     }
