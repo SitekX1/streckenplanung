@@ -26,6 +26,18 @@ function extractOrte(adressen: Address[]): OrtInfo[] {
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'))
 }
 
+// Reduziert eine Punktliste auf max. maxCount Punkte (gleichmäßig verteilt,
+// letzter Punkt bleibt immer erhalten) — begrenzt die Kosten von
+// graph.nearestPointOnGraph() bei sehr langen bestehenden Trassen.
+function sampleMitStride<T>(arr: T[], maxCount: number): T[] {
+  if (arr.length <= maxCount) return arr
+  const stride = Math.ceil(arr.length / maxCount)
+  const result: T[] = []
+  for (let i = 0; i < arr.length; i += stride) result.push(arr[i])
+  if (result[result.length - 1] !== arr[arr.length - 1]) result.push(arr[arr.length - 1])
+  return result
+}
+
 // Entfernt doppelte Straßensegmente aus allen Pfaden und baut das Netz als echten Baum.
 // Gleiche Segmente (unabhängig von der Richtung) werden nur einmal behalten.
 function deduplicatePfade(pfade: LatLng[][]): LatLng[][] {
@@ -260,24 +272,74 @@ export default function Home() {
 
     pushHistory()
     setTrasseProgress(2)
-    setTrasseMethode('Mapbox-Routing (Erweiterung läuft…)')
+
+    let allePfade: LatLng[][] = vorhandenePfade
+    let erfolgreich = false
 
     try {
-      const neuePfade = await berechneBaumORS(
-        startpunkt,
-        gefilterteNeue,
-        (p) => setTrasseProgress(2 + Math.round(p * 0.95)),
-        vorhandenePfade
+      setTrasseProgress(5)
+      // Bestehende Trasse gehört mit ins Overpass-Gebiet, sonst fehlen
+      // ggf. die Straßendaten zwischen altem und neuem Dorf.
+      const bounds = berechneGrenzen(gefilterteNeue, startpunkt, 0.008, vorhandenePfade.flat())
+      const osmNetz = await fetchOsmNetz(bounds)
+      setTrasseProgress(18)
+
+      const graph = buildRoadGraph(osmNetz)
+      if (graph.coordinates.size === 0) throw new Error('Leerer Graph')
+      setTrasseProgress(22)
+
+      // Die komplette bestehende Trasse wird als bereits verbundener Baum
+      // vorgegeben (auf das neu geladene Straßennetz gesnappt) — so dockt
+      // die Erweiterung am wirklich naechstgelegenen Punkt an, statt einen
+      // einzelnen (evtl. weit entfernten) Anschlusspunkt zu erraten.
+      const bestehendePunkte = sampleMitStride(vorhandenePfade.flat(), 500)
+      const startNodeIds = bestehendePunkte.map((p) => graph.nearestPointOnGraph(p))
+      const terminalIds = gefilterteNeue.map((a) =>
+        graph.nearestPointOnGraph({ lat: a.lat, lng: a.lon })
       )
-      const allePfade = deduplicatePfade([...vorhandenePfade, ...neuePfade])
+      setTrasseProgress(25)
+
+      const ergebnis = await berechneSteinerBaum(
+        graph,
+        startNodeIds,
+        terminalIds,
+        (p) => setTrasseProgress(25 + Math.round(p * 0.7))
+      )
+
+      if (ergebnis.pfade.length === 0) throw new Error('Keine neuen Pfade erzeugt')
+      allePfade = deduplicatePfade([...vorhandenePfade, ...ergebnis.pfade])
+      setTrasseMethode(
+        ergebnis.luftlinienAnzahl > 0
+          ? `OSM Straßennetz Erweitert · ${allePfade.length} Segmente · ⚠️ ${ergebnis.luftlinienAnzahl} Adresse(n) ohne Straßenanbindung per Luftlinie verbunden — bitte prüfen`
+          : `OSM Straßennetz Erweitert · ${allePfade.length} Segmente`
+      )
+      erfolgreich = true
+    } catch (err) {
+      const fehlerText = err instanceof Error ? err.message : String(err)
+      console.warn('Overpass nicht verfügbar, Mapbox-Erweiterung:', fehlerText)
+      setTrasseMethode('Mapbox-Routing (Erweiterung läuft…)')
+      setTrasseProgress(3)
+      try {
+        const neuePfade = await berechneBaumORS(
+          startpunkt,
+          gefilterteNeue,
+          (p) => setTrasseProgress(3 + Math.round(p * 0.95)),
+          vorhandenePfade
+        )
+        allePfade = deduplicatePfade([...vorhandenePfade, ...neuePfade])
+        setTrasseMethode(`Mapbox-Baum Erweitert · ${allePfade.length} Segmente`)
+        erfolgreich = true
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        setTrasseMethode(`Erweiterung fehlgeschlagen: ${msg}`)
+      }
+    }
+
+    if (erfolgreich) {
       setTrassePfade(allePfade)
       setTrasse(allePfade.flat())
       setTrasseAdressenUuids((prev) => new Set([...prev, ...gefilterteNeue.map((a) => a.uuid)]))
-      setTrasseMethode(`Mapbox-Baum Erweitert · ${allePfade.length} Segmente`)
       setLaengen(berechneLaengen(allePfade, hausanschluesse))
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      setTrasseMethode(`Erweiterung fehlgeschlagen: ${msg}`)
     }
 
     setTrasseProgress(100)

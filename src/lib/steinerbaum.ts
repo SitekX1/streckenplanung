@@ -45,14 +45,18 @@ function naechsteLuftlinienVerbindung(
 // async: gibt alle 50 Iterationen die UI-Kontrolle zurück (Progress-Bar bleibt reaktiv).
 export async function berechneSteinerBaum(
   graph: RoadGraph,
-  startNodeId: number,
+  startNodeIds: number | number[],
   terminalNodeIds: number[],
   onProgress?: (prozent: number) => void
 ): Promise<SteinerErgebnis> {
-  const uniqueTerminals = [...new Set(terminalNodeIds)].filter((id) => id !== startNodeId)
+  // Mehrere Start-Knoten = bereits vorhandene Trasse (z.B. bei "Trasse
+  // erweitern") wird komplett als vorverbundener Baum vorgegeben, statt nur
+  // von einem einzelnen Punkt aus neu zu rechnen.
+  const startSet = new Set(Array.isArray(startNodeIds) ? startNodeIds : [startNodeIds])
+  const uniqueTerminals = [...new Set(terminalNodeIds)].filter((id) => !startSet.has(id))
   if (uniqueTerminals.length === 0) return { pfade: [], gesamtLaengeMeter: 0, luftlinienAnzahl: 0 }
 
-  const treeNodes = new Set<number>([startNodeId])
+  const treeNodes = new Set<number>(startSet)
   const usedEdges = new Set<string>() // normiert: "min_max"
   const remaining = new Set<number>(uniqueTerminals)
   const luftlinien: Array<[number, number]> = []

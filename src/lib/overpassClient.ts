@@ -78,12 +78,13 @@ async function cachePut(key: string, data: string): Promise<void> {
 export function berechneGrenzen(
   adressen: Address[],
   startpunkt: LatLng,
-  padding = 0.008
+  padding = 0.008,
+  zusatzPunkte: LatLng[] = []
 ): { minLat: number; maxLat: number; minLng: number; maxLng: number } {
   const lats = adressen.map((a) => a.lat)
   const lngs = adressen.map((a) => a.lon)
-  lats.push(startpunkt.lat)
-  lngs.push(startpunkt.lng)
+  lats.push(startpunkt.lat, ...zusatzPunkte.map((p) => p.lat))
+  lngs.push(startpunkt.lng, ...zusatzPunkte.map((p) => p.lng))
   return {
     minLat: Math.min(...lats) - padding,
     maxLat: Math.max(...lats) + padding,
