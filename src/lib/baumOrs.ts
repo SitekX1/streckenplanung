@@ -128,12 +128,30 @@ function gruppiereNachStrasse(adressen: Address[]): Address[][] {
   return Array.from(map.values())
 }
 
-// Reduziert eine (NN-sortierte, sprungfreie) Adressgruppe auf die für ORS nötigen
-// Stützpunkte: nur Anfang und Ende. ORS folgt dazwischen ohnehin dem echten
-// Straßenverlauf — die Häuser dazwischen werden per Hausanschluss angebunden,
-// statt dass die Trasse selbst bei jedem einzelnen Haus vorbeigeführt wird.
-function reduziereAufStuetzpunkte(gruppe: Address[]): Address[] {
-  return gruppe.length > 2 ? [gruppe[0], gruppe[gruppe.length - 1]] : gruppe
+// Reduziert eine Adressgruppe auf die für ORS nötigen Stützpunkte: die zwei am
+// weitesten voneinander entfernten Adressen (Durchmesser der Gruppe) statt einfach
+// Anfang/Ende der NN-Sortierung — die NN-Reihenfolge kann bei einem seitlichen
+// Einstiegspunkt zickzacken, wodurch "Anfang" und "Ende" nah beieinander liegen
+// und große Teile der Straße gar nicht mehr von der Trasse abgedeckt würden.
+// ORS folgt zwischen den zwei Stützpunkten ohnehin dem echten Straßenverlauf —
+// die Häuser dazwischen werden per Hausanschluss angebunden. Reihenfolge der
+// beiden Punkte: näher an `nah` (Anschlusspunkt ans bisherige Netz) zuerst.
+function reduziereAufStuetzpunkte(gruppe: Address[], nah: LatLng): Address[] {
+  if (gruppe.length <= 2) return gruppe
+  let bestI = 0, bestJ = 1, bestDist = -1
+  for (let i = 0; i < gruppe.length; i++) {
+    for (let j = i + 1; j < gruppe.length; j++) {
+      const d = haversineDistanz(
+        { lat: gruppe[i].lat, lng: gruppe[i].lon },
+        { lat: gruppe[j].lat, lng: gruppe[j].lon }
+      )
+      if (d > bestDist) { bestDist = d; bestI = i; bestJ = j }
+    }
+  }
+  const a = gruppe[bestI], b = gruppe[bestJ]
+  const dA = haversineDistanz(nah, { lat: a.lat, lng: a.lon })
+  const dB = haversineDistanz(nah, { lat: b.lat, lng: b.lon })
+  return dA <= dB ? [a, b] : [b, a]
 }
 
 // Plant für ein Dorf die Reihenfolge der (nach Straße gruppierten, auf Stützpunkte
@@ -161,7 +179,7 @@ function planeDorfGruppen(dorfAdressen: Address[], dorfEinstieg: LatLng): Addres
   for (const strassenAdressen of sortierteStrassen) {
     const sortiert = sortiereNaechsterNachbar(laufpunkt, strassenAdressen)
     for (const teil of teileBeispruenge(sortiert)) {
-      gruppen.push(reduziereAufStuetzpunkte(teil))
+      gruppen.push(reduziereAufStuetzpunkte(teil, laufpunkt))
     }
     const letzte = sortiert[sortiert.length - 1]
     laufpunkt = { lat: letzte.lat, lng: letzte.lon }
