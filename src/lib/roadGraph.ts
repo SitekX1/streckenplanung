@@ -51,8 +51,17 @@ function haversine(a: LatLng, b: LatLng): number {
   return 2 * 6_371_000 * Math.asin(Math.sqrt(sa))
 }
 
+export type WegKind = 'paved' | 'track'
+
+// Feldweg wird gegenüber einer gleich langen Straße künstlich verteuert, damit
+// Dijkstra ihn nur nimmt, wenn er tatsächlich spürbar kürzer ist (wirtschaftlich
+// sinnvoll) — nicht schon bei ein paar Metern Unterschied. Wirkt NUR auf die
+// Pfad-Auswahl; die ausgewiesene Länge wird in kantenzuPfade() immer aus der
+// echten Geometrie neu berechnet, bleibt also exakt.
+const FELDWEG_KOSTEN_FAKTOR = 1.15
+
 export class RoadGraph {
-  adjacency: Map<number, Array<{ to: number; dist: number }>> = new Map()
+  adjacency: Map<number, Array<{ to: number; dist: number; weight: number; kind: WegKind }>> = new Map()
   coordinates: Map<number, LatLng> = new Map()
   private naechsteVirtuelleId = -1
 
@@ -61,9 +70,10 @@ export class RoadGraph {
     if (!this.adjacency.has(id)) this.adjacency.set(id, [])
   }
 
-  addEdge(a: number, b: number, dist: number, oneway: boolean) {
-    this.adjacency.get(a)?.push({ to: b, dist })
-    if (!oneway) this.adjacency.get(b)?.push({ to: a, dist })
+  addEdge(a: number, b: number, dist: number, oneway: boolean, kind: WegKind = 'paved') {
+    const weight = kind === 'track' ? dist * FELDWEG_KOSTEN_FAKTOR : dist
+    this.adjacency.get(a)?.push({ to: b, dist, weight, kind })
+    if (!oneway) this.adjacency.get(b)?.push({ to: a, dist, weight, kind })
   }
 
   private removeEdge(a: number, b: number) {
@@ -148,11 +158,12 @@ export class RoadGraph {
     }
 
     const warBeidseitig = (this.adjacency.get(bestB) ?? []).some((e) => e.to === bestA)
+    const kind = (this.adjacency.get(bestA) ?? []).find((e) => e.to === bestB)?.kind ?? 'paved'
     const neueId = this.naechsteVirtuelleId--
     this.addNode(neueId, projCoord)
     this.removeEdge(bestA, bestB)
-    this.addEdge(bestA, neueId, haversine(ca, projCoord), false)
-    this.addEdge(neueId, bestB, haversine(projCoord, cb), false)
+    this.addEdge(bestA, neueId, haversine(ca, projCoord), false, kind)
+    this.addEdge(neueId, bestB, haversine(projCoord, cb), false, kind)
     if (!warBeidseitig) {
       // urspruengliche Kante war nur a→b (oneway) → Rueckrichtung entfernen,
       // Reihenfolge a→neueId→b bleibt erhalten
@@ -196,7 +207,7 @@ export class RoadGraph {
       }
 
       for (const edge of this.adjacency.get(u) ?? []) {
-        const nd = d + edge.dist
+        const nd = d + edge.weight
         if (!dist.has(edge.to) || nd < dist.get(edge.to)!) {
           dist.set(edge.to, nd)
           prev.set(edge.to, u)
@@ -258,9 +269,46 @@ function snappeKnoten(netz: OsmNetz): Map<number, number> {
   return kanonisch
 }
 
-export function buildRoadGraph(netz: OsmNetz): RoadGraph {
+// Radius um jede Adresse, innerhalb dessen ein Feldweg als "innerorts" gilt
+// und deshalb NICHT genutzt wird — dort soll weiterhin nur an echten Straßen
+// gebaut werden. Außerhalb dieses Radius (= zwischen den Ortschaften) sind
+// Feldwege erlaubt.
+const FELDWEG_ORTS_RADIUS_METER = 200
+
+// Grid-Index über alle Adressen (gleiche Technik wie snappeKnoten): erlaubt
+// einen schnellen "liegt Punkt X in der Nähe einer Adresse"-Test auch bei
+// mehreren tausend Adressen, statt jede Kante gegen jede Adresse zu prüfen.
+function baueOrtszonenTest(adressen: LatLng[], radiusMeter: number): (p: LatLng) => boolean {
+  if (adressen.length === 0) return () => false
+  const zellGroesseGrad = radiusMeter / 111_320
+  const grid = new Map<string, LatLng[]>()
+  for (const a of adressen) {
+    const cx = Math.floor(a.lat / zellGroesseGrad)
+    const cy = Math.floor(a.lng / zellGroesseGrad)
+    const key = `${cx}_${cy}`
+    if (!grid.has(key)) grid.set(key, [])
+    grid.get(key)!.push(a)
+  }
+  return (p: LatLng) => {
+    const cx = Math.floor(p.lat / zellGroesseGrad)
+    const cy = Math.floor(p.lng / zellGroesseGrad)
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const kandidaten = grid.get(`${cx + dx}_${cy + dy}`)
+        if (!kandidaten) continue
+        for (const k of kandidaten) {
+          if (haversine(p, k) <= radiusMeter) return true
+        }
+      }
+    }
+    return false
+  }
+}
+
+export function buildRoadGraph(netz: OsmNetz, adressen: LatLng[] = []): RoadGraph {
   const graph = new RoadGraph()
   const kanonisch = snappeKnoten(netz)
+  const istInnerorts = baueOrtszonenTest(adressen, FELDWEG_ORTS_RADIUS_METER)
 
   for (const [id, node] of netz.nodeMap) {
     const kid = kanonisch.get(id) ?? id
@@ -270,14 +318,21 @@ export function buildRoadGraph(netz: OsmNetz): RoadGraph {
   }
 
   for (const way of netz.ways) {
+    const istFeldweg = way.highway === 'track'
     for (let i = 0; i < way.nodeIds.length - 1; i++) {
       const a = kanonisch.get(way.nodeIds[i]) ?? way.nodeIds[i]
       const b = kanonisch.get(way.nodeIds[i + 1]) ?? way.nodeIds[i + 1]
       if (a === b) continue
       const ca = graph.coordinates.get(a)
       const cb = graph.coordinates.get(b)
-      if (ca && cb) {
-        graph.addEdge(a, b, haversine(ca, cb), way.oneway)
+      if (!ca || !cb) continue
+
+      if (istFeldweg) {
+        const mitte: LatLng = { lat: (ca.lat + cb.lat) / 2, lng: (ca.lng + cb.lng) / 2 }
+        if (istInnerorts(mitte)) continue // innerorts: Feldweg ignorieren, nur Straße
+        graph.addEdge(a, b, haversine(ca, cb), way.oneway, 'track')
+      } else {
+        graph.addEdge(a, b, haversine(ca, cb), way.oneway, 'paved')
       }
     }
   }

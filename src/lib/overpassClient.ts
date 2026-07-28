@@ -10,6 +10,7 @@ export interface OsmWay {
   id: number
   nodeIds: number[]
   oneway: boolean
+  highway: string
 }
 
 export interface OsmNetz {
@@ -17,9 +18,15 @@ export interface OsmNetz {
   ways: OsmWay[]
 }
 
-// Nur versiegelte Straßen — Feldwege/Fußwege absichtlich ausgeschlossen
+// Versiegelte Straßen — Fußwege bleiben bewusst außen vor
 const HIGHWAY_FILTER =
   'primary|secondary|tertiary|unclassified|residential|service|living_street|road'
+
+// Feldwege (highway=track) werden zusätzlich geladen, aber nur außerhalb von
+// Ortschaften genutzt (Filterung dafür in roadGraph.ts) — echte Trassenbauer
+// nutzen zwischen Dörfern öffentliche Feldwege statt Straßen-Umwegen, sofern
+// nicht privat/gesperrt.
+const FELDWEG_FILTER = 'track'
 
 // private.coffee spiegelt kumi.systems — beide teilen sich teils dieselbe
 // Infrastruktur. maps.mail.ru (VK Maps) läuft komplett unabhängig davon und
@@ -105,7 +112,12 @@ function parseOsmResponse(data: {
     if (el.type === 'node' && el.lat !== undefined && el.lon !== undefined) {
       nodeMap.set(el.id, { id: el.id, lat: el.lat, lng: el.lon })
     } else if (el.type === 'way' && el.nodes) {
-      ways.push({ id: el.id, nodeIds: el.nodes, oneway: el.tags?.oneway === 'yes' })
+      ways.push({
+        id: el.id,
+        nodeIds: el.nodes,
+        oneway: el.tags?.oneway === 'yes',
+        highway: el.tags?.highway ?? '',
+      })
     }
   }
   if (nodeMap.size === 0) throw new Error('Keine Straßenknoten in Antwort')
@@ -129,7 +141,9 @@ function istUnvollstaendigeAntwort(text: string): boolean {
 export async function fetchOsmNetz(bounds: {
   minLat: number; maxLat: number; minLng: number; maxLng: number
 }): Promise<OsmNetz> {
-  const cacheKey = [bounds.minLat, bounds.maxLat, bounds.minLng, bounds.maxLng]
+  // "v2"-Präfix: Query wurde um Feldwege erweitert, alte Cache-Einträge ohne
+  // Feldweg-Daten dürfen nicht mehr als vollständig gelten.
+  const cacheKey = 'v2_' + [bounds.minLat, bounds.maxLat, bounds.minLng, bounds.maxLng]
     .map((v) => v.toFixed(4)).join('_')
 
   // 1. Cache prüfen — wenn vorhanden, sofort zurückgeben (außer der gecachte
@@ -140,7 +154,7 @@ export async function fetchOsmNetz(bounds: {
   }
 
   const bbox = `${bounds.minLat},${bounds.minLng},${bounds.maxLat},${bounds.maxLng}`
-  const query = `[out:json][timeout:50];(way["highway"~"${HIGHWAY_FILTER}"](${bbox}););out body;>;out skel qt;`
+  const query = `[out:json][timeout:50];(way["highway"~"${HIGHWAY_FILTER}"](${bbox});way["highway"~"${FELDWEG_FILTER}"]["access"!~"private|no"](${bbox}););out body;>;out skel qt;`
   const body = `data=${encodeURIComponent(query)}`
 
   const OSM_MAX_RETRIES = 1

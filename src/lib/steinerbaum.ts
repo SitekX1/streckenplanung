@@ -4,39 +4,7 @@ import { LatLng } from './types'
 export interface SteinerErgebnis {
   pfade: LatLng[][]
   gesamtLaengeMeter: number
-  luftlinienAnzahl: number
-}
-
-function haversineDist(a: LatLng, b: LatLng): number {
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180
-  const sa =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
-  return 2 * 6_371_000 * Math.asin(Math.sqrt(sa))
-}
-
-// Wenn kein verbleibendes Terminal über das Straßennetz vom bisherigen Baum aus
-// erreichbar ist (z.B. isolierte Siedlung/Straßenzug ohne OSM-Anbindung an den
-// Rest): nächstgelegenes Terminal + nächstgelegenen Baum-Knoten per Luftlinie
-// finden, statt den kompletten Rest stillschweigend zu verwerfen.
-function naechsteLuftlinienVerbindung(
-  graph: RoadGraph,
-  treeNodes: Set<number>,
-  remaining: Set<number>
-): { von: number; zu: number } | null {
-  let bestVon = -1, bestZu = -1, bestDist = Infinity
-  for (const zu of remaining) {
-    const czu = graph.coordinates.get(zu)
-    if (!czu) continue
-    for (const von of treeNodes) {
-      const cvon = graph.coordinates.get(von)
-      if (!cvon) continue
-      const d = haversineDist(cvon, czu)
-      if (d < bestDist) { bestDist = d; bestVon = von; bestZu = zu }
-    }
-  }
-  return bestVon === -1 ? null : { von: bestVon, zu: bestZu }
+  nichtErreichbareNodeIds: number[]
 }
 
 // Steiner-Baum-Approximation via wiederholtem Multi-Source-Dijkstra.
@@ -54,32 +22,25 @@ export async function berechneSteinerBaum(
   // von einem einzelnen Punkt aus neu zu rechnen.
   const startSet = new Set(Array.isArray(startNodeIds) ? startNodeIds : [startNodeIds])
   const uniqueTerminals = [...new Set(terminalNodeIds)].filter((id) => !startSet.has(id))
-  if (uniqueTerminals.length === 0) return { pfade: [], gesamtLaengeMeter: 0, luftlinienAnzahl: 0 }
+  if (uniqueTerminals.length === 0) return { pfade: [], gesamtLaengeMeter: 0, nichtErreichbareNodeIds: [] }
 
   const treeNodes = new Set<number>(startSet)
   const usedEdges = new Set<string>() // normiert: "min_max"
   const remaining = new Set<number>(uniqueTerminals)
-  const luftlinien: Array<[number, number]> = []
   const total = remaining.size
   let done = 0
 
   while (remaining.size > 0) {
     const result = graph.dijkstraVomBaum(treeNodes, remaining)
 
-    if (!result) {
-      // Kein Terminal vom bisherigen Baum aus über Straßen erreichbar (getrennter
-      // Teilgraph). Statt abzubrechen: nächstliegendes Terminal per Luftlinie
-      // anbinden und als neuen Baum-Knoten weiterverwenden — dadurch werden oft
-      // weitere Terminals im selben, bisher isolierten Teilnetz mit erreichbar.
-      const verbindung = naechsteLuftlinienVerbindung(graph, treeNodes, remaining)
-      if (!verbindung) break // wirklich nichts mehr übrig (keine Koordinaten)
-      luftlinien.push([verbindung.von, verbindung.zu])
-      treeNodes.add(verbindung.zu)
-      remaining.delete(verbindung.zu)
-      done++
-      onProgress?.(Math.round((done / total) * 100))
-      continue
-    }
+    // Kein verbleibendes Terminal vom bisherigen Baum aus über das (Straßen-
+    // /Feldweg-)Netz erreichbar → der Rest liegt in einem getrennten
+    // Teilgraphen (z.B. Siedlung ohne öffentliche Wegeanbindung). Früher wurde
+    // hier automatisch eine geometrisch oft falsche Luftlinie gezogen — jetzt
+    // werden diese Terminals unverändert als "nicht erreichbar" zurückgegeben,
+    // der Aufrufer entscheidet (Markierung + Hinweis für den Nutzer statt
+    // stiller/falscher Verbindung).
+    if (!result) break
 
     for (let i = 0; i < result.path.length - 1; i++) {
       const a = result.path[i], b = result.path[i + 1]
@@ -100,15 +61,7 @@ export async function berechneSteinerBaum(
   }
 
   const ergebnis = kantenzuPfade(graph, usedEdges)
-  for (const [a, b] of luftlinien) {
-    const ca = graph.coordinates.get(a)
-    const cb = graph.coordinates.get(b)
-    if (ca && cb) {
-      ergebnis.pfade.push([ca, cb])
-      ergebnis.gesamtLaengeMeter += haversineDist(ca, cb)
-    }
-  }
-  return { ...ergebnis, luftlinienAnzahl: luftlinien.length }
+  return { ...ergebnis, nichtErreichbareNodeIds: [...remaining] }
 }
 
 // Wandelt die verwendeten Kanten (als Set normierter Strings) in LatLng-Pfade um.

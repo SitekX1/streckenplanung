@@ -124,6 +124,11 @@ export default function Home() {
   // sind. Nur damit weiß "Trasse erweitern", ob es wirklich neue (noch nicht
   // angebundene) Adressen/Orte gibt, statt einfach "hat noch keinen Hausanschluss".
   const [trasseAdressenUuids, setTrasseAdressenUuids] = useState<Set<string>>(new Set())
+  // Adressen, die beim letzten Generieren/Erweitern über kein öffentliches
+  // Wege-Netz (Straße/Feldweg) an den Baum angebunden werden konnten — werden
+  // NICHT mehr per Luftlinie zwangsverbunden, sondern hier zur manuellen
+  // Prüfung/Anbindung im Edit-Modus gesammelt (siehe MapView-Warnmodal).
+  const [nichtAngebundeneAdressen, setNichtAngebundeneAdressen] = useState<Address[]>([])
 
   const pushHistory = useCallback(() => {
     setHistory((prev) => [
@@ -194,6 +199,7 @@ export default function Home() {
         : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
 
     let pfade: LatLng[][] = []
+    setNichtAngebundeneAdressen([])
 
     try {
       setTrasseProgress(5)
@@ -201,7 +207,7 @@ export default function Home() {
       const osmNetz = await fetchOsmNetz(bounds)
       setTrasseProgress(18)
 
-      const graph = buildRoadGraph(osmNetz)
+      const graph = buildRoadGraph(osmNetz, gefilterteAdressen.map((a) => ({ lat: a.lat, lng: a.lon })))
       if (graph.coordinates.size === 0) throw new Error('Leerer Graph')
       setTrasseProgress(22)
 
@@ -220,15 +226,16 @@ export default function Home() {
 
       if (ergebnis.pfade.length === 0) throw new Error('Keine Pfade erzeugt')
       pfade = ergebnis.pfade
-      setTrasseMethode(
-        ergebnis.luftlinienAnzahl > 0
-          ? `OSM Straßennetz · ${pfade.length} Segmente · ⚠️ ${ergebnis.luftlinienAnzahl} Adresse(n) ohne Straßenanbindung per Luftlinie verbunden — bitte prüfen`
-          : `OSM Straßennetz · ${pfade.length} Segmente`
+      setTrasseMethode(`OSM Straßennetz · ${pfade.length} Segmente`)
+
+      const nichtErreichbar = new Set(ergebnis.nichtErreichbareNodeIds)
+      setNichtAngebundeneAdressen(
+        gefilterteAdressen.filter((a, i) => nichtErreichbar.has(terminalIds[i]))
       )
     } catch (err) {
       const fehlerText = err instanceof Error ? err.message : String(err)
       console.warn('Overpass nicht verfügbar, Mapbox-Baum:', fehlerText)
-      setTrasseMethode('Mapbox-Routing (Straßendaten werden geladen…)')
+      setTrasseMethode('Fallback: Overpass (OSM) nicht erreichbar — Mapbox-Routing wird geladen…')
       setTrasseProgress(3)
       try {
         pfade = await berechneBaumORS(
@@ -236,7 +243,7 @@ export default function Home() {
           gefilterteAdressen,
           (p) => setTrasseProgress(3 + Math.round(p * 0.95))
         )
-        setTrasseMethode('Mapbox-Baum — Straßen folgen ✓, Abzweige optimiert')
+        setTrasseMethode('Fallback: Overpass (OSM) war nicht erreichbar — Mapbox-Baum verwendet (Straßen folgen ✓, Abzweige optimiert)')
       } catch (orsErr) {
         const orsText = orsErr instanceof Error ? orsErr.message : String(orsErr)
         setTrasseMethode(`Fehler: ${orsText}`)
@@ -266,12 +273,13 @@ export default function Home() {
     )
 
     if (gefilterteNeue.length === 0) {
-      setTrasseMethode('Keine neuen Adressen für ausgewählte Orte')
+      setTrasseMethode('Hinweis: Keine neuen Adressen für ausgewählte Orte')
       return
     }
 
     pushHistory()
     setTrasseProgress(2)
+    setNichtAngebundeneAdressen([])
 
     let allePfade: LatLng[][] = vorhandenePfade
     let erfolgreich = false
@@ -284,7 +292,7 @@ export default function Home() {
       const osmNetz = await fetchOsmNetz(bounds)
       setTrasseProgress(18)
 
-      const graph = buildRoadGraph(osmNetz)
+      const graph = buildRoadGraph(osmNetz, gefilterteNeue.map((a) => ({ lat: a.lat, lng: a.lon })))
       if (graph.coordinates.size === 0) throw new Error('Leerer Graph')
       setTrasseProgress(22)
 
@@ -308,16 +316,17 @@ export default function Home() {
 
       if (ergebnis.pfade.length === 0) throw new Error('Keine neuen Pfade erzeugt')
       allePfade = deduplicatePfade([...vorhandenePfade, ...ergebnis.pfade])
-      setTrasseMethode(
-        ergebnis.luftlinienAnzahl > 0
-          ? `OSM Straßennetz Erweitert · ${allePfade.length} Segmente · ⚠️ ${ergebnis.luftlinienAnzahl} Adresse(n) ohne Straßenanbindung per Luftlinie verbunden — bitte prüfen`
-          : `OSM Straßennetz Erweitert · ${allePfade.length} Segmente`
+      setTrasseMethode(`OSM Straßennetz Erweitert · ${allePfade.length} Segmente`)
+
+      const nichtErreichbar = new Set(ergebnis.nichtErreichbareNodeIds)
+      setNichtAngebundeneAdressen(
+        gefilterteNeue.filter((a, i) => nichtErreichbar.has(terminalIds[i]))
       )
       erfolgreich = true
     } catch (err) {
       const fehlerText = err instanceof Error ? err.message : String(err)
       console.warn('Overpass nicht verfügbar, Mapbox-Erweiterung:', fehlerText)
-      setTrasseMethode('Mapbox-Routing (Erweiterung läuft…)')
+      setTrasseMethode('Fallback: Overpass (OSM) nicht erreichbar — Mapbox-Routing, Erweiterung läuft…')
       setTrasseProgress(3)
       try {
         const neuePfade = await berechneBaumORS(
@@ -327,7 +336,7 @@ export default function Home() {
           vorhandenePfade
         )
         allePfade = deduplicatePfade([...vorhandenePfade, ...neuePfade])
-        setTrasseMethode(`Mapbox-Baum Erweitert · ${allePfade.length} Segmente`)
+        setTrasseMethode(`Fallback: Overpass (OSM) war nicht erreichbar — Mapbox-Baum Erweitert · ${allePfade.length} Segmente`)
         erfolgreich = true
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -573,6 +582,7 @@ export default function Home() {
           trasseFarbe={trasseFarbe}
           hausanschlussfarbe={hausanschlussfarbe}
           trasseMethode={trasseMethode}
+          nichtAngebundeneAdressen={nichtAngebundeneAdressen}
           onStartpunktGesetzt={handleStartpunktGesetzt}
           onTrasseGeaendert={handleTrasseGeaendert}
           onTrassePfadeGeaendert={handleTrassePfadeGeaendert}

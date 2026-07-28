@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, memo, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   MapContainer, TileLayer, CircleMarker, Marker, Polyline,
   Tooltip, Popup, useMapEvents, useMap,
@@ -75,6 +75,7 @@ interface MapViewProps {
   trasseFarbe: string
   hausanschlussfarbe: string
   trasseMethode?: string
+  nichtAngebundeneAdressen?: Address[]
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][]) => void
@@ -165,6 +166,7 @@ type TileVariante = 'satellit' | 'osm'
 const MapView = memo(function MapView({
   adressen, startpunkt, startpunktSetzenAktiv, trasse, trassePfade, hausanschluesse,
   editierbarAktiv, aktiveOrteKeys, adressFarbe, trasseFarbe, hausanschlussfarbe, trasseMethode,
+  nichtAngebundeneAdressen = [],
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
@@ -177,6 +179,20 @@ const MapView = memo(function MapView({
   const [trasseSichtbar, setTrasseSichtbar] = useState(true)
   const [hausanschluesseSichtbar, setHausanschluesseSichtbar] = useState(true)
   const [adressenSichtbar, setAdressenSichtbar] = useState(true)
+  const [warnModalOffen, setWarnModalOffen] = useState(false)
+  // Referenz der zuletzt gesehenen Liste — erlaubt, das Warnmodal direkt beim
+  // Render zu öffnen sobald eine NEUE (andere Referenz) Liste ankommt, ohne
+  // dafür einen Effect mit setState-Kaskade zu brauchen.
+  const [vorherigeNichtAngebunden, setVorherigeNichtAngebunden] = useState(nichtAngebundeneAdressen)
+  if (nichtAngebundeneAdressen !== vorherigeNichtAngebunden) {
+    setVorherigeNichtAngebunden(nichtAngebundeneAdressen)
+    if (nichtAngebundeneAdressen.length > 0) setWarnModalOffen(true)
+  }
+
+  const nichtAngebundenUuids = useMemo(
+    () => new Set(nichtAngebundeneAdressen.map((a) => a.uuid)),
+    [nichtAngebundeneAdressen]
+  )
 
   // Lokale Arbeitskopie der Pfade im Edit-Modus
   const [localPfade, setLocalPfade] = useState<LatLng[][]>([])
@@ -824,13 +840,14 @@ const MapView = memo(function MapView({
         {adressenSichtbar && adressen.map((a) => {
           const aktiv = aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)
           const istHsStart = neuerHsStart?.adresseUuid === a.uuid
+          const istNichtAngebunden = nichtAngebundenUuids.has(a.uuid)
           return (
             <CircleMarker key={a.uuid} center={[a.lat, a.lon]}
-              radius={istHsStart ? 9 : aktiv ? 6 : 4}
+              radius={istNichtAngebunden ? 9 : istHsStart ? 9 : aktiv ? 6 : 4}
               pathOptions={{
-                fillColor: istHsStart ? '#fbbf24' : aktiv ? adressFarbe : '#6b7280',
-                color: istHsStart ? '#f59e0b' : aktiv ? adressFarbe : '#4b5563',
-                weight: istHsStart ? 3 : 1.5, fillOpacity: aktiv ? 0.85 : 0.3,
+                fillColor: istNichtAngebunden ? '#ef4444' : istHsStart ? '#fbbf24' : aktiv ? adressFarbe : '#6b7280',
+                color: istNichtAngebunden ? '#fca5a5' : istHsStart ? '#f59e0b' : aktiv ? adressFarbe : '#4b5563',
+                weight: istNichtAngebunden ? 3 : istHsStart ? 3 : 1.5, fillOpacity: istNichtAngebunden ? 0.95 : aktiv ? 0.85 : 0.3,
               }}
               eventHandlers={editierbarAktiv ? {
                 click: (e) => {
@@ -858,6 +875,11 @@ const MapView = memo(function MapView({
                     <p>{a.plz} {a.ortsname}</p>
                     {a.ortsteil && <p className="text-gray-500">{a.ortsteil}</p>}
                     <p className="mt-1 text-blue-600">Haushalte: {a.hh}</p>
+                    {istNichtAngebunden && (
+                      <p className="mt-1 font-medium" style={{ color: '#dc2626' }}>
+                        ⚠️ Nicht angebunden — kein öffentlicher Weg gefunden
+                      </p>
+                    )}
                   </div>
                 </Popup>
               )}
@@ -940,20 +962,63 @@ const MapView = memo(function MapView({
       )}
 
       {trasseMethode && !editierbarAktiv && (() => {
+        // Reihenfolge wichtig: erst eindeutige Präfixe prüfen, erst danach
+        // auf "sonst = Erfolg" schließen — sonst rutschen Fallback-/Hinweis-
+        // Meldungen fälschlich in den Erfolgs-Zweig (Grün trotz Fallback).
         const istFehler = trasseMethode.startsWith('Fehler') || trasseMethode.startsWith('Erweiterung fehlgeschlagen')
-        const istWarnung = !istFehler && trasseMethode.includes('⚠️')
-        const istErfolg = !istFehler && !istWarnung && (trasseMethode.includes('Erweitert') || trasseMethode.startsWith('Mapbox'))
-        const farbe = istFehler ? '#f87171' : istWarnung ? '#fbbf24' : istErfolg ? '#4ade80' : '#fbbf24'
-        const rand = istFehler ? '#dc2626' : istWarnung ? '#d97706' : istErfolg ? '#16a34a' : '#d97706'
+        const istFallback = !istFehler && trasseMethode.startsWith('Fallback:')
+        const istHinweis = !istFehler && !istFallback && trasseMethode.startsWith('Hinweis:')
+
+        const farbe = istFehler ? '#f87171' : istFallback ? '#93c5fd' : istHinweis ? '#9ca3af' : '#4ade80'
+        const rand = istFehler ? '#dc2626' : istFallback ? '#2563eb' : istHinweis ? '#4b5563' : '#16a34a'
+        const icon = istFehler ? '❌' : istFallback ? '🔁' : istHinweis ? 'ℹ️' : '✅'
+
         return (
           <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg max-w-xs"
             style={{ backgroundColor: '#1a1a1a', color: farbe, border: `1px solid ${rand}` }}>
-            {istFehler ? '❌' : istWarnung ? '⚠️' : '✅'} {trasseMethode.replace('⚠️ ', '')}
+            {icon} {trasseMethode}
             {istFehler && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
-            {istWarnung && <div style={{ marginTop: 4, color: '#fde68a' }}>Per Luftlinie angebundene Adressen im Edit-Modus prüfen/korrigieren</div>}
+            {istFallback && <div style={{ marginTop: 4, color: '#bfdbfe' }}>Weniger präzise als OSM-Routing — bei Gelegenheit erneut versuchen</div>}
           </div>
         )
       })()}
+
+      {nichtAngebundeneAdressen.length > 0 && warnModalOffen && (
+        <div className="absolute inset-0 z-1000 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="rounded-lg shadow-lg p-4" style={{ backgroundColor: '#1a1a1a', border: '1px solid #dc2626', width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-semibold" style={{ color: '#f87171' }}>
+                ⚠️ {nichtAngebundeneAdressen.length} Adresse(n) nicht angebunden
+              </span>
+              <button onClick={() => setWarnModalOffen(false)}
+                className="text-xs px-2 py-1 rounded" style={{ color: '#9ca3af' }}>✕</button>
+            </div>
+            <p className="text-xs mb-2" style={{ color: '#d1d5db' }}>
+              Kein öffentlicher Weg (Straße/Feldweg) im OSM-Netz gefunden — bitte im Edit-Modus manuell anbinden.
+            </p>
+            <div className="overflow-y-auto" style={{ flex: 1 }}>
+              {nichtAngebundeneAdressen.map((a) => (
+                <div key={a.uuid} className="flex items-center justify-between text-xs py-1.5"
+                  style={{ borderBottom: '1px solid #374151', color: '#f9fafb' }}>
+                  <span>{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}, {a.ortsname}</span>
+                  <button
+                    onClick={() => { setFlugZiel({ lat: a.lat, lng: a.lon }); setWarnModalOffen(false) }}
+                    className="ml-2 px-2 py-1 rounded text-xs font-medium shrink-0"
+                    style={{ backgroundColor: '#dc2626', color: '#fff' }}>
+                    📍 Zur Adresse
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setWarnModalOffen(false)}
+              className="mt-3 px-3 py-1.5 rounded-lg text-xs font-medium"
+              style={{ backgroundColor: '#374151', color: '#f9fafb', border: 'none' }}>
+              Schließen
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Kontextmenü */}
       {editierbarAktiv && aktivMenu && !imZeichenModus && (
