@@ -195,6 +195,38 @@ function partitioniere(
   ]
 }
 
+// Die Top-down-Aufteilung schneidet an geografischen Extrempunkten (Durchmesser)
+// und kann dadurch unnötig viele, halbleere Zonen erzeugen (z.B. 22/96 und
+// 62/96 direkt nebeneinander, obwohl beide zusammen locker in einen einzigen
+// 120er passen würden). Dieser Nachlauf prüft nachträglich jedes Zonen-Paar:
+// passt die Vereinigung in die größte erlaubte Kapazität UND bleibt dabei
+// innerhalb des Distanzlimits, werden die beiden zu einer Zone verschmolzen.
+// Wiederholt, bis keine Verschmelzung mehr möglich ist — reduziert die
+// NVT-Anzahl auf das tatsächlich nötige Minimum, ohne die Regeln zu verletzen.
+function legeZusammen(
+  graph: Map<string, Knoten>,
+  zonen: Zone[],
+  maxKapazitaet: number,
+  distanzLimitMeter: number
+): Zone[] {
+  let ergebnis = zonen
+  let geaendert = true
+  while (geaendert) {
+    geaendert = false
+    for (let i = 0; i < ergebnis.length && !geaendert; i++) {
+      for (let j = i + 1; j < ergebnis.length && !geaendert; j++) {
+        const kombiniert = [...ergebnis[i].terminals, ...ergebnis[j].terminals]
+        if (kombiniert.length > maxKapazitaet) continue
+        const zone = findeZentrum(graph, kombiniert)
+        if (zone.maxDist > distanzLimitMeter) continue
+        ergebnis = [...ergebnis.slice(0, i), zone, ...ergebnis.slice(i + 1, j), ...ergebnis.slice(j + 1)]
+        geaendert = true
+      }
+    }
+  }
+  return ergebnis
+}
+
 // Platziert NVT-Standorte zentral im versorgten Gebiet: für jedes Dorf/jede
 // Auswahl möglichst wenige Standorte, die jeweils eine geografisch
 // zusammenhängende Zone bedienen (kein Verteilen einzelner Standorte entlang
@@ -238,7 +270,8 @@ export function berechneNvtStandorte(
     else nichtErreichbar.push(hausId)
   }
 
-  const zonen = partitioniere(graph, terminals, maxKapazitaet, distanzLimitMeter)
+  const rohZonen = partitioniere(graph, terminals, maxKapazitaet, distanzLimitMeter)
+  const zonen = legeZusammen(graph, rohZonen, maxKapazitaet, distanzLimitMeter)
 
   const standorte: NvtStandort[] = zonen.map((zone) => ({
     position: graph.get(zone.zentrum)!.coord,
