@@ -1009,7 +1009,7 @@ const MapView = memo(function MapView({
           <Marker key={`nvt-${i}`} position={[nvt.position.lat, nvt.position.lng]} icon={nvtIcon}
             eventHandlers={{
               click: (e) => {
-                L.DomEvent.stopPropagation(e)
+                if (e.originalEvent) e.originalEvent.stopPropagation()
                 setAusgewaehltesNvtIdx((prev) => (prev === i ? null : i))
               },
             }}>
