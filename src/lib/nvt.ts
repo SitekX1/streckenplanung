@@ -74,40 +74,6 @@ function dijkstraVon(graph: Map<string, Knoten>, start: string): { dist: Map<str
   return { dist, prev }
 }
 
-function dijkstraMultiQuelle(graph: Map<string, Knoten>, quellen: string[]): Map<string, number> {
-  const dist = new Map<string, number>()
-  for (const q of quellen) dist.set(q, 0)
-  const visited = new Set<string>()
-  while (true) {
-    let u: string | null = null
-    let ud = Infinity
-    for (const [k, d] of dist) { if (!visited.has(k) && d < ud) { u = k; ud = d } }
-    if (u === null) break
-    visited.add(u)
-    for (const { zu, dist: d } of graph.get(u)?.nachbarn ?? []) {
-      const nd = ud + d
-      if (!dist.has(zu) || nd < dist.get(zu)!) dist.set(zu, nd)
-    }
-  }
-  return dist
-}
-
-// Zählt, wie viele der (noch unversorgten) Terminals innerhalb distanzLimitMeter
-// von "von" liegen — und liefert gleich deren Hausstich-IDs mit.
-function reichweite(
-  graph: Map<string, Knoten>,
-  von: string,
-  unversorgt: Map<string, string>,
-  distanzLimitMeter: number
-): string[] {
-  const { dist } = dijkstraVon(graph, von)
-  const erreichte: string[] = []
-  for (const [hausId, knoten] of unversorgt) {
-    if ((dist.get(knoten) ?? Infinity) <= distanzLimitMeter) erreichte.push(hausId)
-  }
-  return erreichte
-}
-
 export interface NvtErgebnis {
   standorte: NvtStandort[]
   // Hausstich-IDs, die in keinem gemeinsamen Netzteilstück mit dem Startpunkt
@@ -116,30 +82,127 @@ export interface NvtErgebnis {
   nichtErreichbar: string[]
 }
 
-// Platziert NVT-Standorte auf dem Trassen-Baum, sodass kein Hausanschluss (aus
-// hausanschluesse) weiter als distanzLimitMeter (entlang der Leitung, nicht
-// Luftlinie) von seinem NVT entfernt ist UND kein NVT mehr Hausanschlüsse
-// trägt, als seine Kapazität zulässt. Aussiedlerhöfe sollen VOR dem Aufruf
-// bereits aus hausanschluesse herausgefiltert sein (siehe page.tsx) — die
-// Abstandsregel gilt für sie explizit nicht.
-//
-// WICHTIG: In der Praxis stehen nie zwei NVT nebeneinander am selben
-// Standort — bei zu hoher Verdichtung wird stattdessen die Fläche geografisch
-// aufgeteilt (jeder Standort bedient eine eigene, klar abgegrenzte Zone).
-// "Cover-and-remove"-Greedy:
-// 1. Nimm den am weitesten von jedem bisherigen Standort entfernten (noch
-//    unversorgten) Hausanschluss.
-// 2. Laufe von dort den (eindeutigen, da Baum) Pfad Richtung Startpunkt, so
-//    weit wie möglich, ohne distanzLimitMeter zu überschreiten.
-// 3. Zähle an diesem Punkt, wie viele unversorgte Hausanschlüsse insgesamt in
-//    Reichweite liegen (nicht nur der eine) — das ist die natürliche Zonengröße.
-// 4. Wähle die kleinste erlaubte Kapazität, die diese Zonengröße noch fasst;
-//    reicht selbst die größte nicht, wird der Standort so weit Richtung
-//    Hausanschluss zurückgeschoben, bis die Zone in die größte erlaubte
-//    Kapazität passt — das verkleinert die Zone geografisch, statt eine
-//    zweite Box an denselben Punkt zu stellen.
-// 5. Alle so versorgten Hausanschlüsse werden aus dem "unversorgt"-Topf
-//    entfernt, weiter mit dem nächsten am weitesten entfernten Rest.
+interface Terminal { hausId: string; knoten: string }
+interface Zone { zentrum: string; terminals: Terminal[]; maxDist: number }
+
+// Findet die zwei Terminals, die im Baum am weitesten voneinander entfernt
+// liegen ("Durchmesser" der von den Terminals aufgespannten Teilfläche) —
+// Standardtrick: von einem beliebigen Terminal aus das am weitesten entfernte
+// suchen (= ein Durchmesser-Ende), von dort erneut das am weitesten entfernte
+// suchen (= das andere Ende).
+function durchmesserEndpunkte(graph: Map<string, Knoten>, terminals: Terminal[]): [Terminal, Terminal] {
+  const irgendeins = terminals[0]
+  const { dist: distVonIrgendeinem } = dijkstraVon(graph, irgendeins.knoten)
+  let a = irgendeins
+  let bestDist = -1
+  for (const t of terminals) {
+    const d = distVonIrgendeinem.get(t.knoten) ?? -1
+    if (d > bestDist) { bestDist = d; a = t }
+  }
+  const { dist: distVonA } = dijkstraVon(graph, a.knoten)
+  let b = a
+  bestDist = -1
+  for (const t of terminals) {
+    const d = distVonA.get(t.knoten) ?? -1
+    if (d > bestDist) { bestDist = d; b = t }
+  }
+  return [a, b]
+}
+
+// Zentraler Standort für eine Gruppe von Terminals: der Mittelpunkt (nach
+// Streckenlänge) auf dem eindeutigen Baum-Pfad zwischen den beiden am
+// weitesten auseinanderliegenden Terminals. Das ist der klassische "Baum-
+// Zentrum"-Algorithmus — minimiert die maximale Distanz zu jedem Terminal in
+// der Gruppe, nicht nur zu den beiden Endpunkten.
+function findeZentrum(graph: Map<string, Knoten>, terminals: Terminal[]): Zone {
+  if (terminals.length === 1) {
+    return { zentrum: terminals[0].knoten, terminals, maxDist: 0 }
+  }
+  const [a, b] = durchmesserEndpunkte(graph, terminals)
+  const { dist: distVonA, prev } = dijkstraVon(graph, a.knoten)
+  const pfad: string[] = [b.knoten]
+  let cur = b.knoten
+  while (prev.has(cur)) { cur = prev.get(cur)!; pfad.push(cur) }
+  pfad.reverse() // a.knoten -> ... -> b.knoten
+
+  const gesamtLaenge = distVonA.get(b.knoten) ?? 0
+  const halbeLaenge = gesamtLaenge / 2
+
+  let kumuliert = 0
+  let zentrum = pfad[0]
+  for (let i = 0; i < pfad.length - 1; i++) {
+    const kante = graph.get(pfad[i])!.nachbarn.find((n) => n.zu === pfad[i + 1])
+    const naechsteKumuliert = kumuliert + (kante?.dist ?? 0)
+    // Am Knoten stehen bleiben, der der Mitte am nächsten ist
+    if (Math.abs(kumuliert - halbeLaenge) <= Math.abs(naechsteKumuliert - halbeLaenge)) {
+      zentrum = pfad[i]
+      break
+    }
+    kumuliert = naechsteKumuliert
+    zentrum = pfad[i + 1]
+  }
+
+  const { dist: distVonZentrum } = dijkstraVon(graph, zentrum)
+  let maxDist = 0
+  for (const t of terminals) {
+    maxDist = Math.max(maxDist, distVonZentrum.get(t.knoten) ?? Infinity)
+  }
+  return { zentrum, terminals, maxDist }
+}
+
+// Teilt eine Terminal-Gruppe in zwei geografisch getrennte Hälften — "einmal
+// zentral links, einmal zentral rechts" wie in der Praxis. Jedes Terminal
+// geht zu der Seite (Durchmesser-Ende), zu der es näher liegt.
+function teileAuf(graph: Map<string, Knoten>, terminals: Terminal[]): [Terminal[], Terminal[]] {
+  const [a, b] = durchmesserEndpunkte(graph, terminals)
+  const { dist: distA } = dijkstraVon(graph, a.knoten)
+  const { dist: distB } = dijkstraVon(graph, b.knoten)
+  const links = terminals.filter((t) => (distA.get(t.knoten) ?? Infinity) <= (distB.get(t.knoten) ?? Infinity))
+  const rechts = terminals.filter((t) => !links.includes(t))
+  if (links.length === 0 || rechts.length === 0) {
+    // Sicherheitsnetz (z.B. alle Terminals zufällig näher an a): nach Distanz
+    // zu a sortiert stur in der Mitte teilen, damit garantiert Fortschritt
+    // entsteht statt einer Endlosschleife.
+    const sortiert = [...terminals].sort((x, y) => (distA.get(x.knoten) ?? 0) - (distA.get(y.knoten) ?? 0))
+    const mitte = Math.ceil(sortiert.length / 2)
+    return [sortiert.slice(0, mitte), sortiert.slice(mitte)]
+  }
+  return [links, rechts]
+}
+
+// Teilt eine Terminal-Gruppe rekursiv in möglichst wenige, geografisch
+// zentrale Zonen auf — "zentral links, zentral rechts" statt vieler kleiner,
+// distanzgetrieben verteilter Standorte. Ein neuer Standort wird nur dann
+// zusätzlich nötig, wenn entweder die Kapazität nicht reicht ODER die Gruppe
+// trotz passender Kapazität geografisch zu weit auseinanderliegt.
+function partitioniere(
+  graph: Map<string, Knoten>,
+  terminals: Terminal[],
+  maxKapazitaet: number,
+  distanzLimitMeter: number
+): Zone[] {
+  if (terminals.length === 0) return []
+
+  if (terminals.length <= maxKapazitaet) {
+    const zone = findeZentrum(graph, terminals)
+    if (zone.maxDist <= distanzLimitMeter) return [zone]
+  }
+
+  const [links, rechts] = teileAuf(graph, terminals)
+  return [
+    ...partitioniere(graph, links, maxKapazitaet, distanzLimitMeter),
+    ...partitioniere(graph, rechts, maxKapazitaet, distanzLimitMeter),
+  ]
+}
+
+// Platziert NVT-Standorte zentral im versorgten Gebiet: für jedes Dorf/jede
+// Auswahl möglichst wenige Standorte, die jeweils eine geografisch
+// zusammenhängende Zone bedienen (kein Verteilen einzelner Standorte entlang
+// des Rückwegs zum Startpunkt der Gesamttrasse — der Startpunkt ist für die
+// NVT-Lage irrelevant, er wird nur zur Erreichbarkeitsprüfung genutzt).
+// Aussiedlerhöfe sollen VOR dem Aufruf bereits aus hausanschluesse
+// herausgefiltert sein (siehe page.tsx) — die Abstandsregel gilt für sie
+// explizit nicht.
 export function berechneNvtStandorte(
   trassePfade: LatLng[][],
   hausanschluesse: Hausstich[],
@@ -169,73 +232,19 @@ export function berechneNvtStandorte(
   // z.B. bei Luftlinien-Verbindungen oder Dorf-Inseln ohne durchgehende Trasse)
   const { dist: distVomStart } = dijkstraVon(graph, startKnoten)
   const nichtErreichbar: string[] = []
-  const unversorgt = new Map<string, string>()
+  const terminals: Terminal[] = []
   for (const [hausId, knoten] of terminalKnoten) {
-    if (distVomStart.has(knoten)) unversorgt.set(hausId, knoten)
+    if (distVomStart.has(knoten)) terminals.push({ hausId, knoten })
     else nichtErreichbar.push(hausId)
   }
 
-  const ergebnisStandorte: NvtStandort[] = []
-  const standortKnoten: string[] = []
-  const maxIterationen = unversorgt.size + 1
+  const zonen = partitioniere(graph, terminals, maxKapazitaet, distanzLimitMeter)
 
-  for (let iter = 0; iter < maxIterationen && unversorgt.size > 0; iter++) {
-    const abdeckung = dijkstraMultiQuelle(graph, standortKnoten)
+  const standorte: NvtStandort[] = zonen.map((zone) => ({
+    position: graph.get(zone.zentrum)!.coord,
+    kapazitaet: kapazitaetenAufsteigend.find((k) => k >= zone.terminals.length) ?? maxKapazitaet,
+    belegung: zone.terminals.length,
+  }))
 
-    let schlechtesterHausId: string | null = null
-    let schlechtesterKnoten: string | null = null
-    let schlechtesteDist = -1
-    for (const [hausId, knoten] of unversorgt) {
-      const d = abdeckung.get(knoten) ?? Infinity
-      if (d > schlechtesteDist) { schlechtesteDist = d; schlechtesterHausId = hausId; schlechtesterKnoten = knoten }
-    }
-    if (schlechtesterKnoten === null) break
-    // Bereits alle innerhalb des Limits vom bisherigen Baum aus versorgt? Dann
-    // fehlt nur noch der Fall "gar keine Standorte, aber alles schon nah am
-    // Start" — regulär trotzdem einen ersten Standort setzen, siehe unten.
-    if (standortKnoten.length > 0 && schlechtesteDist <= distanzLimitMeter) break
-
-    // Eindeutiger Baum-Pfad vom schlechtesten Hausanschluss zurück zum Startpunkt
-    const { prev } = dijkstraVon(graph, schlechtesterKnoten)
-    const pfad: string[] = [schlechtesterKnoten]
-    let cur = schlechtesterKnoten
-    while (prev.has(cur)) { cur = prev.get(cur)!; pfad.push(cur) }
-    // pfad[0] = Hausanschluss-Knoten, pfad[letztes] = Startpunkt-Knoten
-
-    // So weit wie möglich (max. distanzLimitMeter) vom Hausanschluss weg laufen.
-    let kumuliert = 0
-    let weitesterIdx = 0
-    for (let i = 0; i < pfad.length - 1; i++) {
-      const kante = graph.get(pfad[i])!.nachbarn.find((n) => n.zu === pfad[i + 1])
-      const kantenLaenge = kante?.dist ?? 0
-      if (kumuliert + kantenLaenge > distanzLimitMeter) break
-      kumuliert += kantenLaenge
-      weitesterIdx = i + 1
-    }
-
-    // Natürliche Zonengröße am weitesten entfernten gültigen Punkt ermitteln,
-    // dann bei Bedarf Richtung Hausanschluss zurückschieben, bis die Zone in
-    // die größte erlaubte Kapazität passt (statt zwei Standorte übereinander).
-    let standortIdx = weitesterIdx
-    let versorgteIds = reichweite(graph, pfad[standortIdx], unversorgt, distanzLimitMeter)
-    while (versorgteIds.length > maxKapazitaet && standortIdx > 0) {
-      standortIdx--
-      versorgteIds = reichweite(graph, pfad[standortIdx], unversorgt, distanzLimitMeter)
-    }
-    // Absicherung gegen einen pathologischen Fall (extrem viele Hausanschlüsse
-    // exakt am selben Punkt): harte Kappung, damit die Schleife terminiert.
-    if (versorgteIds.length > maxKapazitaet) {
-      versorgteIds = versorgteIds.slice(0, maxKapazitaet)
-    }
-    if (!versorgteIds.includes(schlechtesterHausId!)) versorgteIds.push(schlechtesterHausId!)
-
-    const kapazitaet = kapazitaetenAufsteigend.find((k) => k >= versorgteIds.length) ?? maxKapazitaet
-    const standortKnotenId = pfad[standortIdx]
-
-    ergebnisStandorte.push({ position: graph.get(standortKnotenId)!.coord, kapazitaet, belegung: versorgteIds.length })
-    standortKnoten.push(standortKnotenId)
-    for (const id of versorgteIds) unversorgt.delete(id)
-  }
-
-  return { standorte: ergebnisStandorte, nichtErreichbar }
+  return { standorte, nichtErreichbar }
 }
