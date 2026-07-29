@@ -546,7 +546,7 @@ export default function Home() {
     setNvtModalOffen(true)
   }, [])
 
-  const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number, kapazitaet: number) => {
+  const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[]) => {
     if (!startpunkt || ausgewaehlteOrteKeys.length === 0) return
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (pfade.length === 0) return
@@ -561,7 +561,7 @@ export default function Home() {
       (h) => adressUuidsImDorf.has(h.addressUuid) && !aussiedlerhofUuids.has(h.addressUuid)
     )
 
-    const ergebnis = berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter, kapazitaet)
+    const ergebnis = berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter, erlaubteKapazitaeten)
     setNvtStandorte((prev) => [...prev, ...ergebnis.standorte])
     if (ergebnis.nichtErreichbar.length > 0) {
       console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
