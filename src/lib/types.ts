@@ -48,4 +48,7 @@ export interface Projekt {
   // Straße/Feldweg-Klassifizierung parallel zu trassePfade (gleicher Index =
   // gleiches Segment). Fehlt bei älteren Projekten → dann überall 'paved'.
   trassePfadeKinds?: WegKind[]
+  // NVT-Feature (nur dev-Branch)
+  nvtStandorte?: LatLng[]
+  aussiedlerhofUuids?: string[]
 }

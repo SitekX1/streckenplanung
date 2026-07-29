@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic'
 import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
+import NVTModal from '../components/NVTModal'
 import { Address, LatLng, Hausstich, OrtInfo, WegKind } from '../lib/types'
 import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
@@ -12,6 +13,7 @@ import { berechneBaumORS } from '../lib/baumOrs'
 import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse'
 import { exportKML } from '../lib/kmlExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
+import { berechneNvtStandorte } from '../lib/nvt'
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false })
 
@@ -165,6 +167,12 @@ export default function Home() {
   // reinen Punktverschiebungen im Edit-Modus erhalten und kann dort zusätzlich
   // manuell pro Segment umgeschaltet werden ("Als Feldweg markieren").
   const [trassePfadeKinds, setTrassePfadeKinds] = useState<WegKind[]>([])
+  // NVT-Feature (Netzverteiler-Standorte je Dorf, Abstandsregel zu
+  // Hausanschlüssen) — aktuell nur auf dem dev-Branch.
+  const [aussiedlerhofUuids, setAussiedlerhofUuids] = useState<Set<string>>(new Set())
+  const [aussiedlerhofMarkierenAktiv, setAussiedlerhofMarkierenAktiv] = useState(false)
+  const [nvtModalOffen, setNvtModalOffen] = useState(false)
+  const [nvtStandorte, setNvtStandorte] = useState<LatLng[]>([])
 
   const pushHistory = useCallback(() => {
     setHistory((prev) => [
@@ -513,7 +521,53 @@ export default function Home() {
     setTrasseAdressenUuids(new Set())
     setNichtAngebundeneAdressen([])
     setTrassePfadeKinds([])
+    setAussiedlerhofUuids(new Set())
+    setAussiedlerhofMarkierenAktiv(false)
+    setNvtModalOffen(false)
+    setNvtStandorte([])
   }, [])
+
+  const handleAussiedlerhofToggle = useCallback((uuid: string) => {
+    setAussiedlerhofUuids((prev) => {
+      const neu = new Set(prev)
+      if (neu.has(uuid)) neu.delete(uuid)
+      else neu.add(uuid)
+      return neu
+    })
+  }, [])
+
+  const handleAussiedlerhoefeMarkierenStart = useCallback(() => {
+    setNvtModalOffen(false)
+    setAussiedlerhofMarkierenAktiv(true)
+  }, [])
+
+  const handleAussiedlerhoefeMarkierenFertig = useCallback(() => {
+    setAussiedlerhofMarkierenAktiv(false)
+    setNvtModalOffen(true)
+  }, [])
+
+  const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number) => {
+    if (!startpunkt || ausgewaehlteOrteKeys.length === 0) return
+    const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
+    if (pfade.length === 0) return
+
+    const orteSet = new Set(ausgewaehlteOrteKeys)
+    const adressUuidsImDorf = new Set(
+      adressen
+        .filter((a) => orteSet.has(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
+        .map((a) => a.uuid)
+    )
+    const relevanteHausanschluesse = hausanschluesse.filter(
+      (h) => adressUuidsImDorf.has(h.addressUuid) && !aussiedlerhofUuids.has(h.addressUuid)
+    )
+
+    const ergebnis = berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter)
+    setNvtStandorte((prev) => [...prev, ...ergebnis.standorte])
+    if (ergebnis.nichtErreichbar.length > 0) {
+      console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
+    }
+    setNvtModalOffen(false)
+  }, [startpunkt, trassePfade, trasse, adressen, hausanschluesse, aussiedlerhofUuids])
 
   const handleKMLExport = useCallback(() => {
     exportKML({
@@ -541,8 +595,10 @@ export default function Home() {
       trassenLaengeMeter: laengen.trassenLaenge,
       hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
       trassePfadeKinds: trassePfadeKinds.length > 0 ? trassePfadeKinds : undefined,
+      nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
+      aussiedlerhofUuids: aussiedlerhofUuids.size > 0 ? [...aussiedlerhofUuids] : undefined,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids])
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
@@ -570,6 +626,10 @@ export default function Home() {
     const orteListe = extractOrte(projekt.adressen)
     setOrte(orteListe)
     setAktiveOrteKeys(orteListe.map((o) => o.key))
+    setNvtStandorte(projekt.nvtStandorte ?? [])
+    setAussiedlerhofUuids(new Set(projekt.aussiedlerhofUuids ?? []))
+    setAussiedlerhofMarkierenAktiv(false)
+    setNvtModalOffen(false)
   }, [])
 
   const gefilterteAdressenAnzahl =
@@ -622,6 +682,8 @@ export default function Home() {
         feldwegFarbe={feldwegFarbe}
         canUndo={history.length > 0}
         undoCount={history.length}
+        nvtStandorteAnzahl={nvtStandorte.length}
+        onNvtButtonKlick={() => setNvtModalOffen(true)}
         onAdressFarbeAendern={setAdressFarbe}
         onTrasseFarbeAendern={setTrasseFarbe}
         onHausanschlussFarbeAendern={setHausanschlussfarbe}
@@ -659,11 +721,26 @@ export default function Home() {
           trassePfadeKinds={trassePfadeKinds}
           trasseMethode={trasseMethode}
           nichtAngebundeneAdressen={nichtAngebundeneAdressen}
+          aussiedlerhofUuids={aussiedlerhofUuids}
+          aussiedlerhofMarkierenAktiv={aussiedlerhofMarkierenAktiv}
+          nvtStandorte={nvtStandorte}
           onStartpunktGesetzt={handleStartpunktGesetzt}
           onTrasseGeaendert={handleTrasseGeaendert}
           onTrassePfadeGeaendert={handleTrassePfadeGeaendert}
           onHausanschluesseGeaendert={handleHausanschluesseGeaendert}
+          onAussiedlerhofToggle={handleAussiedlerhofToggle}
+          onAussiedlerhofMarkierenFertig={handleAussiedlerhoefeMarkierenFertig}
         />
+        {nvtModalOffen && (
+          <NVTModal
+            orte={orte}
+            aussiedlerhofAnzahl={aussiedlerhofUuids.size}
+            nvtVorhandenAnzahl={nvtStandorte.length}
+            onAussiedlerhoefeMarkieren={handleAussiedlerhoefeMarkierenStart}
+            onGenerieren={handleNvtGenerieren}
+            onClose={() => setNvtModalOffen(false)}
+          />
+        )}
       </main>
     </div>
   )

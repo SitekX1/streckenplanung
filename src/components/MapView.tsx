@@ -42,6 +42,11 @@ const hsTrasseIcon = new L.DivIcon({
   html: '<div style="width:11px;height:11px;background:#a855f7;border:2px solid white;border-radius:50%;cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,0.7)"></div>',
   iconSize: [11, 11], iconAnchor: [5, 5],
 })
+const nvtIcon = new L.DivIcon({
+  className: '',
+  html: '<div style="width:16px;height:16px;background:#7c3aed;border:2px solid white;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.8)"></div>',
+  iconSize: [16, 16], iconAnchor: [8, 8], popupAnchor: [0, -10],
+})
 
 function berechneLinieLaenge(wp: LatLng[]): number {
   let total = 0
@@ -78,10 +83,15 @@ interface MapViewProps {
   trassePfadeKinds: WegKind[]
   trasseMethode?: string
   nichtAngebundeneAdressen?: Address[]
+  aussiedlerhofUuids?: Set<string>
+  aussiedlerhofMarkierenAktiv?: boolean
+  nvtStandorte?: LatLng[]
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][], kinds: WegKind[]) => void
   onHausanschluesseGeaendert: (updated: Hausstich[]) => void
+  onAussiedlerhofToggle?: (uuid: string) => void
+  onAussiedlerhofMarkierenFertig?: () => void
 }
 
 function KlickHandler({
@@ -170,7 +180,9 @@ const MapView = memo(function MapView({
   editierbarAktiv, aktiveOrteKeys, adressFarbe, trasseFarbe, hausanschlussfarbe, trasseMethode,
   feldwegFarbe, trassePfadeKinds,
   nichtAngebundeneAdressen = [],
+  aussiedlerhofUuids = new Set(), aussiedlerhofMarkierenAktiv = false, nvtStandorte = [],
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
+  onAussiedlerhofToggle, onAussiedlerhofMarkierenFertig,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -927,15 +939,22 @@ const MapView = memo(function MapView({
           const aktiv = aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)
           const istHsStart = neuerHsStart?.adresseUuid === a.uuid
           const istNichtAngebunden = nichtAngebundenUuids.has(a.uuid)
+          const istAussiedlerhof = aussiedlerhofUuids.has(a.uuid)
           return (
             <CircleMarker key={a.uuid} center={[a.lat, a.lon]}
-              radius={istNichtAngebunden ? 9 : istHsStart ? 9 : aktiv ? 6 : 4}
+              radius={istAussiedlerhof ? 9 : istNichtAngebunden ? 9 : istHsStart ? 9 : aktiv ? 6 : 4}
               pathOptions={{
-                fillColor: istNichtAngebunden ? '#ef4444' : istHsStart ? '#fbbf24' : aktiv ? adressFarbe : '#6b7280',
-                color: istNichtAngebunden ? '#fca5a5' : istHsStart ? '#f59e0b' : aktiv ? adressFarbe : '#4b5563',
-                weight: istNichtAngebunden ? 3 : istHsStart ? 3 : 1.5, fillOpacity: istNichtAngebunden ? 0.95 : aktiv ? 0.85 : 0.3,
+                fillColor: istAussiedlerhof ? '#a16207' : istNichtAngebunden ? '#ef4444' : istHsStart ? '#fbbf24' : aktiv ? adressFarbe : '#6b7280',
+                color: istAussiedlerhof ? '#fcd34d' : istNichtAngebunden ? '#fca5a5' : istHsStart ? '#f59e0b' : aktiv ? adressFarbe : '#4b5563',
+                weight: istAussiedlerhof ? 3 : istNichtAngebunden ? 3 : istHsStart ? 3 : 1.5,
+                fillOpacity: istAussiedlerhof ? 0.95 : istNichtAngebunden ? 0.95 : aktiv ? 0.85 : 0.3,
               }}
-              eventHandlers={editierbarAktiv ? {
+              eventHandlers={aussiedlerhofMarkierenAktiv ? {
+                click: (e) => {
+                  L.DomEvent.stopPropagation(e)
+                  onAussiedlerhofToggle?.(a.uuid)
+                },
+              } : editierbarAktiv ? {
                 click: (e) => {
                   L.DomEvent.stopPropagation(e)
                   if (ziehStartId) { handleZiehZiel({ lat: a.lat, lng: a.lon }); return }
@@ -953,8 +972,8 @@ const MapView = memo(function MapView({
                   ])
                 },
               } : {}}>
-              <Tooltip>{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}, {a.ortsname}</Tooltip>
-              {!editierbarAktiv && (
+              <Tooltip>{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}, {a.ortsname}{istAussiedlerhof ? ' · 🚜 Aussiedlerhof' : ''}</Tooltip>
+              {!editierbarAktiv && !aussiedlerhofMarkierenAktiv && (
                 <Popup>
                   <div className="text-sm">
                     <p className="font-semibold">{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}</p>
@@ -966,12 +985,24 @@ const MapView = memo(function MapView({
                         ⚠️ Nicht angebunden — kein öffentlicher Weg gefunden
                       </p>
                     )}
+                    {istAussiedlerhof && (
+                      <p className="mt-1 font-medium" style={{ color: '#a16207' }}>
+                        🚜 Aussiedlerhof — von 500m-Regel ausgenommen
+                      </p>
+                    )}
                   </div>
                 </Popup>
               )}
             </CircleMarker>
           )
         })}
+
+        {/* NVT-Standorte */}
+        {nvtStandorte.map((p, i) => (
+          <Marker key={`nvt-${i}`} position={[p.lat, p.lng]} icon={nvtIcon}>
+            <Tooltip>NVT {i + 1}</Tooltip>
+          </Marker>
+        ))}
 
         {startpunkt && <Marker position={[startpunkt.lat, startpunkt.lng]} icon={startpunktIcon}><Tooltip>Startpunkt</Tooltip></Marker>}
 
@@ -1044,6 +1075,18 @@ const MapView = memo(function MapView({
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
           style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
           Klick auf die Karte, um den Startpunkt zu setzen
+        </div>
+      )}
+
+      {aussiedlerhofMarkierenAktiv && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #a16207' }}>
+          🚜 Adressen anklicken zum Markieren/Entmarkieren als Aussiedlerhof
+          <button onClick={() => onAussiedlerhofMarkierenFertig?.()}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: '#a16207', color: '#fff' }}>
+            ✓ Fertig
+          </button>
         </div>
       )}
 

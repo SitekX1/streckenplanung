@@ -1,7 +1,8 @@
 'use client'
 
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { OrtInfo } from '../lib/types'
+import KalkulationModal from './KalkulationModal'
 
 interface SidebarProps {
   adressenCount: number
@@ -28,6 +29,8 @@ interface SidebarProps {
   feldwegFarbe: string
   canUndo: boolean
   undoCount: number
+  nvtStandorteAnzahl: number
+  onNvtButtonKlick: () => void
   onAdressFarbeAendern: (farbe: string) => void
   onTrasseFarbeAendern: (farbe: string) => void
   onHausanschlussFarbeAendern: (farbe: string) => void
@@ -83,6 +86,8 @@ export default function Sidebar({
   feldwegFarbe,
   canUndo,
   undoCount,
+  nvtStandorteAnzahl,
+  onNvtButtonKlick,
   onAdressFarbeAendern,
   onTrasseFarbeAendern,
   onHausanschlussFarbeAendern,
@@ -103,6 +108,7 @@ export default function Sidebar({
 }: SidebarProps) {
   const excelInputRef = useRef<HTMLInputElement>(null)
   const projektLadenRef = useRef<HTMLInputElement>(null)
+  const [kalkulationOffen, setKalkulationOffen] = useState(false)
 
   const hatDaten = adressenCount > 0
   const kannTrasseGenerieren = startpunktGesetzt && hatDaten
@@ -416,6 +422,20 @@ export default function Sidebar({
 
         <div className="border-t border-gray-800" />
 
+        {/* Sektion: NVT (dev) */}
+        <div>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">📡 NVT</p>
+          <button
+            onClick={onNvtButtonKlick}
+            disabled={!trasseVorhanden || hausanschluesseCount === 0}
+            className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            📡 NVT generieren {nvtStandorteAnzahl > 0 && `(${nvtStandorteAnzahl})`}
+          </button>
+        </div>
+
+        <div className="border-t border-gray-800" />
+
         {/* Sektion: Auswertung */}
         <div>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">📏 Auswertung</p>
@@ -446,6 +466,13 @@ export default function Sidebar({
               <span className="text-sm font-semibold text-blue-400">{formatMeter(gesamtLaenge)}</span>
             </div>
           </div>
+          <button
+            onClick={() => setKalkulationOffen(true)}
+            disabled={!trasseVorhanden}
+            className="w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            💰 Kalkulation
+          </button>
         </div>
 
         <div className="border-t border-gray-800" />
@@ -491,6 +518,15 @@ export default function Sidebar({
         </div>
 
       </div>
+
+      {kalkulationOffen && (
+        <KalkulationModal
+          strasseLaenge={strasseLaenge}
+          feldwegLaenge={feldwegLaenge}
+          hausanschluesseCount={hausanschluesseCount}
+          onClose={() => setKalkulationOffen(false)}
+        />
+      )}
     </aside>
   )
 }
