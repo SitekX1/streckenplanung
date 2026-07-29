@@ -244,6 +244,7 @@ export function berechneNvtStandorte(
     position: graph.get(zone.zentrum)!.coord,
     kapazitaet: kapazitaetenAufsteigend.find((k) => k >= zone.terminals.length) ?? maxKapazitaet,
     belegung: zone.terminals.length,
+    hausanschlussIds: zone.terminals.map((t) => t.hausId),
   }))
 
   return { standorte, nichtErreichbar }

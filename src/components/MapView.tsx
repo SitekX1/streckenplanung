@@ -209,6 +209,13 @@ const MapView = memo(function MapView({
     [nichtAngebundeneAdressen]
   )
 
+  // Welches NVT ist gerade angeklickt — markiert dessen Hausanschlüsse auf der Karte.
+  const [ausgewaehltesNvtIdx, setAusgewaehltesNvtIdx] = useState<number | null>(null)
+  const hervorgehobeneHausIds = useMemo(
+    () => new Set(ausgewaehltesNvtIdx !== null ? nvtStandorte[ausgewaehltesNvtIdx]?.hausanschlussIds ?? [] : []),
+    [ausgewaehltesNvtIdx, nvtStandorte]
+  )
+
   // Lokale Arbeitskopie der Pfade im Edit-Modus
   const [localPfade, setLocalPfade] = useState<LatLng[][]>([])
   // Straße/Feldweg-Klassifizierung parallel zu localPfade (gleicher Index) —
@@ -999,8 +1006,14 @@ const MapView = memo(function MapView({
 
         {/* NVT-Standorte */}
         {nvtStandorte.map((nvt, i) => (
-          <Marker key={`nvt-${i}`} position={[nvt.position.lat, nvt.position.lng]} icon={nvtIcon}>
-            <Tooltip>NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt</Tooltip>
+          <Marker key={`nvt-${i}`} position={[nvt.position.lat, nvt.position.lng]} icon={nvtIcon}
+            eventHandlers={{
+              click: (e) => {
+                L.DomEvent.stopPropagation(e)
+                setAusgewaehltesNvtIdx((prev) => (prev === i ? null : i))
+              },
+            }}>
+            <Tooltip>NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt{ausgewaehltesNvtIdx === i ? ' · Hausanschlüsse markiert' : ' · antippen zum Markieren'}</Tooltip>
           </Marker>
         ))}
 
@@ -1011,6 +1024,7 @@ const MapView = memo(function MapView({
           const wp = hausstichWp(h)
           const segKey = `hs-${h.id}`
           const istAktiv = aktivesSegment === segKey
+          const istHervorgehoben = hervorgehobeneHausIds.has(h.id)
           const positions = wp.map((p) => [p.lat, p.lng] as [number, number])
           const hsKlick = (e: L.LeafletMouseEvent) => {
             L.DomEvent.stopPropagation(e)
@@ -1027,8 +1041,8 @@ const MapView = memo(function MapView({
             <Fragment key={h.id}>
               <Polyline positions={positions}
                 pathOptions={{
-                  color: istAktiv ? GELB : hausanschlussfarbe,
-                  weight: istAktiv ? (editierbarAktiv ? 7 : 6) : (editierbarAktiv ? 3 : 2),
+                  color: istAktiv ? GELB : istHervorgehoben ? '#22d3ee' : hausanschlussfarbe,
+                  weight: istAktiv ? (editierbarAktiv ? 7 : 6) : istHervorgehoben ? 6 : (editierbarAktiv ? 3 : 2),
                   opacity: 0.95,
                 }}
                 eventHandlers={editierbarAktiv ? { click: hsKlick } : {}}>

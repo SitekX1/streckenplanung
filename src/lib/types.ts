@@ -42,6 +42,9 @@ export interface NvtStandort {
   position: LatLng
   kapazitaet: number
   belegung: number
+  // Hausstich.id der diesem Standort zugeordneten Hausanschlüsse — für die
+  // Markierung auf der Karte beim Anklicken des NVT.
+  hausanschlussIds: string[]
 }
 
 export interface Projekt {
