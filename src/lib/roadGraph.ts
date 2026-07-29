@@ -1,5 +1,5 @@
 import { OsmNetz } from './overpassClient'
-import { LatLng } from './types'
+import { LatLng, WegKind } from './types'
 
 // Binärer Min-Heap für Dijkstra (O((V+E) log V))
 class MinHeap {
@@ -51,8 +51,6 @@ function haversine(a: LatLng, b: LatLng): number {
   return 2 * 6_371_000 * Math.asin(Math.sqrt(sa))
 }
 
-export type WegKind = 'paved' | 'track'
-
 // Feldweg wird gegenüber einer gleich langen Straße künstlich verteuert, damit
 // Dijkstra ihn nur nimmt, wenn er tatsächlich spürbar kürzer ist (wirtschaftlich
 // sinnvoll) — nicht schon bei ein paar Metern Unterschied. Wirkt NUR auf die
@@ -74,6 +72,15 @@ export class RoadGraph {
     const weight = kind === 'track' ? dist * FELDWEG_KOSTEN_FAKTOR : dist
     this.adjacency.get(a)?.push({ to: b, dist, weight, kind })
     if (!oneway) this.adjacency.get(b)?.push({ to: a, dist, weight, kind })
+  }
+
+  // Für Kartenfärbung/Längenaufschlüsselung (Straße vs. Feldweg): welcher Art
+  // war die Kante zwischen zwei Knoten ursprünglich. Fällt auf 'paved' zurück,
+  // falls die Kante (z.B. bei oneway) nur in einer Richtung gespeichert ist.
+  edgeKind(a: number, b: number): WegKind {
+    const viaA = this.adjacency.get(a)?.find((e) => e.to === b)
+    if (viaA) return viaA.kind
+    return this.adjacency.get(b)?.find((e) => e.to === a)?.kind ?? 'paved'
   }
 
   private removeEdge(a: number, b: number) {

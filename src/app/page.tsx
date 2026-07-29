@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic'
 import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
-import { Address, LatLng, Hausstich, OrtInfo } from '../lib/types'
+import { Address, LatLng, Hausstich, OrtInfo, WegKind } from '../lib/types'
 import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
 import { buildRoadGraph } from '../lib/roadGraph'
@@ -91,13 +91,43 @@ function deduplicatePfade(pfade: LatLng[][]): LatLng[][] {
   return chains.length > 0 ? chains : pfade
 }
 
-type Laengen = { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number }
+// Kind-bewusster Wrapper um deduplicatePfade(): Straße- und Feldweg-Segmente
+// werden getrennt dedupliziert, damit deduplicatePfade() (das Ketten anhand
+// gemeinsamer Endpunkte neu zusammensetzt) niemals ein Straßen- mit einem
+// Feldweg-Segment zu einer gemischten Kette verschmilzt — an der Stelle SOLL
+// ja bewusst eine Segmentgrenze bestehen bleiben (Straße/Feldweg-Übergang).
+function deduplicatePfadeMitKind(
+  pfade: LatLng[][],
+  kinds: WegKind[]
+): { pfade: LatLng[][]; kinds: WegKind[] } {
+  const strasse = pfade.filter((_, i) => kinds[i] !== 'track')
+  const feldweg = pfade.filter((_, i) => kinds[i] === 'track')
+  const dedupStrasse = deduplicatePfade(strasse)
+  const dedupFeldweg = deduplicatePfade(feldweg)
+  return {
+    pfade: [...dedupStrasse, ...dedupFeldweg],
+    kinds: [
+      ...dedupStrasse.map((): WegKind => 'paved'),
+      ...dedupFeldweg.map((): WegKind => 'track'),
+    ],
+  }
+}
+
+// Falls kinds nicht exakt zu pfade passt (z.B. Mapbox-Fallback ohne
+// Klassifizierung, oder Legacy-Projekt ohne gespeicherte Kinds) → sicherer
+// Default: alles als Straße behandeln, statt falsch zuzuordnen.
+function passendeKinds(pfade: LatLng[][], kinds: WegKind[]): WegKind[] {
+  return kinds.length === pfade.length ? kinds : pfade.map((): WegKind => 'paved')
+}
+
+type Laengen = { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number; strasseLaenge: number; feldwegLaenge: number }
 type HistorySnapshot = {
   trassePfade: LatLng[][]
   trasse: LatLng[]
   hausanschluesse: Hausstich[]
   laengen: Laengen
   trasseAdressenUuids: string[]
+  trassePfadeKinds: WegKind[]
 }
 
 export default function Home() {
@@ -111,13 +141,14 @@ export default function Home() {
   const [hausanschluesse, setHausanschluesse] = useState<Hausstich[]>([])
   const [trasseProgress, setTrasseProgress] = useState(0)
   const [hausanschluesseProgress, setHausanschluesseProgress] = useState(0)
-  const [laengen, setLaengen] = useState<Laengen>({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0 })
+  const [laengen, setLaengen] = useState<Laengen>({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0, strasseLaenge: 0, feldwegLaenge: 0 })
   const [editierbarAktiv, setEditierbarAktiv] = useState(false)
   const [trasseMethode, setTrasseMethode] = useState('')
   const [projektName] = useState('Neues Projekt')
   const [adressFarbe, setAdressFarbe] = useState('#22c55e')
   const [trasseFarbe, setTrasseFarbe] = useState('#3b82f6')
   const [hausanschlussfarbe, setHausanschlussfarbe] = useState('#ef4444')
+  const [feldwegFarbe, setFeldwegFarbe] = useState('#d97706')
   const [history, setHistory] = useState<HistorySnapshot[]>([])
   // Adress-UUIDs, die bereits Teil einer generierten/erweiterten Trasse sind —
   // getrennt von "hat Hausanschluss", da das zwei verschiedene Arbeitsschritte
@@ -129,13 +160,18 @@ export default function Home() {
   // NICHT mehr per Luftlinie zwangsverbunden, sondern hier zur manuellen
   // Prüfung/Anbindung im Edit-Modus gesammelt (siehe MapView-Warnmodal).
   const [nichtAngebundeneAdressen, setNichtAngebundeneAdressen] = useState<Address[]>([])
+  // Straße/Feldweg-Klassifizierung parallel zu trassePfade (gleicher Index).
+  // Wird bei Generieren/Erweitern aus dem Steiner-Baum übernommen, bleibt bei
+  // reinen Punktverschiebungen im Edit-Modus erhalten und kann dort zusätzlich
+  // manuell pro Segment umgeschaltet werden ("Als Feldweg markieren").
+  const [trassePfadeKinds, setTrassePfadeKinds] = useState<WegKind[]>([])
 
   const pushHistory = useCallback(() => {
     setHistory((prev) => [
       ...prev.slice(-9),
-      { trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids: [...trasseAdressenUuids] },
+      { trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids: [...trasseAdressenUuids], trassePfadeKinds },
     ])
-  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids])
+  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds])
 
   const handleUndo = useCallback(() => {
     setHistory((prev) => {
@@ -146,6 +182,7 @@ export default function Home() {
       setHausanschluesse(snap.hausanschluesse)
       setLaengen(snap.laengen)
       setTrasseAdressenUuids(new Set(snap.trasseAdressenUuids))
+      setTrassePfadeKinds(snap.trassePfadeKinds)
       return prev.slice(0, -1)
     })
   }, [])
@@ -199,6 +236,7 @@ export default function Home() {
         : adressen.filter((a) => aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
 
     let pfade: LatLng[][] = []
+    let pfadeKinds: WegKind[] = []
     setNichtAngebundeneAdressen([])
 
     try {
@@ -226,6 +264,7 @@ export default function Home() {
 
       if (ergebnis.pfade.length === 0) throw new Error('Keine Pfade erzeugt')
       pfade = ergebnis.pfade
+      pfadeKinds = ergebnis.pfadeKinds
       setTrasseMethode(`OSM Straßennetz · ${pfade.length} Segmente`)
 
       const nichtErreichbar = new Set(ergebnis.nichtErreichbareNodeIds)
@@ -253,12 +292,13 @@ export default function Home() {
       }
     }
 
-    const dedupPfade = deduplicatePfade(pfade)
+    const { pfade: dedupPfade, kinds: dedupKinds } = deduplicatePfadeMitKind(pfade, passendeKinds(pfade, pfadeKinds))
     setTrassePfade(dedupPfade)
     setTrasse(dedupPfade.flat())
     setTrasseAdressenUuids(new Set(gefilterteAdressen.map((a) => a.uuid)))
+    setTrassePfadeKinds(dedupKinds)
     setTrasseProgress(100)
-    setLaengen(berechneLaengen(dedupPfade, []))
+    setLaengen(berechneLaengen(dedupPfade, [], dedupKinds))
     setTimeout(() => setTrasseProgress(0), 500)
   }, [startpunkt, adressen, aktiveOrteKeys, orte.length, pushHistory])
 
@@ -281,7 +321,9 @@ export default function Home() {
     setTrasseProgress(2)
     setNichtAngebundeneAdressen([])
 
+    const vorhandeneKinds = passendeKinds(vorhandenePfade, trassePfadeKinds)
     let allePfade: LatLng[][] = vorhandenePfade
+    let alleKinds: WegKind[] = vorhandeneKinds
     let erfolgreich = false
 
     try {
@@ -315,7 +357,14 @@ export default function Home() {
       )
 
       if (ergebnis.pfade.length === 0) throw new Error('Keine neuen Pfade erzeugt')
-      allePfade = deduplicatePfade([...vorhandenePfade, ...ergebnis.pfade])
+      {
+        const kombiniert = deduplicatePfadeMitKind(
+          [...vorhandenePfade, ...ergebnis.pfade],
+          [...vorhandeneKinds, ...ergebnis.pfadeKinds]
+        )
+        allePfade = kombiniert.pfade
+        alleKinds = kombiniert.kinds
+      }
       setTrasseMethode(`OSM Straßennetz Erweitert · ${allePfade.length} Segmente`)
 
       const nichtErreichbar = new Set(ergebnis.nichtErreichbareNodeIds)
@@ -335,7 +384,14 @@ export default function Home() {
           (p) => setTrasseProgress(3 + Math.round(p * 0.95)),
           vorhandenePfade
         )
-        allePfade = deduplicatePfade([...vorhandenePfade, ...neuePfade])
+        {
+          const kombiniert = deduplicatePfadeMitKind(
+            [...vorhandenePfade, ...neuePfade],
+            [...vorhandeneKinds, ...neuePfade.map((): WegKind => 'paved')]
+          )
+          allePfade = kombiniert.pfade
+          alleKinds = kombiniert.kinds
+        }
         setTrasseMethode(`Fallback: Overpass (OSM) war nicht erreichbar — Mapbox-Baum Erweitert · ${allePfade.length} Segmente`)
         erfolgreich = true
       } catch (e) {
@@ -348,12 +404,13 @@ export default function Home() {
       setTrassePfade(allePfade)
       setTrasse(allePfade.flat())
       setTrasseAdressenUuids((prev) => new Set([...prev, ...gefilterteNeue.map((a) => a.uuid)]))
-      setLaengen(berechneLaengen(allePfade, hausanschluesse))
+      setTrassePfadeKinds(alleKinds)
+      setLaengen(berechneLaengen(allePfade, hausanschluesse, alleKinds))
     }
 
     setTrasseProgress(100)
     setTimeout(() => setTrasseProgress(0), 500)
-  }, [startpunkt, trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse, trasseAdressenUuids, pushHistory])
+  }, [startpunkt, trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse, trasseAdressenUuids, pushHistory, trassePfadeKinds])
 
   const handleHausanschluesseGenerieren = useCallback(async () => {
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
@@ -373,9 +430,9 @@ export default function Home() {
 
     setHausanschluesse(ergebnis)
     setHausanschluesseProgress(100)
-    setLaengen(berechneLaengen(pfade, ergebnis))
+    setLaengen(berechneLaengen(pfade, ergebnis, passendeKinds(pfade, trassePfadeKinds)))
     setTimeout(() => setHausanschluesseProgress(0), 500)
-  }, [trassePfade, trasse, adressen, aktiveOrteKeys, orte.length, pushHistory])
+  }, [trassePfade, trasse, adressen, aktiveOrteKeys, orte.length, pushHistory, trassePfadeKinds])
 
   const handleHausanschluesseHinzufuegen = useCallback(async () => {
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
@@ -398,26 +455,30 @@ export default function Home() {
     const alleHs = [...hausanschluesse, ...neueHs]
     setHausanschluesse(alleHs)
     setHausanschluesseProgress(100)
-    setLaengen(berechneLaengen(pfade, alleHs))
+    setLaengen(berechneLaengen(pfade, alleHs, passendeKinds(pfade, trassePfadeKinds)))
     setTimeout(() => setHausanschluesseProgress(0), 500)
-  }, [trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse, pushHistory])
+  }, [trassePfade, trasse, adressen, aktiveOrteKeys, hausanschluesse, pushHistory, trassePfadeKinds])
 
   const handleTrasseGeaendert = useCallback(
     (punkte: LatLng[]) => {
       pushHistory()
       setTrasse(punkte)
       setTrassePfade([])
-      setLaengen(berechneLaengen([punkte], hausanschluesse))
+      // Alte Einzel-Trasse-Darstellung (kein pfade-Array) — hier ist keine
+      // Segment-Granularität für eine Feldweg-Markierung vorhanden.
+      setTrassePfadeKinds([])
+      setLaengen(berechneLaengen([punkte], hausanschluesse, []))
     },
     [hausanschluesse, pushHistory]
   )
 
   const handleTrassePfadeGeaendert = useCallback(
-    (pfade: LatLng[][]) => {
+    (pfade: LatLng[][], kinds: WegKind[]) => {
       pushHistory()
       setTrassePfade(pfade)
       setTrasse(pfade.flat())
-      setLaengen(berechneLaengen(pfade, hausanschluesse))
+      setTrassePfadeKinds(kinds)
+      setLaengen(berechneLaengen(pfade, hausanschluesse, kinds))
     },
     [hausanschluesse, pushHistory]
   )
@@ -426,9 +487,9 @@ export default function Home() {
     (updated: Hausstich[]) => {
       setHausanschluesse(updated)
       const pfade = trassePfade.length > 0 ? trassePfade : [trasse]
-      setLaengen(berechneLaengen(pfade, updated))
+      setLaengen(berechneLaengen(pfade, updated, passendeKinds(pfade, trassePfadeKinds)))
     },
-    [trassePfade, trasse]
+    [trassePfade, trasse, trassePfadeKinds]
   )
 
   const handleEditierbarToggle = useCallback(() => {
@@ -446,10 +507,12 @@ export default function Home() {
     setHausanschluesse([])
     setTrasseProgress(0)
     setHausanschluesseProgress(0)
-    setLaengen({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0 })
+    setLaengen({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0, strasseLaenge: 0, feldwegLaenge: 0 })
     setEditierbarAktiv(false)
     setHistory([])
     setTrasseAdressenUuids(new Set())
+    setNichtAngebundeneAdressen([])
+    setTrassePfadeKinds([])
   }, [])
 
   const handleKMLExport = useCallback(() => {
@@ -477,8 +540,9 @@ export default function Home() {
       hausanschluesse,
       trassenLaengeMeter: laengen.trassenLaenge,
       hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
+      trassePfadeKinds: trassePfadeKinds.length > 0 ? trassePfadeKinds : undefined,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds])
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
@@ -488,7 +552,13 @@ export default function Home() {
     setTrassePfade(projekt.trassePfade ?? [])
     setHausanschluesse(projekt.hausanschluesse)
     const pfade = projekt.trassePfade?.length ? projekt.trassePfade : [projekt.trasse]
-    setLaengen(berechneLaengen(pfade, projekt.hausanschluesse))
+    // Kinds nur setzen, wenn sie wirklich zu trassePfade gehören (nicht zum
+    // trasse-Fallback, der für die Längenberechnung nur behelfsmäßig genutzt wird).
+    const kinds = projekt.trassePfade?.length
+      ? passendeKinds(projekt.trassePfade, projekt.trassePfadeKinds ?? [])
+      : []
+    setTrassePfadeKinds(kinds)
+    setLaengen(berechneLaengen(pfade, projekt.hausanschluesse, passendeKinds(pfade, kinds)))
     setEditierbarAktiv(false)
     setHistory([])
     // Bei geladenen Projekten ist unbekannt, welche Adressen genau zur Trasse
@@ -541,17 +611,21 @@ export default function Home() {
         trassenLaenge={laengen.trassenLaenge}
         hausanschlussLaenge={laengen.hausanschluesseLaenge}
         gesamtLaenge={laengen.gesamt}
+        strasseLaenge={laengen.strasseLaenge}
+        feldwegLaenge={laengen.feldwegLaenge}
         trasseProgress={trasseProgress}
         hausanschluesseProgress={hausanschluesseProgress}
         editierbarAktiv={editierbarAktiv}
         adressFarbe={adressFarbe}
         trasseFarbe={trasseFarbe}
         hausanschlussfarbe={hausanschlussfarbe}
+        feldwegFarbe={feldwegFarbe}
         canUndo={history.length > 0}
         undoCount={history.length}
         onAdressFarbeAendern={setAdressFarbe}
         onTrasseFarbeAendern={setTrasseFarbe}
         onHausanschlussFarbeAendern={setHausanschlussfarbe}
+        onFeldwegFarbeAendern={setFeldwegFarbe}
         onExcelImport={handleExcelImport}
         onOrtToggle={handleOrtToggle}
         onAlleOrteToggle={handleAlleOrteToggle}
@@ -581,6 +655,8 @@ export default function Home() {
           adressFarbe={adressFarbe}
           trasseFarbe={trasseFarbe}
           hausanschlussfarbe={hausanschlussfarbe}
+          feldwegFarbe={feldwegFarbe}
+          trassePfadeKinds={trassePfadeKinds}
           trasseMethode={trasseMethode}
           nichtAngebundeneAdressen={nichtAngebundeneAdressen}
           onStartpunktGesetzt={handleStartpunktGesetzt}

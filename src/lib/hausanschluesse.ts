@@ -1,5 +1,5 @@
 import * as turf from '@turf/turf'
-import { LatLng, Address, Hausstich } from './types'
+import { LatLng, Address, Hausstich, WegKind } from './types'
 
 function toLatLng(coord: number[]): LatLng {
   return { lat: coord[1], lng: coord[0] }
@@ -78,17 +78,23 @@ export async function berechneHausanschluesse(
 
 export function berechneLaengen(
   trassePfade: LatLng[][],
-  hausanschluesse: Hausstich[]
-): { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number } {
-  const trassenLaenge = trassePfade
-    .filter((p) => p.length >= 2)
-    .reduce((sum, pfad) => {
-      try {
-        return sum + turf.length(turf.lineString(pfad.map((p) => [p.lng, p.lat])), { units: 'meters' })
-      } catch {
-        return sum
-      }
-    }, 0)
+  hausanschluesse: Hausstich[],
+  pfadeKinds: WegKind[] = []
+): { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number; strasseLaenge: number; feldwegLaenge: number } {
+  let trassenLaenge = 0
+  let feldwegLaenge = 0
+
+  trassePfade.forEach((pfad, i) => {
+    if (pfad.length < 2) return
+    let laenge = 0
+    try {
+      laenge = turf.length(turf.lineString(pfad.map((p) => [p.lng, p.lat])), { units: 'meters' })
+    } catch {
+      return
+    }
+    trassenLaenge += laenge
+    if (pfadeKinds[i] === 'track') feldwegLaenge += laenge
+  })
 
   const hausanschluesseLaenge = hausanschluesse.reduce((sum, h) => sum + h.laengeMeter, 0)
 
@@ -96,5 +102,7 @@ export function berechneLaengen(
     trassenLaenge,
     hausanschluesseLaenge,
     gesamt: trassenLaenge + hausanschluesseLaenge,
+    strasseLaenge: trassenLaenge - feldwegLaenge,
+    feldwegLaenge,
   }
 }

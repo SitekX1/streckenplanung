@@ -16,6 +16,9 @@ export interface LatLng {
   lng: number
 }
 
+// 'paved' = Straße, 'track' = Feldweg. Pro Trassen-Segment (nicht pro Adresse).
+export type WegKind = 'paved' | 'track'
+
 export interface Hausstich {
   id: string
   addressUuid: string
@@ -42,4 +45,7 @@ export interface Projekt {
   hausanschluesse: Hausstich[]
   trassenLaengeMeter: number
   hausanschlussLaengeMeter: number
+  // Straße/Feldweg-Klassifizierung parallel zu trassePfade (gleicher Index =
+  // gleiches Segment). Fehlt bei älteren Projekten → dann überall 'paved'.
+  trassePfadeKinds?: WegKind[]
 }

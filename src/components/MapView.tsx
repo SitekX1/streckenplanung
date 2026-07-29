@@ -8,7 +8,7 @@ import {
 import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
-import { Address, LatLng, Hausstich } from '../lib/types'
+import { Address, LatLng, Hausstich, WegKind } from '../lib/types'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -74,11 +74,13 @@ interface MapViewProps {
   adressFarbe: string
   trasseFarbe: string
   hausanschlussfarbe: string
+  feldwegFarbe: string
+  trassePfadeKinds: WegKind[]
   trasseMethode?: string
   nichtAngebundeneAdressen?: Address[]
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
-  onTrassePfadeGeaendert: (pfade: LatLng[][]) => void
+  onTrassePfadeGeaendert: (pfade: LatLng[][], kinds: WegKind[]) => void
   onHausanschluesseGeaendert: (updated: Hausstich[]) => void
 }
 
@@ -166,6 +168,7 @@ type TileVariante = 'satellit' | 'osm'
 const MapView = memo(function MapView({
   adressen, startpunkt, startpunktSetzenAktiv, trasse, trassePfade, hausanschluesse,
   editierbarAktiv, aktiveOrteKeys, adressFarbe, trasseFarbe, hausanschlussfarbe, trasseMethode,
+  feldwegFarbe, trassePfadeKinds,
   nichtAngebundeneAdressen = [],
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
 }: MapViewProps) {
@@ -196,6 +199,10 @@ const MapView = memo(function MapView({
 
   // Lokale Arbeitskopie der Pfade im Edit-Modus
   const [localPfade, setLocalPfade] = useState<LatLng[][]>([])
+  // Straße/Feldweg-Klassifizierung parallel zu localPfade (gleicher Index) —
+  // wird durch jede strukturelle Mutation (Löschen/Trennen/Neuer Strich)
+  // mitgezogen und kann per Kontextmenü manuell umgeschaltet werden.
+  const [localPfadeKinds, setLocalPfadeKinds] = useState<WegKind[]>([])
   // Groß-Projekt: ausgewähltes Segment (Tap-to-Select)
   const [editSegmentIdx, setEditSegmentIdx] = useState<number | null>(null)
   const [editPunkte, setEditPunkte] = useState<LatLng[]>([])
@@ -211,7 +218,9 @@ const MapView = memo(function MapView({
 
   const trasseRef = useRef<LatLng[]>([])
   const trassePfadeRef = useRef<LatLng[][]>([])
+  const trassePfadeKindsRef = useRef<WegKind[]>([])
   const localPfadeRef = useRef<LatLng[][]>([])
+  const localPfadeKindsRef = useRef<WegKind[]>([])
   const editSegmentIdxRef = useRef<number | null>(null)
   const editPunkteRef = useRef<LatLng[]>([])
   const prevEditRef = useRef(false)
@@ -220,7 +229,9 @@ const MapView = memo(function MapView({
 
   useEffect(() => { trasseRef.current = trasse }, [trasse])
   useEffect(() => { trassePfadeRef.current = trassePfade }, [trassePfade])
+  useEffect(() => { trassePfadeKindsRef.current = trassePfadeKinds }, [trassePfadeKinds])
   useEffect(() => { localPfadeRef.current = localPfade }, [localPfade])
+  useEffect(() => { localPfadeKindsRef.current = localPfadeKinds }, [localPfadeKinds])
   useEffect(() => { editSegmentIdxRef.current = editSegmentIdx }, [editSegmentIdx])
   useEffect(() => { editPunkteRef.current = editPunkte }, [editPunkte])
 
@@ -261,17 +272,26 @@ const MapView = memo(function MapView({
         setKleinProjekt(gesamtPunkte <= KLEIN_PROJEKT_SCHWELLE)
         localPfadeRef.current = kopie
         setLocalPfade(kopie)
+        // Kinds aus trassePfadeKinds übernehmen — bei Längen-Mismatch (altes
+        // Projekt ohne gespeicherte Kinds, o.ä.) sicher auf 'paved' auffüllen.
+        const kindsKopie = kopie.map((_, i) => trassePfadeKindsRef.current[i] ?? 'paved')
+        localPfadeKindsRef.current = kindsKopie
+        setLocalPfadeKinds(kindsKopie)
       } else if (t.length >= 2) {
         startedWithSingleRef.current = true
         const kopie = [[...t]]
         setKleinProjekt(t.length <= KLEIN_PROJEKT_SCHWELLE)
         localPfadeRef.current = kopie
         setLocalPfade(kopie)
+        localPfadeKindsRef.current = ['paved']
+        setLocalPfadeKinds(['paved'])
       } else {
         startedWithSingleRef.current = false
         setKleinProjekt(false)
         localPfadeRef.current = []
         setLocalPfade([])
+        localPfadeKindsRef.current = []
+        setLocalPfadeKinds([])
       }
     } else if (wasActive && !editierbarAktiv) {
       let finalPfade = localPfadeRef.current
@@ -282,15 +302,22 @@ const MapView = memo(function MapView({
         editiertRef.current = true
       }
       if (editiertRef.current) {
-        const gueltig = finalPfade.filter((pf) => pf.length >= 2)
+        const finalKinds = localPfadeKindsRef.current
+        const gueltig: LatLng[][] = []
+        const gueltigeKinds: WegKind[] = []
+        finalPfade.forEach((pf, i) => {
+          if (pf.length >= 2) { gueltig.push(pf); gueltigeKinds.push(finalKinds[i] ?? 'paved') }
+        })
         if (startedWithSingleRef.current && gueltig.length === 1) {
           onTrasseGeaendert(gueltig[0])
         } else {
-          onTrassePfadeGeaendert(gueltig)
+          onTrassePfadeGeaendert(gueltig, gueltigeKinds)
         }
       }
       localPfadeRef.current = []
       setLocalPfade([])
+      localPfadeKindsRef.current = []
+      setLocalPfadeKinds([])
       setEditSegmentIdx(null)
       editSegmentIdxRef.current = null
       setEditPunkte([])
@@ -388,6 +415,11 @@ const MapView = memo(function MapView({
       neuePfade.push(teilB)
       localPfadeRef.current = neuePfade
       setLocalPfade(neuePfade)
+      // teilB übernimmt die Kind-Klassifizierung des ursprünglichen Segments
+      // (teilA behält denselben Index, also automatisch dieselbe Kind).
+      const neueKinds = [...localPfadeKindsRef.current, localPfadeKindsRef.current[segIdx] ?? 'paved']
+      localPfadeKindsRef.current = neueKinds
+      setLocalPfadeKinds(neueKinds)
       setEditSegmentIdx(null)
       editSegmentIdxRef.current = null
       setEditPunkte([])
@@ -403,6 +435,9 @@ const MapView = memo(function MapView({
     const neuePfade = localPfadeRef.current.filter((_, i) => i !== segIdx)
     localPfadeRef.current = neuePfade
     setLocalPfade(neuePfade)
+    const neueKinds = localPfadeKindsRef.current.filter((_, i) => i !== segIdx)
+    localPfadeKindsRef.current = neueKinds
+    setLocalPfadeKinds(neueKinds)
     setEditSegmentIdx(null)
     editSegmentIdxRef.current = null
     setEditPunkte([])
@@ -422,13 +457,20 @@ const MapView = memo(function MapView({
 
   function handleKleinPunktLoeschen(pfadIdx: number, punktIdx: number) {
     editiertRef.current = true
-    const neuePfade = localPfadeRef.current.map((pf, pi) => {
+    const gemappt = localPfadeRef.current.map((pf, pi) => {
       if (pi !== pfadIdx) return pf
       if (pf.length <= 2) return [] as LatLng[]
       return pf.filter((_, i) => i !== punktIdx)
-    }).filter((pf) => pf.length >= 2)
+    })
+    const neuePfade: LatLng[][] = []
+    const neueKinds: WegKind[] = []
+    gemappt.forEach((pf, i) => {
+      if (pf.length >= 2) { neuePfade.push(pf); neueKinds.push(localPfadeKindsRef.current[i] ?? 'paved') }
+    })
     localPfadeRef.current = neuePfade
     setLocalPfade(neuePfade)
+    localPfadeKindsRef.current = neueKinds
+    setLocalPfadeKinds(neueKinds)
     setAktivesSegment(null)
   }
 
@@ -437,6 +479,9 @@ const MapView = memo(function MapView({
     const neuePfade = localPfadeRef.current.filter((_, i) => i !== pfadIdx)
     localPfadeRef.current = neuePfade
     setLocalPfade(neuePfade)
+    const neueKinds = localPfadeKindsRef.current.filter((_, i) => i !== pfadIdx)
+    localPfadeKindsRef.current = neueKinds
+    setLocalPfadeKinds(neueKinds)
     setAktivesSegment(null)
   }
 
@@ -456,6 +501,9 @@ const MapView = memo(function MapView({
       neuePfade.push(teilB)
       localPfadeRef.current = neuePfade
       setLocalPfade(neuePfade)
+      const neueKinds = [...localPfadeKindsRef.current, localPfadeKindsRef.current[pfadIdx] ?? 'paved']
+      localPfadeKindsRef.current = neueKinds
+      setLocalPfadeKinds(neueKinds)
       setAktivesSegment(null)
     } catch { /* ignore */ }
   }
@@ -492,6 +540,11 @@ const MapView = memo(function MapView({
     const neuePfade = [...aktuelllePfade, newSegment]
     localPfadeRef.current = neuePfade
     setLocalPfade(neuePfade)
+    // Neu gezeichneter Strich: Default Straße — der Nutzer zeichnet ihn
+    // bewusst, kann ihn danach übers Kontextmenü als Feldweg markieren.
+    const neueKinds = [...localPfadeKindsRef.current, 'paved' as WegKind]
+    localPfadeKindsRef.current = neueKinds
+    setLocalPfadeKinds(neueKinds)
     if (!kleinProjekt) {
       setEditSegmentIdx(neuePfade.length - 1)
       editSegmentIdxRef.current = neuePfade.length - 1
@@ -502,6 +555,16 @@ const MapView = memo(function MapView({
     editiertRef.current = true
     setZiehStartId(null)
     setZiehStartPos(null)
+  }
+
+  // Schaltet die Straße/Feldweg-Klassifizierung eines Segments manuell um —
+  // sowohl für frisch generierte als auch für per Hand editierte Segmente.
+  function handleSegmentKindToggle(idx: number) {
+    const neu = [...localPfadeKindsRef.current]
+    neu[idx] = neu[idx] === 'track' ? 'paved' : 'track'
+    localPfadeKindsRef.current = neu
+    setLocalPfadeKinds(neu)
+    editiertRef.current = true
   }
 
   function handleNeuerHsZiel(zielPos: LatLng) {
@@ -684,10 +747,15 @@ const MapView = memo(function MapView({
         <TopographieWMS sichtbar={topoSichtbar} />
         <FlyTo ziel={flugZiel} />
 
-        {/* ── TRASSE: Normal-Modus ── */}
+        {/* ── TRASSE: Normal-Modus — nach Kind eingefärbt ── */}
         {trasseSichtbar && !editierbarAktiv && (
           trassePfade.length > 0
-            ? <TrasseNetzwerk pfade={trassePfade} farbe={trasseFarbe} opacity={0.9} />
+            ? (
+              <>
+                <TrasseNetzwerk pfade={trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track')} farbe={trasseFarbe} opacity={0.9} />
+                <TrasseNetzwerk pfade={trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track')} farbe={feldwegFarbe} opacity={0.9} />
+              </>
+            )
             : trasse.length >= 2
               ? <Polyline positions={trasse.map((p) => [p.lat, p.lng] as [number, number])} pathOptions={{ color: trasseFarbe, weight: 4, opacity: 0.9 }} />
               : null
@@ -696,10 +764,13 @@ const MapView = memo(function MapView({
         {/* ── TRASSE: Edit-Modus Groß-Projekt (Tap-to-Select) ── */}
         {trasseSichtbar && editierbarAktiv && !kleinProjekt && (
           <>
-            {/* Canvas für nicht-ausgewählte Segmente */}
+            {/* Canvas für nicht-ausgewählte Segmente — nach Kind eingefärbt */}
             <TrasseNetzwerk
-              pfade={localPfade.filter((_, i) => i !== editSegmentIdx)}
+              pfade={localPfade.filter((_, i) => i !== editSegmentIdx && localPfadeKinds[i] !== 'track')}
               farbe={trasseFarbe} opacity={0.55} />
+            <TrasseNetzwerk
+              pfade={localPfade.filter((_, i) => i !== editSegmentIdx && localPfadeKinds[i] === 'track')}
+              farbe={feldwegFarbe} opacity={0.55} />
             {/* Unsichtbare Klick-Flächen */}
             {localPfade.map((pfad, pi) =>
               pfad.length >= 2 ? (
@@ -717,6 +788,10 @@ const MapView = memo(function MapView({
                         zeigeMenu(e, [
                           { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
                           { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleEditVerbindungTrennen(pos); setAktivMenu(null) } },
+                          {
+                            label: localPfadeKinds[pi] === 'track' ? '🛣️ Als Straße markieren' : '🚜 Als Feldweg markieren',
+                            farbe: '#fbbf24', action: () => { handleSegmentKindToggle(pi); setAktivMenu(null) },
+                          },
                           { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
                         ])
                       }
@@ -738,6 +813,10 @@ const MapView = memo(function MapView({
                       zeigeMenu(e, [
                         { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleEditPunktEinfuegen(pos); setAktivMenu(null) } },
                         { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleEditVerbindungTrennen(pos); setAktivMenu(null) } },
+                        {
+                          label: (editSegmentIdx !== null && localPfadeKinds[editSegmentIdx] === 'track') ? '🛣️ Als Straße markieren' : '🚜 Als Feldweg markieren',
+                          farbe: '#fbbf24', action: () => { if (editSegmentIdx !== null) handleSegmentKindToggle(editSegmentIdx); setAktivMenu(null) },
+                        },
                         { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
                       ])
                     },
@@ -799,6 +878,10 @@ const MapView = memo(function MapView({
                     zeigeMenu(e, [
                       { label: '➕ Punkt einfügen', farbe: '#93c5fd', action: () => { handleKleinPunktEinfuegen(pi, pos); setAktivMenu(null) } },
                       { label: '✂️ Verbindung hier trennen', farbe: '#93c5fd', action: () => { handleKleinVerbindungTrennen(pi, pos); setAktivMenu(null) } },
+                      {
+                        label: localPfadeKinds[pi] === 'track' ? '🛣️ Als Straße markieren' : '🚜 Als Feldweg markieren',
+                        farbe: '#fbbf24', action: () => { handleSegmentKindToggle(pi); setAktivMenu(null) },
+                      },
                       { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleKleinSegmentLoeschen(pi); setAktivMenu(null) } },
                     ])
                   },
@@ -806,7 +889,10 @@ const MapView = memo(function MapView({
               <Polyline key={`kp-line-${pi}`}
                 positions={positions}
                 interactive={false}
-                pathOptions={{ color: istAktiv ? GELB : trasseFarbe, weight: istAktiv ? 5 : 4, opacity: 0.95 }} />
+                pathOptions={{
+                  color: istAktiv ? GELB : (localPfadeKinds[pi] === 'track' ? feldwegFarbe : trasseFarbe),
+                  weight: istAktiv ? 5 : 4, opacity: 0.95,
+                }} />
             </Fragment>
           )
         })}

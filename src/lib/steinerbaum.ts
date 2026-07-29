@@ -1,10 +1,14 @@
 import { RoadGraph } from './roadGraph'
-import { LatLng } from './types'
+import { LatLng, WegKind } from './types'
 
 export interface SteinerErgebnis {
   pfade: LatLng[][]
   gesamtLaengeMeter: number
   nichtErreichbareNodeIds: number[]
+  // Straße/Feldweg-Klassifizierung parallel zu pfade (gleicher Index = gleiches
+  // Segment). Jedes pfade[i] ist in sich homogen — Kettenaufbau in
+  // kantenzuPfade() bricht ein Segment an Kind-Wechseln bewusst auf.
+  pfadeKinds: WegKind[]
 }
 
 // Steiner-Baum-Approximation via wiederholtem Multi-Source-Dijkstra.
@@ -22,7 +26,9 @@ export async function berechneSteinerBaum(
   // von einem einzelnen Punkt aus neu zu rechnen.
   const startSet = new Set(Array.isArray(startNodeIds) ? startNodeIds : [startNodeIds])
   const uniqueTerminals = [...new Set(terminalNodeIds)].filter((id) => !startSet.has(id))
-  if (uniqueTerminals.length === 0) return { pfade: [], gesamtLaengeMeter: 0, nichtErreichbareNodeIds: [] }
+  if (uniqueTerminals.length === 0) {
+    return { pfade: [], gesamtLaengeMeter: 0, nichtErreichbareNodeIds: [], pfadeKinds: [] }
+  }
 
   const treeNodes = new Set<number>(startSet)
   const usedEdges = new Set<string>() // normiert: "min_max"
@@ -66,9 +72,14 @@ export async function berechneSteinerBaum(
 
 // Wandelt die verwendeten Kanten (als Set normierter Strings) in LatLng-Pfade um.
 // Kanten mit Grad ≠ 2 (Abzweige, Blätter) sind Startpunkte für neue Pfadsegmente.
-// Ketten von Grad-2-Knoten werden zu einzelnen langen Polylinien zusammengefasst.
-function kantenzuPfade(graph: RoadGraph, usedEdges: Set<string>): { pfade: LatLng[][]; gesamtLaengeMeter: number } {
-  if (usedEdges.size === 0) return { pfade: [], gesamtLaengeMeter: 0 }
+// Ketten von Grad-2-Knoten werden zu einzelnen langen Polylinien zusammengefasst —
+// zusätzlich wird an jedem Straße/Feldweg-Wechsel ein neues Segment begonnen,
+// damit jedes zurückgegebene pfade[i] eindeutig EINER Kind-Klasse angehört.
+function kantenzuPfade(
+  graph: RoadGraph,
+  usedEdges: Set<string>
+): { pfade: LatLng[][]; gesamtLaengeMeter: number; pfadeKinds: WegKind[] } {
+  if (usedEdges.size === 0) return { pfade: [], gesamtLaengeMeter: 0, pfadeKinds: [] }
 
   const adj = new Map<number, number[]>()
   let gesamtLaenge = 0
@@ -100,6 +111,7 @@ function kantenzuPfade(graph: RoadGraph, usedEdges: Set<string>): { pfade: LatLn
 
   const visitedEdges = new Set<string>()
   const pfade: LatLng[][] = []
+  const pfadeKinds: WegKind[] = []
 
   // Pfade von Blättern (Grad 1) und Abzweigpunkten (Grad ≠ 2) aus aufbauen
   const startNodes = [...adj.keys()].filter((id) => adj.get(id)!.length !== 2)
@@ -108,15 +120,27 @@ function kantenzuPfade(graph: RoadGraph, usedEdges: Set<string>): { pfade: LatLn
     if (typeof first === 'number') startNodes.push(first)
   }
 
-  function verfolge(von: number, zu: number): LatLng[] {
-    const path: LatLng[] = [coord(von)]
+  // Läuft eine Kette entlang Grad-2-Knoten ab und bricht sie in homogene
+  // Kind-Abschnitte auf (Segmentende + neues Segment startet am selben Punkt,
+  // keine Lücke in der Geometrie).
+  function verfolge(von: number, zu: number): Array<{ punkte: LatLng[]; kind: WegKind }> {
+    const segmente: Array<{ punkte: LatLng[]; kind: WegKind }> = []
+    let punkte: LatLng[] = [coord(von)]
+    let aktuellerKind: WegKind = graph.edgeKind(von, zu)
     let prev = von, curr = zu
 
     while (true) {
       const k = `${Math.min(prev, curr)}_${Math.max(prev, curr)}`
       if (visitedEdges.has(k)) break
       visitedEdges.add(k)
-      path.push(coord(curr))
+
+      const kantenKind = graph.edgeKind(prev, curr)
+      if (kantenKind !== aktuellerKind) {
+        segmente.push({ punkte, kind: aktuellerKind })
+        punkte = [coord(prev)]
+        aktuellerKind = kantenKind
+      }
+      punkte.push(coord(curr))
 
       const weiter = (adj.get(curr) ?? []).filter((n) => {
         const nk = `${Math.min(curr, n)}_${Math.max(curr, n)}`
@@ -130,15 +154,17 @@ function kantenzuPfade(graph: RoadGraph, usedEdges: Set<string>): { pfade: LatLn
       curr = weiter[0]
     }
 
-    return path
+    segmente.push({ punkte, kind: aktuellerKind })
+    return segmente
   }
 
   for (const startId of startNodes) {
     for (const neighbor of adj.get(startId) ?? []) {
       const k = `${Math.min(startId, neighbor)}_${Math.max(startId, neighbor)}`
       if (visitedEdges.has(k)) continue
-      const path = verfolge(startId, neighbor)
-      if (path.length >= 2) pfade.push(path)
+      for (const seg of verfolge(startId, neighbor)) {
+        if (seg.punkte.length >= 2) { pfade.push(seg.punkte); pfadeKinds.push(seg.kind) }
+      }
     }
   }
 
@@ -146,10 +172,11 @@ function kantenzuPfade(graph: RoadGraph, usedEdges: Set<string>): { pfade: LatLn
   for (const key of usedEdges) {
     if (visitedEdges.has(key)) continue
     const [aStr, bStr] = key.split('_')
-    const ca = graph.coordinates.get(parseInt(aStr))
-    const cb = graph.coordinates.get(parseInt(bStr))
-    if (ca && cb) pfade.push([ca, cb])
+    const a = parseInt(aStr), b = parseInt(bStr)
+    const ca = graph.coordinates.get(a)
+    const cb = graph.coordinates.get(b)
+    if (ca && cb) { pfade.push([ca, cb]); pfadeKinds.push(graph.edgeKind(a, b)) }
   }
 
-  return { pfade, gesamtLaengeMeter: gesamtLaenge }
+  return { pfade, gesamtLaengeMeter: gesamtLaenge, pfadeKinds }
 }

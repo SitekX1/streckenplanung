@@ -17,17 +17,21 @@ interface SidebarProps {
   trassenLaenge: number
   hausanschlussLaenge: number
   gesamtLaenge: number
+  strasseLaenge: number
+  feldwegLaenge: number
   trasseProgress: number
   hausanschluesseProgress: number
   editierbarAktiv: boolean
   adressFarbe: string
   trasseFarbe: string
   hausanschlussfarbe: string
+  feldwegFarbe: string
   canUndo: boolean
   undoCount: number
   onAdressFarbeAendern: (farbe: string) => void
   onTrasseFarbeAendern: (farbe: string) => void
   onHausanschlussFarbeAendern: (farbe: string) => void
+  onFeldwegFarbeAendern: (farbe: string) => void
   onOrtToggle: (key: string) => void
   onAlleOrteToggle: (alleAktiv: boolean) => void
   onExcelImport: (file: File) => void
@@ -68,17 +72,21 @@ export default function Sidebar({
   trassenLaenge,
   hausanschlussLaenge,
   gesamtLaenge,
+  strasseLaenge,
+  feldwegLaenge,
   trasseProgress,
   hausanschluesseProgress,
   editierbarAktiv,
   adressFarbe,
   trasseFarbe,
   hausanschlussfarbe,
+  feldwegFarbe,
   canUndo,
   undoCount,
   onAdressFarbeAendern,
   onTrasseFarbeAendern,
   onHausanschlussFarbeAendern,
+  onFeldwegFarbeAendern,
   onExcelImport,
   onStartpunktSetzen,
   onStartpunktZuruecksetzen,
@@ -416,6 +424,18 @@ export default function Sidebar({
               <span className="text-xs text-gray-500">Trasse</span>
               <span className="text-sm font-medium text-white">{formatMeter(trassenLaenge)}</span>
             </div>
+            {feldwegLaenge > 0 && (
+              <>
+                <div className="flex justify-between items-center pl-3">
+                  <span className="text-xs text-gray-600">davon Straße</span>
+                  <span className="text-xs text-gray-400">{formatMeter(strasseLaenge)}</span>
+                </div>
+                <div className="flex justify-between items-center pl-3">
+                  <span className="text-xs text-gray-600">davon Feldweg</span>
+                  <span className="text-xs text-gray-400">{formatMeter(feldwegLaenge)}</span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between items-center">
               <span className="text-xs text-gray-500">Hausanschlüsse</span>
               <span className="text-sm font-medium text-white">{formatMeter(hausanschlussLaenge)}</span>
@@ -453,6 +473,7 @@ export default function Sidebar({
             {[
               { label: 'Adressen', value: adressFarbe, onChange: onAdressFarbeAendern },
               { label: 'Trasse', value: trasseFarbe, onChange: onTrasseFarbeAendern },
+              { label: 'Feldweg-Anteil', value: feldwegFarbe, onChange: onFeldwegFarbeAendern },
               { label: 'Hausanschlüsse', value: hausanschlussfarbe, onChange: onHausanschlussFarbeAendern },
             ].map(({ label, value, onChange }) => (
               <div key={label} className="flex items-center justify-between px-1">
