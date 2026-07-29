@@ -35,6 +35,15 @@ export interface OrtInfo {
   anzahl: number
 }
 
+// Physischer NVT-Standort (nur dev-Branch) — mehrere Einträge können dieselbe
+// position teilen (mehrere Boxen am selben Schrank, wenn die Kapazität eines
+// einzelnen NVT für die dortige Hausanschluss-Anzahl nicht reicht).
+export interface NvtStandort {
+  position: LatLng
+  kapazitaet: number
+  belegung: number
+}
+
 export interface Projekt {
   name: string
   erstelltAm: string
@@ -49,6 +58,6 @@ export interface Projekt {
   // gleiches Segment). Fehlt bei älteren Projekten → dann überall 'paved'.
   trassePfadeKinds?: WegKind[]
   // NVT-Feature (nur dev-Branch)
-  nvtStandorte?: LatLng[]
+  nvtStandorte?: NvtStandort[]
   aussiedlerhofUuids?: string[]
 }

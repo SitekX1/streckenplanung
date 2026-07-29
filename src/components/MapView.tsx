@@ -8,7 +8,7 @@ import {
 import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
-import { Address, LatLng, Hausstich, WegKind } from '../lib/types'
+import { Address, LatLng, Hausstich, WegKind, NvtStandort } from '../lib/types'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -85,7 +85,7 @@ interface MapViewProps {
   nichtAngebundeneAdressen?: Address[]
   aussiedlerhofUuids?: Set<string>
   aussiedlerhofMarkierenAktiv?: boolean
-  nvtStandorte?: LatLng[]
+  nvtStandorte?: NvtStandort[]
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][], kinds: WegKind[]) => void
@@ -998,9 +998,9 @@ const MapView = memo(function MapView({
         })}
 
         {/* NVT-Standorte */}
-        {nvtStandorte.map((p, i) => (
-          <Marker key={`nvt-${i}`} position={[p.lat, p.lng]} icon={nvtIcon}>
-            <Tooltip>NVT {i + 1}</Tooltip>
+        {nvtStandorte.map((nvt, i) => (
+          <Marker key={`nvt-${i}`} position={[nvt.position.lat, nvt.position.lng]} icon={nvtIcon}>
+            <Tooltip>NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt</Tooltip>
           </Marker>
         ))}
 

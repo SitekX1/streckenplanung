@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic'
 import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
 import NVTModal from '../components/NVTModal'
-import { Address, LatLng, Hausstich, OrtInfo, WegKind } from '../lib/types'
+import { Address, LatLng, Hausstich, OrtInfo, WegKind, NvtStandort } from '../lib/types'
 import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
 import { buildRoadGraph } from '../lib/roadGraph'
@@ -172,7 +172,7 @@ export default function Home() {
   const [aussiedlerhofUuids, setAussiedlerhofUuids] = useState<Set<string>>(new Set())
   const [aussiedlerhofMarkierenAktiv, setAussiedlerhofMarkierenAktiv] = useState(false)
   const [nvtModalOffen, setNvtModalOffen] = useState(false)
-  const [nvtStandorte, setNvtStandorte] = useState<LatLng[]>([])
+  const [nvtStandorte, setNvtStandorte] = useState<NvtStandort[]>([])
 
   const pushHistory = useCallback(() => {
     setHistory((prev) => [
@@ -546,7 +546,7 @@ export default function Home() {
     setNvtModalOffen(true)
   }, [])
 
-  const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number) => {
+  const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number, kapazitaet: number) => {
     if (!startpunkt || ausgewaehlteOrteKeys.length === 0) return
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (pfade.length === 0) return
@@ -561,7 +561,7 @@ export default function Home() {
       (h) => adressUuidsImDorf.has(h.addressUuid) && !aussiedlerhofUuids.has(h.addressUuid)
     )
 
-    const ergebnis = berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter)
+    const ergebnis = berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter, kapazitaet)
     setNvtStandorte((prev) => [...prev, ...ergebnis.standorte])
     if (ergebnis.nichtErreichbar.length > 0) {
       console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)

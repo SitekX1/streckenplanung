@@ -8,7 +8,7 @@ interface NVTModalProps {
   aussiedlerhofAnzahl: number
   nvtVorhandenAnzahl: number
   onAussiedlerhoefeMarkieren: () => void
-  onGenerieren: (ausgewaehlteOrteKeys: string[], distanzMeter: number) => void
+  onGenerieren: (ausgewaehlteOrteKeys: string[], distanzMeter: number, kapazitaet: number) => void
   onClose: () => void
 }
 
@@ -18,6 +18,7 @@ export default function NVTModal({
 }: NVTModalProps) {
   const [ausgewaehlt, setAusgewaehlt] = useState<Set<string>>(new Set())
   const [distanz, setDistanz] = useState(500)
+  const [kapazitaet, setKapazitaet] = useState(96)
 
   function toggle(key: string) {
     setAusgewaehlt((prev) => {
@@ -83,12 +84,43 @@ export default function NVTModal({
           </div>
         </div>
 
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-gray-400">NVT-Kapazität (Rohr)</span>
+          <div className="flex items-center gap-1.5">
+            {[96, 120].map((k) => (
+              <button
+                key={k}
+                onClick={() => setKapazitaet(k)}
+                className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
+                style={{
+                  backgroundColor: kapazitaet === k ? '#1e3a5f' : '#111827',
+                  color: kapazitaet === k ? '#93c5fd' : '#9ca3af',
+                  border: `1px solid ${kapazitaet === k ? '#3b82f6' : '#374151'}`,
+                }}
+              >
+                {k}er
+              </button>
+            ))}
+            <input
+              type="number"
+              min={1}
+              value={kapazitaet}
+              onChange={(e) => setKapazitaet(Number(e.target.value) || 96)}
+              className="w-16 px-2 py-1 rounded text-sm text-right outline-none"
+              style={{ backgroundColor: '#111827', color: '#f9fafb', border: '1px solid #374151' }}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-gray-600 -mt-1">
+          Reicht die Kapazität an einem Standort nicht für alle dortigen Hausanschlüsse, wird automatisch eine weitere NVT-Box am selben Standort ergänzt.
+        </p>
+
         {nvtVorhandenAnzahl > 0 && (
           <p className="text-xs text-gray-500">Bereits {nvtVorhandenAnzahl} NVT-Standort(e) auf der Karte.</p>
         )}
 
         <button
-          onClick={() => onGenerieren([...ausgewaehlt], distanz)}
+          onClick={() => onGenerieren([...ausgewaehlt], distanz, kapazitaet)}
           disabled={ausgewaehlt.size === 0}
           className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >

@@ -1,4 +1,4 @@
-import { LatLng, Hausstich } from './types'
+import { LatLng, Hausstich, NvtStandort } from './types'
 
 function haversine(a: LatLng, b: LatLng): number {
   const dLat = ((b.lat - a.lat) * Math.PI) / 180
@@ -92,8 +92,33 @@ function dijkstraMultiQuelle(graph: Map<string, Knoten>, quellen: string[]): Map
   return dist
 }
 
+// Wie dijkstraMultiQuelle, verfolgt zusätzlich mit, über welche Quelle (Index
+// in quellen) jeder Knoten am kürzesten erreicht wurde — für die Zuordnung
+// "welcher Hausanschluss hängt an welchem NVT-Standort".
+function dijkstraMultiQuelleMitIndex(
+  graph: Map<string, Knoten>,
+  quellen: string[]
+): { dist: Map<string, number>; quelle: Map<string, number> } {
+  const dist = new Map<string, number>()
+  const quelle = new Map<string, number>()
+  for (let i = 0; i < quellen.length; i++) { dist.set(quellen[i], 0); quelle.set(quellen[i], i) }
+  const visited = new Set<string>()
+  while (true) {
+    let u: string | null = null
+    let ud = Infinity
+    for (const [k, d] of dist) { if (!visited.has(k) && d < ud) { u = k; ud = d } }
+    if (u === null) break
+    visited.add(u)
+    for (const { zu, dist: d } of graph.get(u)?.nachbarn ?? []) {
+      const nd = ud + d
+      if (!dist.has(zu) || nd < dist.get(zu)!) { dist.set(zu, nd); quelle.set(zu, quelle.get(u)!) }
+    }
+  }
+  return { dist, quelle }
+}
+
 export interface NvtErgebnis {
-  standorte: LatLng[]
+  standorte: NvtStandort[]
   // Hausstich-IDs, die in keinem gemeinsamen Netzteilstück mit dem Startpunkt
   // liegen (analog zu den "nicht angebundenen Adressen" beim Trasse generieren)
   // — konnten daher nicht bewertet/versorgt werden, bitte manuell prüfen.
@@ -102,22 +127,29 @@ export interface NvtErgebnis {
 
 // Platziert NVT-Standorte auf dem Trassen-Baum, sodass kein Hausanschluss (aus
 // hausanschluesse) weiter als distanzLimitMeter (entlang der Leitung, nicht
-// Luftlinie) von seinem nächsten NVT entfernt ist. Aussiedlerhöfe sollen VOR
-// dem Aufruf bereits aus hausanschluesse herausgefiltert sein (siehe page.tsx)
-// — die Regel gilt für sie explizit nicht.
+// Luftlinie) von seinem nächsten NVT entfernt ist UND kein NVT mehr als
+// kapazitaet Hausanschlüsse trägt (z.B. 96er/120er-Rohr). Aussiedlerhöfe
+// sollen VOR dem Aufruf bereits aus hausanschluesse herausgefiltert sein
+// (siehe page.tsx) — die Abstandsregel gilt für sie explizit nicht.
 //
-// Greedy-Verfahren: Solange ein Hausanschluss weiter als das Limit vom
-// nächsten bereits gesetzten NVT entfernt ist, wird ein neues NVT auf dem
-// (eindeutigen, da Baum) Pfad von diesem Hausanschluss zurück zum Startpunkt
-// gesetzt — und zwar so weit wie möglich vom Hausanschluss weg, ohne das
-// Limit zu überschreiten. Das deckt diesen Hausanschluss sicher ab und oft
-// weitere in der Nähe gleich mit. Minimiert NVT-Anzahl nicht zwingend optimal,
-// garantiert aber zuverlässig die Abstandsregel.
+// Zweistufig:
+// 1. Greedy-Abstandsdeckung: Solange ein Hausanschluss weiter als das Limit
+//    vom nächsten bereits gesetzten NVT-Standort entfernt ist, wird ein neuer
+//    Standort auf dem (eindeutigen, da Baum) Pfad von diesem Hausanschluss
+//    zurück zum Startpunkt gesetzt — so weit wie möglich vom Hausanschluss
+//    weg, ohne das Limit zu überschreiten. Minimiert die Standort-Anzahl
+//    nicht zwingend optimal, garantiert aber zuverlässig die Abstandsregel.
+// 2. Kapazitäts-Aufteilung: Jedem Standort werden die ihm nächstgelegenen
+//    Hausanschlüsse zugeordnet. Übersteigt das die Kapazität, wird an genau
+//    diesem Standort einfach eine weitere NVT-Box aufgestellt (in der Praxis:
+//    zweiter Kasten am selben Schrank/Standort) — Abstand bleibt dadurch
+//    unverändert korrekt, nur die Kapazität wird aufgeteilt.
 export function berechneNvtStandorte(
   trassePfade: LatLng[][],
   hausanschluesse: Hausstich[],
   startpunkt: LatLng,
-  distanzLimitMeter: number
+  distanzLimitMeter: number,
+  kapazitaet: number
 ): NvtErgebnis {
   if (hausanschluesse.length === 0) return { standorte: [], nichtErreichbar: [] }
 
@@ -179,8 +211,34 @@ export function berechneNvtStandorte(
     standorte.push(neuerStandort)
   }
 
+  if (standorte.length === 0) return { standorte: [], nichtErreichbar }
+
+  // Zuordnung: jeder Hausanschluss zu seinem nächstgelegenen Standort
+  const { quelle: naechsterStandortIdx } = dijkstraMultiQuelleMitIndex(graph, standorte)
+  const gruppenProStandort: string[][] = standorte.map(() => [])
+  for (const [hausId, knoten] of gueltigeTerminals) {
+    const idx = naechsterStandortIdx.get(knoten) ?? 0
+    gruppenProStandort[idx].push(hausId)
+  }
+
+  // Kapazität durchsetzen: pro Standort in Kapazitäts-Häppchen aufteilen —
+  // jedes Häppchen wird eine eigene physische NVT-Box an derselben Position.
+  const ergebnisStandorte: NvtStandort[] = []
+  standorte.forEach((knoten, i) => {
+    const gruppe = gruppenProStandort[i]
+    const position = graph.get(knoten)!.coord
+    if (gruppe.length === 0) {
+      ergebnisStandorte.push({ position, kapazitaet, belegung: 0 })
+      return
+    }
+    for (let offset = 0; offset < gruppe.length; offset += kapazitaet) {
+      const belegung = Math.min(kapazitaet, gruppe.length - offset)
+      ergebnisStandorte.push({ position, kapazitaet, belegung })
+    }
+  })
+
   return {
-    standorte: standorte.map((k) => graph.get(k)!.coord),
+    standorte: ergebnisStandorte,
     nichtErreichbar,
   }
 }

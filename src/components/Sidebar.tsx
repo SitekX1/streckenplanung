@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react'
 import { OrtInfo } from '../lib/types'
 import KalkulationModal from './KalkulationModal'
+import EinstellungenModal from './EinstellungenModal'
 
 interface SidebarProps {
   adressenCount: number
@@ -109,6 +110,7 @@ export default function Sidebar({
   const excelInputRef = useRef<HTMLInputElement>(null)
   const projektLadenRef = useRef<HTMLInputElement>(null)
   const [kalkulationOffen, setKalkulationOffen] = useState(false)
+  const [einstellungenOffen, setEinstellungenOffen] = useState(false)
 
   const hatDaten = adressenCount > 0
   const kannTrasseGenerieren = startpunktGesetzt && hatDaten
@@ -121,12 +123,21 @@ export default function Sidebar({
       style={{ backgroundColor: '#141414', borderRight: '1px solid #1f2937' }}
     >
       {/* Header */}
-      <div className="px-5 py-5 border-b border-gray-800">
-        <h1 className="text-white font-semibold text-lg leading-tight">Trassenplaner</h1>
-        <span className="text-xs text-gray-500 mt-0.5 block">Glasfaser Streckenplanung</span>
+      <div className="px-5 py-5 border-b border-gray-800 flex items-start justify-between">
+        <div>
+          <h1 className="text-white font-semibold text-lg leading-tight">Trassenplaner</h1>
+          <span className="text-xs text-gray-500 mt-0.5 block">Glasfaser Streckenplanung</span>
+        </div>
+        <button
+          onClick={() => setEinstellungenOffen(true)}
+          title="Einstellungen"
+          className="text-lg text-gray-500 hover:text-white transition-colors leading-none mt-0.5"
+        >
+          ⚙️
+        </button>
       </div>
 
-      <div className="flex-1 px-4 py-4 flex flex-col gap-5">
+      <div className="flex-1 px-4 py-4 flex flex-col gap-4">
 
         {/* Sektion: Projekt */}
         <div>
@@ -313,11 +324,11 @@ export default function Sidebar({
                   </button>
                   <button
                     onClick={onEditierbarToggle}
-                    className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors text-left"
+                    className="w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left"
                     style={{
-                      backgroundColor: editierbarAktiv ? '#1e3a5f' : '#1f2937',
-                      color: editierbarAktiv ? '#93c5fd' : '#9ca3af',
-                      border: `1px solid ${editierbarAktiv ? '#3b82f6' : '#374151'}`,
+                      backgroundColor: editierbarAktiv ? '#1e3a5f' : '#3f2d0a',
+                      color: editierbarAktiv ? '#93c5fd' : '#fbbf24',
+                      border: `1px solid ${editierbarAktiv ? '#3b82f6' : '#d97706'}`,
                     }}
                   >
                     ✏️ {editierbarAktiv ? 'Bearbeitung beenden' : 'Trasse bearbeiten'}
@@ -424,7 +435,6 @@ export default function Sidebar({
 
         {/* Sektion: NVT (dev) */}
         <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">📡 NVT</p>
           <button
             onClick={onNvtButtonKlick}
             disabled={!trasseVorhanden || hausanschluesseCount === 0}
@@ -491,32 +501,6 @@ export default function Sidebar({
           </div>
         </div>
 
-        <div className="border-t border-gray-800" />
-
-        {/* Sektion: Darstellung */}
-        <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">Darstellung</p>
-          <div className="flex flex-col gap-2.5">
-            {[
-              { label: 'Adressen', value: adressFarbe, onChange: onAdressFarbeAendern },
-              { label: 'Trasse', value: trasseFarbe, onChange: onTrasseFarbeAendern },
-              { label: 'Feldweg-Anteil', value: feldwegFarbe, onChange: onFeldwegFarbeAendern },
-              { label: 'Hausanschlüsse', value: hausanschlussfarbe, onChange: onHausanschlussFarbeAendern },
-            ].map(({ label, value, onChange }) => (
-              <div key={label} className="flex items-center justify-between px-1">
-                <span className="text-xs text-gray-400">{label}</span>
-                <input
-                  type="color"
-                  value={value}
-                  onChange={(e) => onChange(e.target.value)}
-                  className="w-8 h-6 rounded cursor-pointer border-0 p-0"
-                  style={{ background: 'transparent' }}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-
       </div>
 
       {kalkulationOffen && (
@@ -525,6 +509,20 @@ export default function Sidebar({
           feldwegLaenge={feldwegLaenge}
           hausanschluesseCount={hausanschluesseCount}
           onClose={() => setKalkulationOffen(false)}
+        />
+      )}
+
+      {einstellungenOffen && (
+        <EinstellungenModal
+          adressFarbe={adressFarbe}
+          trasseFarbe={trasseFarbe}
+          hausanschlussfarbe={hausanschlussfarbe}
+          feldwegFarbe={feldwegFarbe}
+          onAdressFarbeAendern={onAdressFarbeAendern}
+          onTrasseFarbeAendern={onTrasseFarbeAendern}
+          onHausanschlussFarbeAendern={onHausanschlussFarbeAendern}
+          onFeldwegFarbeAendern={onFeldwegFarbeAendern}
+          onClose={() => setEinstellungenOffen(false)}
         />
       )}
     </aside>
