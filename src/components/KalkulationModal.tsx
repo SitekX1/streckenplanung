@@ -59,25 +59,21 @@ export default function KalkulationModal({
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(preise)) } catch { /* ignorieren */ }
   }, [preise])
 
-  const feld = (
-    label: string,
-    key: keyof KalkulationPreise,
-    einheit: string
-  ) => (
-    <div className="flex items-center justify-between gap-3">
+  const feld = (label: string, key: keyof KalkulationPreise, einheit: string) => (
+    <label className="flex flex-col gap-1">
       <span className="text-xs text-gray-400">{label}</span>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid #374151', backgroundColor: '#111827' }}>
         <input
           type="number"
           min={0}
           value={preise[key]}
           onChange={(e) => setPreise((p) => ({ ...p, [key]: Number(e.target.value) || 0 }))}
-          className="w-24 px-2 py-1 rounded text-sm text-right outline-none"
-          style={{ backgroundColor: '#111827', color: '#f9fafb', border: '1px solid #374151' }}
+          className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
+          style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
         />
-        <span className="text-xs text-gray-500 w-16">{einheit}</span>
+        <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>{einheit}</span>
       </div>
-    </div>
+    </label>
   )
 
   const strasseSumme = strasseLaenge * preise.strassePreisProMeter
@@ -88,48 +84,72 @@ export default function KalkulationModal({
   const gesamt = strasseSumme + feldwegSumme + hausanschlussSumme + sondergebuehrSumme + nvtSumme
 
   const zeile = (label: string, menge: string, summe: number) => (
-    <div className="flex justify-between items-center text-xs py-1" style={{ borderBottom: '1px solid #262b36' }}>
+    <div className="flex justify-between items-center text-xs py-1.5" style={{ borderBottom: '1px solid #1f2430' }}>
       <span className="text-gray-500">{label} <span className="text-gray-600">({menge})</span></span>
       <span className="text-gray-200 font-medium">{formatEuro(summe)}</span>
     </div>
   )
 
+  const sektion = (titel: string, inhalt: React.ReactNode) => (
+    <div className="rounded-xl p-3.5" style={{ backgroundColor: '#181c24', border: '1px solid #262b36' }}>
+      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">{titel}</p>
+      <div className="grid grid-cols-2 gap-3">{inhalt}</div>
+    </div>
+  )
+
   return (
-    <div className="fixed inset-0 z-1000 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-      <div className="rounded-lg shadow-lg p-4 flex flex-col gap-3"
-        style={{ backgroundColor: '#1a1a1a', border: '1px solid #374151', width: 360, maxHeight: '85vh', overflowY: 'auto' }}>
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-white">💰 Kalkulation</span>
-          <button onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ color: '#9ca3af' }}>✕</button>
+    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
+      <div className="rounded-2xl shadow-2xl flex flex-col"
+        style={{ backgroundColor: '#14171d', border: '1px solid #2a2f3a', width: 420, maxHeight: '90vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#262b36' }}>
+          <span className="text-base font-semibold text-white">💰 Kalkulation</span>
+          <button onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-sm hover:bg-gray-800 transition-colors"
+            style={{ color: '#9ca3af' }}>
+            ✕
+          </button>
         </div>
 
-        <div className="flex flex-col gap-2">
-          {feld('Straße-Trasse', 'strassePreisProMeter', '€/m')}
-          {feld('Feldweg-Trasse', 'feldwegPreisProMeter', '€/m')}
-          {feld('Hausanschluss', 'hausanschlussPreis', '€/Stk.')}
-          <div className="border-t my-0.5" style={{ borderColor: '#374151' }} />
-          {feld('Sondergebühr · Anzahl', 'sondergebuehrAnzahl', 'Stk.')}
-          {feld('Sondergebühr · Preis', 'sondergebuehrPreis', '€/Stk.')}
-          <div className="border-t my-0.5" style={{ borderColor: '#374151' }} />
-          {feld('NVT · Anzahl', 'nvtAnzahl', 'Stk.')}
-          {feld('NVT · Preis', 'nvtPreis', '€/Stk.')}
-        </div>
+        <div className="flex flex-col gap-3 p-5 overflow-y-auto">
+          {sektion('🛣️ Trasse', (
+            <>
+              {feld('Straße', 'strassePreisProMeter', '€/m')}
+              {feld('Feldweg', 'feldwegPreisProMeter', '€/m')}
+            </>
+          ))}
 
-        <div className="rounded-lg p-3 flex flex-col mt-1" style={{ backgroundColor: '#111827' }}>
-          {zeile('Straße', `${Math.round(strasseLaenge)} m`, strasseSumme)}
-          {zeile('Feldweg', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
-          {zeile('Hausanschlüsse', `${hausanschluesseCount} Stk.`, hausanschlussSumme)}
-          {preise.sondergebuehrAnzahl > 0 && zeile('Sondergebühr', `${preise.sondergebuehrAnzahl} Stk.`, sondergebuehrSumme)}
-          {preise.nvtAnzahl > 0 && zeile('NVT', `${preise.nvtAnzahl} Stk.`, nvtSumme)}
-          <div className="flex justify-between items-center pt-2 mt-1" style={{ borderTop: '1px solid #374151' }}>
-            <span className="text-sm font-medium text-gray-300">Gesamt</span>
-            <span className="text-base font-semibold text-blue-400">{formatEuro(gesamt)}</span>
+          {sektion('🏠 Hausanschluss', (
+            <>
+              {feld('Preis / Stück', 'hausanschlussPreis', '€')}
+              <div />
+              {feld('Sondergebühr · Anzahl', 'sondergebuehrAnzahl', 'Stk.')}
+              {feld('Sondergebühr · Preis', 'sondergebuehrPreis', '€/Stk.')}
+            </>
+          ))}
+
+          {sektion('📡 NVT', (
+            <>
+              {feld('Anzahl', 'nvtAnzahl', 'Stk.')}
+              {feld('Preis / Stück', 'nvtPreis', '€')}
+            </>
+          ))}
+
+          <div className="rounded-xl p-4 flex flex-col mt-1" style={{ backgroundColor: '#0f1216', border: '1px solid #262b36' }}>
+            {zeile('Straße', `${Math.round(strasseLaenge)} m`, strasseSumme)}
+            {zeile('Feldweg', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
+            {zeile('Hausanschlüsse', `${hausanschluesseCount} Stk.`, hausanschlussSumme)}
+            {preise.sondergebuehrAnzahl > 0 && zeile('Sondergebühr', `${preise.sondergebuehrAnzahl} Stk.`, sondergebuehrSumme)}
+            {preise.nvtAnzahl > 0 && zeile('NVT', `${preise.nvtAnzahl} Stk.`, nvtSumme)}
+            <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid #262b36' }}>
+              <span className="text-sm font-medium text-gray-300">Gesamt</span>
+              <span className="text-lg font-semibold text-blue-400">{formatEuro(gesamt)}</span>
+            </div>
           </div>
-        </div>
 
-        <p className="text-xs text-gray-600">
-          Preise werden geräteweit gespeichert und gelten projektübergreifend.
-        </p>
+          <p className="text-xs text-gray-600 text-center">
+            Preise werden geräteweit gespeichert und gelten projektübergreifend.
+          </p>
+        </div>
       </div>
     </div>
   )

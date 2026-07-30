@@ -17,3 +17,16 @@ body {
   height: 100%;
   width: 100%;
 }
+
+/* Native Zahlen-Spinner ausblenden — die Pfeile sitzen direkt neben der Zahl
+   und werden in Modals (Kalkulation, NVT) staendig versehentlich statt des
+   Textfelds getroffen. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

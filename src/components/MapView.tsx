@@ -86,16 +86,22 @@ interface MapViewProps {
   aussiedlerhofUuids?: Set<string>
   aussiedlerhofMarkierenAktiv?: boolean
   nvtStandorte?: NvtStandort[]
+  nvtManuellSetzenAktiv?: boolean
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][], kinds: WegKind[]) => void
   onHausanschluesseGeaendert: (updated: Hausstich[]) => void
   onAussiedlerhofToggle?: (uuid: string) => void
   onAussiedlerhofMarkierenFertig?: () => void
+  onNvtManuellHinzufuegen?: (position: LatLng, kapazitaet: number) => void
+  onNvtManuellSetzenAbbrechen?: () => void
+  onNvtLoeschen?: (nvtIdx: number) => void
+  onNvtHausanschlussToggle?: (nvtIdx: number, hausId: string) => void
 }
 
 function KlickHandler({
   aktiv, onKlick, ziehModus, onZiehZiel, hsZeichenModus, onHsZeichenZiel,
+  nvtSetzenModus, onNvtSetzenZiel,
   menuOffen, onMenuSchliessen, onMapKlick,
 }: {
   aktiv: boolean
@@ -104,6 +110,8 @@ function KlickHandler({
   onZiehZiel?: (p: LatLng) => void
   hsZeichenModus?: boolean
   onHsZeichenZiel?: (p: LatLng) => void
+  nvtSetzenModus?: boolean
+  onNvtSetzenZiel?: (p: LatLng) => void
   menuOffen?: boolean
   onMenuSchliessen?: () => void
   onMapKlick?: () => void
@@ -114,6 +122,7 @@ function KlickHandler({
       const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
       if (ziehModus && onZiehZiel) onZiehZiel(pos)
       else if (hsZeichenModus && onHsZeichenZiel) onHsZeichenZiel(pos)
+      else if (nvtSetzenModus && onNvtSetzenZiel) onNvtSetzenZiel(pos)
       else if (aktiv) onKlick(pos)
       else onMapKlick?.()
     },
@@ -181,8 +190,10 @@ const MapView = memo(function MapView({
   feldwegFarbe, trassePfadeKinds,
   nichtAngebundeneAdressen = [],
   aussiedlerhofUuids = new Set(), aussiedlerhofMarkierenAktiv = false, nvtStandorte = [],
+  nvtManuellSetzenAktiv = false,
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
   onAussiedlerhofToggle, onAussiedlerhofMarkierenFertig,
+  onNvtManuellHinzufuegen, onNvtManuellSetzenAbbrechen, onNvtLoeschen, onNvtHausanschlussToggle,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -215,6 +226,12 @@ const MapView = memo(function MapView({
     () => new Set(ausgewaehltesNvtIdx !== null ? nvtStandorte[ausgewaehltesNvtIdx]?.hausanschlussIds ?? [] : []),
     [ausgewaehltesNvtIdx, nvtStandorte]
   )
+  // Manuelles NVT setzen: nach Klick auf die Karte erst Kapazität abfragen,
+  // bevor der Standort wirklich angelegt wird.
+  const [neuerNvtPosition, setNeuerNvtPosition] = useState<LatLng | null>(null)
+  const [neueNvtKapazitaet, setNeueNvtKapazitaet] = useState(24)
+  // Zuweisen-Modus: Hausanschlüsse anklicken ordnet sie dem ausgewählten NVT zu.
+  const [nvtZuweisenAktiv, setNvtZuweisenAktiv] = useState(false)
 
   // Lokale Arbeitskopie der Pfade im Edit-Modus
   const [localPfade, setLocalPfade] = useState<LatLng[][]>([])
@@ -601,6 +618,22 @@ const MapView = memo(function MapView({
     setNeuerHsStart(null)
   }
 
+  // ── NVT manuell setzen ────────────────────────────────────────────────────
+  function handleNvtSetzenZiel(pos: LatLng) {
+    setNeuerNvtPosition(pos)
+  }
+
+  function handleNeuerNvtBestaetigen() {
+    if (!neuerNvtPosition) return
+    onNvtManuellHinzufuegen?.(neuerNvtPosition, neueNvtKapazitaet)
+    setNeuerNvtPosition(null)
+  }
+
+  function handleNeuerNvtAbbrechen() {
+    setNeuerNvtPosition(null)
+    onNvtManuellSetzenAbbrechen?.()
+  }
+
   // ── Hausanschlüsse ────────────────────────────────────────────────────────
   function hausstichWp(h: Hausstich): LatLng[] {
     return h.wegpunkte && h.wegpunkte.length >= 2 ? h.wegpunkte : [h.hausKoordinate, h.trassenPunkt]
@@ -760,6 +793,7 @@ const MapView = memo(function MapView({
         <KlickHandler aktiv={startpunktSetzenAktiv} onKlick={onStartpunktGesetzt}
           ziehModus={!!ziehStartId} onZiehZiel={handleZiehZiel}
           hsZeichenModus={!!neuerHsStart} onHsZeichenZiel={handleNeuerHsZiel}
+          nvtSetzenModus={nvtManuellSetzenAktiv && !neuerNvtPosition} onNvtSetzenZiel={handleNvtSetzenZiel}
           menuOffen={!!aktivMenu} onMenuSchliessen={() => setAktivMenu(null)}
           onMapKlick={editierbarAktiv && !kleinProjekt ? handleDeselect : undefined} />
         <AutoZoom adressen={adressen} />
@@ -1005,17 +1039,46 @@ const MapView = memo(function MapView({
         })}
 
         {/* NVT-Standorte */}
-        {nvtStandorte.map((nvt, i) => (
-          <Marker key={`nvt-${i}`} position={[nvt.position.lat, nvt.position.lng]} icon={nvtIcon}
-            eventHandlers={{
-              click: (e) => {
-                if (e.originalEvent) e.originalEvent.stopPropagation()
-                setAusgewaehltesNvtIdx((prev) => (prev === i ? null : i))
-              },
-            }}>
-            <Tooltip>NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt{ausgewaehltesNvtIdx === i ? ' · Hausanschlüsse markiert' : ' · antippen zum Markieren'}</Tooltip>
-          </Marker>
-        ))}
+        {nvtStandorte.map((nvt, i) => {
+          const istUeberlastet = nvt.belegung > nvt.kapazitaet
+          return (
+            <Marker key={`nvt-${i}`} position={[nvt.position.lat, nvt.position.lng]} icon={nvtIcon}
+              eventHandlers={{
+                click: (e) => {
+                  if (e.originalEvent) e.originalEvent.stopPropagation()
+                  setNvtZuweisenAktiv(false)
+                  setAusgewaehltesNvtIdx((prev) => (prev === i ? null : i))
+                },
+              }}>
+              <Tooltip>
+                NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt{istUeberlastet ? ' · ⚠️ überbelegt' : ''}
+                {ausgewaehltesNvtIdx === i ? ' · Hausanschlüsse markiert' : ' · antippen für Details'}
+              </Tooltip>
+              <Popup>
+                <div className="text-sm">
+                  <p className="font-semibold">NVT {i + 1}</p>
+                  <p style={istUeberlastet ? { color: '#dc2626', fontWeight: 600 } : undefined}>
+                    {nvt.belegung}/{nvt.kapazitaet} belegt{istUeberlastet ? ' ⚠️ über Kapazität' : ''}
+                  </p>
+                  <button
+                    onClick={() => { setAusgewaehltesNvtIdx(i); setNvtZuweisenAktiv(true) }}
+                    className="mt-2 block w-full text-left px-2 py-1.5 rounded text-xs font-medium"
+                    style={{ backgroundColor: '#1e3a5f', color: '#93c5fd' }}
+                  >
+                    🔗 Hausanschlüsse zuweisen
+                  </button>
+                  <button
+                    onClick={() => { onNvtLoeschen?.(i); setAusgewaehltesNvtIdx(null); setNvtZuweisenAktiv(false) }}
+                    className="mt-1.5 block w-full text-left px-2 py-1.5 rounded text-xs font-medium"
+                    style={{ backgroundColor: '#450a0a', color: '#fca5a5' }}
+                  >
+                    🗑️ Standort löschen
+                  </button>
+                </div>
+              </Popup>
+            </Marker>
+          )
+        })}
 
         {startpunkt && <Marker position={[startpunkt.lat, startpunkt.lng]} icon={startpunktIcon}><Tooltip>Startpunkt</Tooltip></Marker>}
 
@@ -1037,6 +1100,13 @@ const MapView = memo(function MapView({
               { label: '🗑️ Linie löschen', farbe: '#f87171', action: () => { handleHsLoeschen(h.id); setAktivMenu(null) } },
             ])
           }
+          const hsZuweisenKlick = (e: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(e)
+            if (ausgewaehltesNvtIdx !== null) onNvtHausanschlussToggle?.(ausgewaehltesNvtIdx, h.id)
+          }
+          const klickHandler = nvtZuweisenAktiv && ausgewaehltesNvtIdx !== null
+            ? { click: hsZuweisenKlick }
+            : editierbarAktiv ? { click: hsKlick } : {}
           return (
             <Fragment key={h.id}>
               <Polyline positions={positions}
@@ -1045,14 +1115,17 @@ const MapView = memo(function MapView({
                   weight: istAktiv ? (editierbarAktiv ? 7 : 6) : istHervorgehoben ? 6 : (editierbarAktiv ? 3 : 2),
                   opacity: 0.95,
                 }}
-                eventHandlers={editierbarAktiv ? { click: hsKlick } : {}}>
-                <Tooltip>{editierbarAktiv ? 'Antippen = Menü · ' : ''}Hausanschluss: {h.laengeMeter.toFixed(1)} m</Tooltip>
+                eventHandlers={klickHandler}>
+                <Tooltip>
+                  {nvtZuweisenAktiv ? (istHervorgehoben ? 'Antippen = entfernen · ' : 'Antippen = zuweisen · ') : editierbarAktiv ? 'Antippen = Menü · ' : ''}
+                  Hausanschluss: {h.laengeMeter.toFixed(1)} m
+                </Tooltip>
               </Polyline>
               {/* Breite unsichtbare Tipp-Fläche — die duenne HS-Linie ist auf Touch-Geraeten schwer zu treffen */}
-              {editierbarAktiv && (
+              {(editierbarAktiv || nvtZuweisenAktiv) && (
                 <Polyline positions={positions}
                   pathOptions={{ color: '#000', weight: 18, opacity: 0.01 }}
-                  eventHandlers={{ click: hsKlick }} />
+                  eventHandlers={klickHandler} />
               )}
             </Fragment>
           )
@@ -1099,6 +1172,66 @@ const MapView = memo(function MapView({
           <button onClick={() => onAussiedlerhofMarkierenFertig?.()}
             className="px-3 py-1 rounded text-xs font-medium"
             style={{ backgroundColor: '#a16207', color: '#fff' }}>
+            ✓ Fertig
+          </button>
+        </div>
+      )}
+
+      {nvtManuellSetzenAktiv && !neuerNvtPosition && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
+          📍 Klick auf die Karte, um einen NVT-Standort zu setzen
+          <button onClick={handleNeuerNvtAbbrechen}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            ✕ Abbrechen
+          </button>
+        </div>
+      )}
+
+      {neuerNvtPosition && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg p-3 flex flex-col gap-2.5"
+          style={{ backgroundColor: '#1a1a1a', border: '1px solid #3b82f6', width: 280 }}>
+          <span className="text-sm font-medium text-white">📍 Kapazität für neuen NVT</span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {[7, 12, 24, 96, 120].map((k) => (
+              <button key={k} onClick={() => setNeueNvtKapazitaet(k)}
+                className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
+                style={{
+                  backgroundColor: neueNvtKapazitaet === k ? '#1e3a5f' : '#111827',
+                  color: neueNvtKapazitaet === k ? '#93c5fd' : '#9ca3af',
+                  border: `1px solid ${neueNvtKapazitaet === k ? '#3b82f6' : '#374151'}`,
+                }}>
+                {k}
+              </button>
+            ))}
+            <input type="number" min={1} value={neueNvtKapazitaet}
+              onChange={(e) => setNeueNvtKapazitaet(Number(e.target.value) || 1)}
+              className="w-16 px-2 py-1 rounded text-sm outline-none"
+              style={{ backgroundColor: '#111827', color: '#f9fafb', border: '1px solid #374151' }} />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handleNeuerNvtBestaetigen}
+              className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
+              style={{ backgroundColor: '#3b82f6', color: '#fff' }}>
+              ✓ Anlegen
+            </button>
+            <button onClick={handleNeuerNvtAbbrechen}
+              className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
+              style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+              ✕ Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
+
+      {nvtZuweisenAktiv && ausgewaehltesNvtIdx !== null && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
+          🔗 Hausanschlüsse anklicken zum Zuweisen/Entfernen (NVT {ausgewaehltesNvtIdx + 1})
+          <button onClick={() => setNvtZuweisenAktiv(false)}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: '#3b82f6', color: '#fff' }}>
             ✓ Fertig
           </button>
         </div>

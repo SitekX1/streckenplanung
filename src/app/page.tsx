@@ -173,6 +173,10 @@ export default function Home() {
   const [aussiedlerhofMarkierenAktiv, setAussiedlerhofMarkierenAktiv] = useState(false)
   const [nvtModalOffen, setNvtModalOffen] = useState(false)
   const [nvtStandorte, setNvtStandorte] = useState<NvtStandort[]>([])
+  // Manuelles Setzen: Klick auf die Karte fragt danach nach der Kapazität
+  // (siehe MapView) — für Einzelfälle wie 2-3 benachbarte Aussiedlerhöfe mit
+  // eigenem kleinem NVT/Schacht statt der automatischen Dorf-weiten Planung.
+  const [nvtManuellSetzenAktiv, setNvtManuellSetzenAktiv] = useState(false)
 
   const pushHistory = useCallback(() => {
     setHistory((prev) => [
@@ -546,6 +550,48 @@ export default function Home() {
     setNvtModalOffen(true)
   }, [])
 
+  const handleNvtManuellSetzenStart = useCallback(() => {
+    setNvtModalOffen(false)
+    setNvtManuellSetzenAktiv(true)
+  }, [])
+
+  const handleNvtManuellSetzenAbbrechen = useCallback(() => {
+    setNvtManuellSetzenAktiv(false)
+  }, [])
+
+  const handleNvtManuellHinzufuegen = useCallback((position: LatLng, kapazitaet: number) => {
+    setNvtStandorte((prev) => [...prev, { position, kapazitaet, belegung: 0, hausanschlussIds: [] }])
+    setNvtManuellSetzenAktiv(false)
+  }, [])
+
+  const handleNvtLoeschen = useCallback((nvtIdx: number) => {
+    setNvtStandorte((prev) => prev.filter((_, i) => i !== nvtIdx))
+  }, [])
+
+  // Ordnet einen Hausanschluss exklusiv einem NVT zu (toggle: erneutes
+  // Anklicken beim selben NVT entfernt ihn wieder) — war er vorher einem
+  // ANDEREN NVT zugeordnet, wird er dort automatisch entfernt.
+  const handleNvtHausanschlussToggle = useCallback((nvtIdx: number, hausId: string) => {
+    setNvtStandorte((prev) => {
+      const ziel = prev[nvtIdx]
+      if (!ziel) return prev
+      const warBeimZielZugeordnet = ziel.hausanschlussIds.includes(hausId)
+      return prev.map((nvt, i) => {
+        if (i === nvtIdx) {
+          const neueIds = warBeimZielZugeordnet
+            ? nvt.hausanschlussIds.filter((id) => id !== hausId)
+            : [...nvt.hausanschlussIds, hausId]
+          return { ...nvt, hausanschlussIds: neueIds, belegung: neueIds.length }
+        }
+        if (!warBeimZielZugeordnet && nvt.hausanschlussIds.includes(hausId)) {
+          const neueIds = nvt.hausanschlussIds.filter((id) => id !== hausId)
+          return { ...nvt, hausanschlussIds: neueIds, belegung: neueIds.length }
+        }
+        return nvt
+      })
+    })
+  }, [])
+
   const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[]) => {
     if (!startpunkt || ausgewaehlteOrteKeys.length === 0) return
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
@@ -724,12 +770,17 @@ export default function Home() {
           aussiedlerhofUuids={aussiedlerhofUuids}
           aussiedlerhofMarkierenAktiv={aussiedlerhofMarkierenAktiv}
           nvtStandorte={nvtStandorte}
+          nvtManuellSetzenAktiv={nvtManuellSetzenAktiv}
           onStartpunktGesetzt={handleStartpunktGesetzt}
           onTrasseGeaendert={handleTrasseGeaendert}
           onTrassePfadeGeaendert={handleTrassePfadeGeaendert}
           onHausanschluesseGeaendert={handleHausanschluesseGeaendert}
           onAussiedlerhofToggle={handleAussiedlerhofToggle}
           onAussiedlerhofMarkierenFertig={handleAussiedlerhoefeMarkierenFertig}
+          onNvtManuellHinzufuegen={handleNvtManuellHinzufuegen}
+          onNvtManuellSetzenAbbrechen={handleNvtManuellSetzenAbbrechen}
+          onNvtLoeschen={handleNvtLoeschen}
+          onNvtHausanschlussToggle={handleNvtHausanschlussToggle}
         />
         {nvtModalOffen && (
           <NVTModal
@@ -737,6 +788,7 @@ export default function Home() {
             aussiedlerhofAnzahl={aussiedlerhofUuids.size}
             nvtVorhandenAnzahl={nvtStandorte.length}
             onAussiedlerhoefeMarkieren={handleAussiedlerhoefeMarkierenStart}
+            onManuellSetzen={handleNvtManuellSetzenStart}
             onGenerieren={handleNvtGenerieren}
             onClose={() => setNvtModalOffen(false)}
           />
