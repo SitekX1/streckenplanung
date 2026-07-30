@@ -30,6 +30,8 @@ interface SidebarProps {
   feldwegFarbe: string
   canUndo: boolean
   undoCount: number
+  historyLabels: string[]
+  onUndoZu: (index: number) => void
   nvtStandorteAnzahl: number
   onNvtButtonKlick: () => void
   onAdressFarbeAendern: (farbe: string) => void
@@ -87,6 +89,8 @@ export default function Sidebar({
   feldwegFarbe,
   canUndo,
   undoCount,
+  historyLabels,
+  onUndoZu,
   nvtStandorteAnzahl,
   onNvtButtonKlick,
   onAdressFarbeAendern,
@@ -111,6 +115,7 @@ export default function Sidebar({
   const projektLadenRef = useRef<HTMLInputElement>(null)
   const [kalkulationOffen, setKalkulationOffen] = useState(false)
   const [einstellungenOffen, setEinstellungenOffen] = useState(false)
+  const [verlaufOffen, setVerlaufOffen] = useState(false)
 
   const hatDaten = adressenCount > 0
   const kannTrasseGenerieren = startpunktGesetzt && hatDaten
@@ -167,14 +172,41 @@ export default function Sidebar({
             >
               💾 Projekt speichern
             </button>
-            <button
-              onClick={onUndo}
-              disabled={!canUndo}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{ color: canUndo ? '#fbbf24' : '#6b7280' }}
-            >
-              ↩ Zurück{canUndo ? ` (${undoCount})` : ''}
-            </button>
+            <div className="flex gap-1.5">
+              <button
+                onClick={onUndo}
+                disabled={!canUndo}
+                className="flex-1 text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ color: canUndo ? '#fbbf24' : '#6b7280' }}
+              >
+                ↩ Zurück{canUndo ? ` (${undoCount})` : ''}
+              </button>
+              {canUndo && (
+                <button
+                  onClick={() => setVerlaufOffen((v) => !v)}
+                  title="Verlauf anzeigen"
+                  className="px-3 py-2 rounded-lg text-sm transition-colors"
+                  style={{ color: verlaufOffen ? '#fbbf24' : '#6b7280', backgroundColor: verlaufOffen ? '#2a2115' : 'transparent' }}
+                >
+                  📜
+                </button>
+              )}
+            </div>
+            {verlaufOffen && canUndo && (
+              <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto rounded-lg" style={{ backgroundColor: '#1a1a1a' }}>
+                {historyLabels.map((_, i) => historyLabels.length - 1 - i).map((idx, pos) => (
+                  <button
+                    key={idx}
+                    onClick={() => { onUndoZu(idx); setVerlaufOffen(false) }}
+                    className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-gray-800 transition-colors"
+                    style={{ color: pos === 0 ? '#fbbf24' : '#9ca3af' }}
+                    title="Zu diesem Zeitpunkt zurückspringen"
+                  >
+                    ↩ Vor: „{historyLabels[idx]}“
+                  </button>
+                ))}
+              </div>
+            )}
             <button
               onClick={() => {
                 if (hatDaten && !confirm('Alle Daten löschen und neu anfangen?')) return

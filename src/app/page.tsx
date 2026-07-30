@@ -124,12 +124,15 @@ function passendeKinds(pfade: LatLng[][], kinds: WegKind[]): WegKind[] {
 
 type Laengen = { trassenLaenge: number; hausanschluesseLaenge: number; gesamt: number; strasseLaenge: number; feldwegLaenge: number }
 type HistorySnapshot = {
+  label: string
   trassePfade: LatLng[][]
   trasse: LatLng[]
   hausanschluesse: Hausstich[]
   laengen: Laengen
   trasseAdressenUuids: string[]
   trassePfadeKinds: WegKind[]
+  nvtStandorte: NvtStandort[]
+  aussiedlerhofUuids: string[]
 }
 
 export default function Home() {
@@ -178,26 +181,46 @@ export default function Home() {
   // eigenem kleinem NVT/Schacht statt der automatischen Dorf-weiten Planung.
   const [nvtManuellSetzenAktiv, setNvtManuellSetzenAktiv] = useState(false)
 
-  const pushHistory = useCallback(() => {
+  const pushHistory = useCallback((label: string) => {
     setHistory((prev) => [
-      ...prev.slice(-9),
-      { trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids: [...trasseAdressenUuids], trassePfadeKinds },
+      ...prev.slice(-19),
+      {
+        label, trassePfade, trasse, hausanschluesse, laengen,
+        trasseAdressenUuids: [...trasseAdressenUuids], trassePfadeKinds,
+        nvtStandorte, aussiedlerhofUuids: [...aussiedlerhofUuids],
+      },
     ])
-  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds])
+  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids])
+
+  const wendeSnapshotAn = useCallback((snap: HistorySnapshot) => {
+    setTrassePfade(snap.trassePfade)
+    setTrasse(snap.trasse)
+    setHausanschluesse(snap.hausanschluesse)
+    setLaengen(snap.laengen)
+    setTrasseAdressenUuids(new Set(snap.trasseAdressenUuids))
+    setTrassePfadeKinds(snap.trassePfadeKinds)
+    setNvtStandorte(snap.nvtStandorte)
+    setAussiedlerhofUuids(new Set(snap.aussiedlerhofUuids))
+  }, [])
 
   const handleUndo = useCallback(() => {
     setHistory((prev) => {
       if (prev.length === 0) return prev
-      const snap = prev[prev.length - 1]
-      setTrassePfade(snap.trassePfade)
-      setTrasse(snap.trasse)
-      setHausanschluesse(snap.hausanschluesse)
-      setLaengen(snap.laengen)
-      setTrasseAdressenUuids(new Set(snap.trasseAdressenUuids))
-      setTrassePfadeKinds(snap.trassePfadeKinds)
+      wendeSnapshotAn(prev[prev.length - 1])
       return prev.slice(0, -1)
     })
-  }, [])
+  }, [wendeSnapshotAn])
+
+  // Springt zu einem beliebigen Punkt in der Historie (nicht nur einen
+  // einzelnen Schritt zurück) — alles danach (inkl. des gewählten Snapshots
+  // selbst, der ja der Zustand VOR diesem Schritt ist) wird verworfen.
+  const handleUndoZu = useCallback((index: number) => {
+    setHistory((prev) => {
+      if (index < 0 || index >= prev.length) return prev
+      wendeSnapshotAn(prev[index])
+      return prev.slice(0, index)
+    })
+  }, [wendeSnapshotAn])
 
   const handleExcelImport = useCallback(async (file: File) => {
     const ergebnis = await parseExcelFile(file)
@@ -237,7 +260,7 @@ export default function Home() {
   const handleTrasseGenerieren = useCallback(async () => {
     if (!startpunkt || adressen.length === 0) return
 
-    pushHistory()
+    pushHistory('Trasse generiert')
     setEditierbarAktiv(false)
     setHausanschluesse([])
     setTrasseProgress(2)
@@ -329,7 +352,7 @@ export default function Home() {
       return
     }
 
-    pushHistory()
+    pushHistory('Trasse erweitert')
     setTrasseProgress(2)
     setNichtAngebundeneAdressen([])
 
@@ -428,7 +451,7 @@ export default function Home() {
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (pfade.length === 0) return
 
-    pushHistory()
+    pushHistory('Hausanschlüsse generiert')
     setHausanschluesseProgress(1)
 
     const gefilterteAdressen =
@@ -459,7 +482,7 @@ export default function Home() {
 
     if (gefilterteAdressen.length === 0) return
 
-    pushHistory()
+    pushHistory('Hausanschlüsse hinzugefügt')
     setHausanschluesseProgress(1)
     const neueHs = await berechneHausanschluesse(pfade, gefilterteAdressen, (p) =>
       setHausanschluesseProgress(p)
@@ -473,7 +496,7 @@ export default function Home() {
 
   const handleTrasseGeaendert = useCallback(
     (punkte: LatLng[]) => {
-      pushHistory()
+      pushHistory('Trasse bearbeitet')
       setTrasse(punkte)
       setTrassePfade([])
       // Alte Einzel-Trasse-Darstellung (kein pfade-Array) — hier ist keine
@@ -486,7 +509,7 @@ export default function Home() {
 
   const handleTrassePfadeGeaendert = useCallback(
     (pfade: LatLng[][], kinds: WegKind[]) => {
-      pushHistory()
+      pushHistory('Trasse bearbeitet')
       setTrassePfade(pfade)
       setTrasse(pfade.flat())
       setTrassePfadeKinds(kinds)
@@ -560,18 +583,21 @@ export default function Home() {
   }, [])
 
   const handleNvtManuellHinzufuegen = useCallback((position: LatLng, kapazitaet: number) => {
+    pushHistory('NVT manuell gesetzt')
     setNvtStandorte((prev) => [...prev, { position, kapazitaet, belegung: 0, hausanschlussIds: [] }])
     setNvtManuellSetzenAktiv(false)
-  }, [])
+  }, [pushHistory])
 
   const handleNvtLoeschen = useCallback((nvtIdx: number) => {
+    pushHistory('NVT gelöscht')
     setNvtStandorte((prev) => prev.filter((_, i) => i !== nvtIdx))
-  }, [])
+  }, [pushHistory])
 
   // Ordnet einen Hausanschluss exklusiv einem NVT zu (toggle: erneutes
   // Anklicken beim selben NVT entfernt ihn wieder) — war er vorher einem
   // ANDEREN NVT zugeordnet, wird er dort automatisch entfernt.
   const handleNvtHausanschlussToggle = useCallback((nvtIdx: number, hausId: string) => {
+    pushHistory('Hausanschluss zugewiesen')
     setNvtStandorte((prev) => {
       const ziel = prev[nvtIdx]
       if (!ziel) return prev
@@ -590,12 +616,14 @@ export default function Home() {
         return nvt
       })
     })
-  }, [])
+  }, [pushHistory])
 
   const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[]) => {
     if (!startpunkt || ausgewaehlteOrteKeys.length === 0) return
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (pfade.length === 0) return
+
+    pushHistory('NVT generiert')
 
     const orteSet = new Set(ausgewaehlteOrteKeys)
     const adressUuidsImDorf = new Set(
@@ -613,7 +641,7 @@ export default function Home() {
       console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
     }
     setNvtModalOffen(false)
-  }, [startpunkt, trassePfade, trasse, adressen, hausanschluesse, aussiedlerhofUuids])
+  }, [startpunkt, trassePfade, trasse, adressen, hausanschluesse, aussiedlerhofUuids, pushHistory])
 
   const handleKMLExport = useCallback(() => {
     exportKML({
@@ -728,6 +756,8 @@ export default function Home() {
         feldwegFarbe={feldwegFarbe}
         canUndo={history.length > 0}
         undoCount={history.length}
+        historyLabels={history.map((h) => h.label)}
+        onUndoZu={handleUndoZu}
         nvtStandorteAnzahl={nvtStandorte.length}
         onNvtButtonKlick={() => setNvtModalOffen(true)}
         onAdressFarbeAendern={setAdressFarbe}
