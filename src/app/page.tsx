@@ -12,6 +12,7 @@ import { berechneSteinerBaum } from '../lib/steinerbaum'
 import { berechneBaumORS } from '../lib/baumOrs'
 import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse'
 import { exportKML } from '../lib/kmlExport'
+import { exportShapefile } from '../lib/shapefileExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
 import { berechneNvtStandorte } from '../lib/nvt'
 
@@ -708,6 +709,22 @@ export default function Home() {
     })
   }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen])
 
+  const handleShapefileExport = useCallback(() => {
+    exportShapefile({
+      name: projektName,
+      erstelltAm: new Date().toISOString(),
+      adressen,
+      startpunkt,
+      trasse,
+      trassePfade: trassePfade.length > 0 ? trassePfade : undefined,
+      hausanschluesse,
+      trassenLaengeMeter: laengen.trassenLaenge,
+      hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
+      trassePfadeKinds: trassePfadeKinds.length > 0 ? trassePfadeKinds : undefined,
+      nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
+    })
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte])
+
   const handleProjektSpeichern = useCallback(() => {
     exportProjekt({
       name: projektName,
@@ -827,6 +844,7 @@ export default function Home() {
         onEditierbarToggle={handleEditierbarToggle}
         onAllesZuruecksetzen={handleAllesZuruecksetzen}
         onKMLExport={handleKMLExport}
+        onShapefileExport={handleShapefileExport}
         onProjektSpeichern={handleProjektSpeichern}
         onProjektLaden={handleProjektLaden}
         onTrasseErweitern={handleTrasseErweitern}

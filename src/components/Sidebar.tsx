@@ -50,6 +50,7 @@ interface SidebarProps {
   onEditierbarToggle: () => void
   onAllesZuruecksetzen: () => void
   onKMLExport: () => void
+  onShapefileExport: () => void
   onProjektSpeichern: () => void
   onProjektLaden: (file: File) => void
   onTrasseErweitern?: () => void
@@ -108,6 +109,7 @@ export default function Sidebar({
   onEditierbarToggle,
   onAllesZuruecksetzen,
   onKMLExport,
+  onShapefileExport,
   onProjektSpeichern,
   onProjektLaden,
   onTrasseErweitern,
@@ -541,6 +543,14 @@ export default function Sidebar({
               className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               📥 KML exportieren
+            </button>
+            <button
+              onClick={onShapefileExport}
+              disabled={!trasseVorhanden}
+              className="w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ backgroundColor: '#1e293b', color: '#93c5fd', border: '1px solid #334155' }}
+            >
+              🗺️ Shapefile exportieren
             </button>
           </div>
         </div>
