@@ -227,6 +227,79 @@ function legeZusammen(
   return ergebnis
 }
 
+// Die rekursive Bisektion (teileAuf) weist jedes Terminal beim Aufsplitten
+// der jeweils näheren der beiden DURCHMESSER-Endpunkte zu — das ist nur eine
+// Näherung für "gehört zur linken/rechten Zone", nicht dasselbe wie "liegt
+// näher am tatsächlichen finalen Zentrum". Grenzfall-Hausanschlüsse können
+// dadurch einer weiter entfernten Zone zugeteilt werden, obwohl eine
+// benachbarte Zone (mit noch freier Kapazität) tatsächlich näher liegt.
+// Dieser Nachlauf behebt genau das: pro Durchlauf wird für jedes Terminal
+// per Netzdistanz zu ALLEN aktuellen Zentren geprüft, ob eine andere Zone
+// näher liegt UND noch Kapazität frei hat — falls ja, wird umgehängt.
+// Wiederholt (mit Zentren-Neuberechnung nach jeder Runde), bis sich nichts
+// mehr ändert oder das Iterationslimit erreicht ist (Lloyd-artige
+// Verfeinerung nach der anfänglichen heuristischen Aufteilung).
+function verfeinereZuweisung(
+  graph: Map<string, Knoten>,
+  zonenInput: Zone[],
+  maxKapazitaet: number,
+  distanzLimitMeter: number
+): Zone[] {
+  if (zonenInput.length <= 1) return zonenInput
+
+  const terminalListen: Terminal[][] = zonenInput.map((z) => [...z.terminals])
+  const distanzenProZone: Map<string, number>[] = zonenInput.map((z) => dijkstraVon(graph, z.zentrum).dist)
+
+  // Zentrum + Distanzkarte einer Zone neu berechnen — wird nach JEDER
+  // einzelnen Verschiebung sofort für die beiden betroffenen Zonen
+  // aufgerufen (nicht erst am Ende eines ganzen Durchlaufs). Batch-weise
+  // Neuberechnung (nur einmal pro Durchlauf) blieb in der Praxis in einem
+  // lokalen Optimum hängen: eine Zone konnte ihr Zentrum erst im NÄCHSTEN
+  // Durchlauf in Richtung eines Grenzfall-Terminals verschieben, wodurch der
+  // Umzug dieses Terminals nie geprüft wurde, weil zu dem Zeitpunkt, als es
+  // an der Reihe war, das Zentrum noch am alten Platz lag.
+  function aktualisiereZone(zi: number) {
+    if (terminalListen[zi].length === 0) {
+      distanzenProZone[zi] = new Map()
+      return
+    }
+    const zone = findeZentrum(graph, terminalListen[zi])
+    distanzenProZone[zi] = dijkstraVon(graph, zone.zentrum).dist
+  }
+
+  for (let iteration = 0; iteration < 30; iteration++) {
+    let geaendert = false
+
+    for (let zi = 0; zi < terminalListen.length; zi++) {
+      for (let ti = terminalListen[zi].length - 1; ti >= 0; ti--) {
+        const terminal = terminalListen[zi][ti]
+        const eigeneDist = distanzenProZone[zi].get(terminal.knoten) ?? Infinity
+        let besterZi = -1
+        let besteDist = eigeneDist
+        for (let zj = 0; zj < terminalListen.length; zj++) {
+          if (zj === zi) continue
+          if (terminalListen[zj].length >= maxKapazitaet) continue // Zone bereits voll
+          const d = distanzenProZone[zj].get(terminal.knoten) ?? Infinity
+          if (d < besteDist && d <= distanzLimitMeter) { besteDist = d; besterZi = zj }
+        }
+        if (besterZi !== -1) {
+          terminalListen[zi].splice(ti, 1)
+          terminalListen[besterZi].push(terminal)
+          geaendert = true
+          aktualisiereZone(zi)
+          aktualisiereZone(besterZi)
+        }
+      }
+    }
+
+    if (!geaendert) break
+  }
+
+  return terminalListen
+    .filter((terminals) => terminals.length > 0)
+    .map((terminals) => findeZentrum(graph, terminals))
+}
+
 // Platziert NVT-Standorte zentral im versorgten Gebiet: für jedes Dorf/jede
 // Auswahl möglichst wenige Standorte, die jeweils eine geografisch
 // zusammenhängende Zone bedienen (kein Verteilen einzelner Standorte entlang
@@ -277,7 +350,8 @@ export function berechneNvtStandorte(
   }
 
   const rohZonen = partitioniere(graph, terminals, maxKapazitaet, distanzLimitMeter)
-  const zonen = legeZusammen(graph, rohZonen, maxKapazitaet, distanzLimitMeter)
+  const zusammengelegt = legeZusammen(graph, rohZonen, maxKapazitaet, distanzLimitMeter)
+  const zonen = verfeinereZuweisung(graph, zusammengelegt, maxKapazitaet, distanzLimitMeter)
 
   const standorte: NvtStandort[] = zonen.map((zone) => {
     const passenderIdx = effektiveKapazitaeten.findIndex((k) => k >= zone.terminals.length)
