@@ -33,6 +33,7 @@ interface SidebarProps {
   historyLabels: string[]
   onUndoZu: (index: number) => void
   nvtStandorteAnzahl: number
+  schachtStandorteAnzahl: number
   onNvtButtonKlick: () => void
   onNvtNeuZuweisenKlick: () => void
   onAdressFarbeAendern: (farbe: string) => void
@@ -94,6 +95,7 @@ export default function Sidebar({
   historyLabels,
   onUndoZu,
   nvtStandorteAnzahl,
+  schachtStandorteAnzahl,
   onNvtButtonKlick,
   onNvtNeuZuweisenKlick,
   onAdressFarbeAendern,
@@ -482,7 +484,7 @@ export default function Sidebar({
             <button
               onClick={onNvtNeuZuweisenKlick}
               title="Nach manuellem Verschieben eines NVT: alle zugeordneten Hausanschlüsse neu dem jeweils nächsten NVT zuordnen"
-              className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors hover:brightness-125 active:brightness-150"
               style={{ backgroundColor: '#1e293b', color: '#93c5fd', border: '1px solid #334155' }}
             >
               🔄 Hausanschlüsse neu zuweisen
@@ -562,6 +564,8 @@ export default function Sidebar({
           strasseLaenge={strasseLaenge}
           feldwegLaenge={feldwegLaenge}
           hausanschluesseCount={hausanschluesseCount}
+          nvtAnzahl={nvtStandorteAnzahl}
+          schachtAnzahl={schachtStandorteAnzahl}
           onClose={() => setKalkulationOffen(false)}
         />
       )}

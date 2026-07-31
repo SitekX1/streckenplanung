@@ -35,6 +35,7 @@ export async function berechneSteinerBaum(
   const remaining = new Set<number>(uniqueTerminals)
   const total = remaining.size
   let done = 0
+  let letzteFreigabe = performance.now()
 
   while (remaining.size > 0) {
     const result = graph.dijkstraVomBaum(treeNodes, remaining)
@@ -60,8 +61,13 @@ export async function berechneSteinerBaum(
     done++
     onProgress?.(Math.round((done / total) * 100))
 
-    // Alle 50 Terminals: Event-Loop freigeben damit React re-rendern kann
-    if (done % 50 === 0) {
+    // Event-Loop zeitbasiert freigeben (statt nach fester Iterationszahl) —
+    // bei wenigen Terminals (< 50) lief die Schleife sonst komplett synchron
+    // durch und React konnte nie zwischen den Progress-Updates neu rendern:
+    // der Ladebalken sprang sichtbar von seinem letzten Stand direkt auf 100%.
+    const jetzt = performance.now()
+    if (jetzt - letzteFreigabe > 32) {
+      letzteFreigabe = jetzt
       await new Promise<void>((r) => setTimeout(r, 0))
     }
   }

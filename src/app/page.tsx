@@ -29,6 +29,25 @@ function extractOrte(adressen: Address[]): OrtInfo[] {
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'de'))
 }
 
+// Lässt den Ladebalken während einer nicht-inkrementell messbaren Wartezeit
+// (Overpass-Netzabfrage — ein einzelner Request ohne Zwischenstände) langsam
+// in Richtung bisMax kriechen statt bei "von" stehen zu bleiben, bis der
+// Promise auflöst. Sieht nach Fortschritt aus, ohne einen falschen exakten
+// Prozentsatz zu behaupten.
+function mitTrickleFortschritt<T>(
+  promise: Promise<T>,
+  von: number,
+  bisMax: number,
+  setProgress: (p: number) => void
+): Promise<T> {
+  let aktuell = von
+  const interval = setInterval(() => {
+    aktuell = Math.min(bisMax, aktuell + 1)
+    setProgress(aktuell)
+  }, 400)
+  return promise.finally(() => clearInterval(interval))
+}
+
 // Reduziert eine Punktliste auf max. maxCount Punkte (gleichmäßig verteilt,
 // letzter Punkt bleibt immer erhalten) — begrenzt die Kosten von
 // graph.nearestPointOnGraph() bei sehr langen bestehenden Trassen.
@@ -285,7 +304,7 @@ export default function Home() {
     try {
       setTrasseProgress(5)
       const bounds = berechneGrenzen(gefilterteAdressen, startpunkt)
-      const osmNetz = await fetchOsmNetz(bounds)
+      const osmNetz = await mitTrickleFortschritt(fetchOsmNetz(bounds), 5, 16, setTrasseProgress)
       setTrasseProgress(18)
 
       const graph = buildRoadGraph(osmNetz, gefilterteAdressen.map((a) => ({ lat: a.lat, lng: a.lon })))
@@ -374,7 +393,7 @@ export default function Home() {
       // Bestehende Trasse gehört mit ins Overpass-Gebiet, sonst fehlen
       // ggf. die Straßendaten zwischen altem und neuem Dorf.
       const bounds = berechneGrenzen(gefilterteNeue, startpunkt, 0.008, vorhandenePfade.flat())
-      const osmNetz = await fetchOsmNetz(bounds)
+      const osmNetz = await mitTrickleFortschritt(fetchOsmNetz(bounds), 5, 16, setTrasseProgress)
       setTrasseProgress(18)
 
       const graph = buildRoadGraph(osmNetz, gefilterteNeue.map((a) => ({ lat: a.lat, lng: a.lon })))
@@ -598,10 +617,35 @@ export default function Home() {
     setNvtManuellSetzenAktiv(false)
   }, [pushHistory])
 
+  // Löscht einen NVT-Standort — dessen zugeordnete Hausanschlüsse werden NICHT
+  // verworfen, sondern automatisch dem (Luftlinien-)nächsten verbleibenden NVT
+  // zugeordnet, damit keine "Lücke" entsteht (vorher: Hausanschlüsse eines
+  // gelöschten NVT waren einfach unzugeordnet und tauchten in "Hausanschlüsse
+  // neu zuweisen" nicht mehr auf, weil das nur bereits zugeordnete betrachtet).
   const handleNvtLoeschen = useCallback((nvtIdx: number) => {
     pushHistory('NVT gelöscht')
-    setNvtStandorte((prev) => prev.filter((_, i) => i !== nvtIdx))
-  }, [pushHistory])
+    const hausById = new Map(hausanschluesse.map((h) => [h.id, h]))
+    setNvtStandorte((prev) => {
+      const geloescht = prev[nvtIdx]
+      const rest = prev.filter((_, i) => i !== nvtIdx)
+      if (!geloescht || geloescht.hausanschlussIds.length === 0 || rest.length === 0) return rest
+      const neu = rest.map((nvt) => ({ ...nvt, hausanschlussIds: [...nvt.hausanschlussIds] }))
+      for (const hausId of geloescht.hausanschlussIds) {
+        const haus = hausById.get(hausId)
+        if (!haus) continue
+        let besterIdx = 0
+        let besteDist = Infinity
+        neu.forEach((nvt, i) => {
+          const dLat = (nvt.position.lat - haus.trassenPunkt.lat) * 111_000
+          const dLng = (nvt.position.lng - haus.trassenPunkt.lng) * Math.cos((haus.trassenPunkt.lat * Math.PI) / 180) * 111_000
+          const d2 = dLat * dLat + dLng * dLng
+          if (d2 < besteDist) { besteDist = d2; besterIdx = i }
+        })
+        neu[besterIdx].hausanschlussIds.push(hausId)
+      }
+      return neu.map((nvt) => ({ ...nvt, belegung: nvt.hausanschlussIds.length }))
+    })
+  }, [pushHistory, hausanschluesse])
 
   // Ordnet einen Hausanschluss exklusiv einem NVT zu (toggle: erneutes
   // Anklicken beim selben NVT entfernt ihn wieder) — war er vorher einem
@@ -713,8 +757,8 @@ export default function Home() {
       let besterIdx = 0
       let besteDist = Infinity
       nvtStandorte.forEach((nvt, i) => {
-        const dLat = nvt.position.lat - haus.trassenPunkt.lat
-        const dLng = nvt.position.lng - haus.trassenPunkt.lng
+        const dLat = (nvt.position.lat - haus.trassenPunkt.lat) * 111_000
+        const dLng = (nvt.position.lng - haus.trassenPunkt.lng) * Math.cos((haus.trassenPunkt.lat * Math.PI) / 180) * 111_000
         const d2 = dLat * dLat + dLng * dLng
         if (d2 < besteDist) { besteDist = d2; besterIdx = i }
       })
@@ -724,6 +768,15 @@ export default function Home() {
     setNvtStandorte((prev) =>
       prev.map((nvt, i) => ({ ...nvt, hausanschlussIds: gruppenProNvt[i], belegung: gruppenProNvt[i].length }))
     )
+
+    const ueberbelegte = nvtStandorte
+      .map((nvt, i) => ({ nr: i + 1, belegung: gruppenProNvt[i].length, kapazitaet: nvt.kapazitaet }))
+      .filter((n) => n.belegung > n.kapazitaet)
+
+    const meldung = ueberbelegte.length > 0
+      ? `${alleZugeordnetenIds.size} Hausanschlüsse neu zugewiesen.\n\n⚠️ Überbelegt: ${ueberbelegte.map((n) => `NVT ${n.nr} (${n.belegung}/${n.kapazitaet})`).join(', ')}`
+      : `✓ ${alleZugeordnetenIds.size} Hausanschlüsse neu zugewiesen.`
+    alert(meldung)
   }, [nvtStandorte, hausanschluesse, pushHistory])
 
   const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[], kapazitaetsReserve: number) => {
@@ -902,6 +955,7 @@ export default function Home() {
         historyLabels={history.map((h) => h.label)}
         onUndoZu={handleUndoZu}
         nvtStandorteAnzahl={nvtStandorte.length}
+        schachtStandorteAnzahl={schachtStandorte.length}
         onNvtButtonKlick={() => setNvtModalOffen(true)}
         onNvtNeuZuweisenKlick={handleNvtHausanschluesseNeuZuweisen}
         onAdressFarbeAendern={setAdressFarbe}

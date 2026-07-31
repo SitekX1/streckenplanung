@@ -198,6 +198,43 @@ function TrasseNetzwerk({ pfade, farbe, opacity = 0.9 }: { pfade: LatLng[][]; fa
   return null
 }
 
+// Unsichtbare Klick-Flächen für die Trasse-Segmente AUSSERHALB des Bearbeitungs-
+// modus — rein zum Markieren/Ansehen, keine Editierfunktion. Eigenständig statt
+// in TrasseNetzwerk integriert, damit das bestehende (performancekritische)
+// Canvas-Rendering dort unangetastet bleibt. Das ausgewählte Segment bekommt
+// zusätzlich eine echte gelbe Overlay-Polyline (nur eine gleichzeitig, daher
+// keine Performance-Sorge trotz react-leaflet statt Canvas).
+function TrasseKlickbar({ pfade, ausgewaehlterIdx, onKlick }: {
+  pfade: LatLng[][]
+  ausgewaehlterIdx: number | null
+  onKlick: (idx: number) => void
+}) {
+  const map = useMap()
+  useEffect(() => {
+    const renderer = L.canvas({ padding: 0.1 })
+    const linien: L.Polyline[] = []
+    pfade.forEach((pfad, i) => {
+      if (pfad.length < 2) return
+      const linie = L.polyline(pfad.map((p) => [p.lat, p.lng] as [number, number]), {
+        color: '#000', weight: 16, opacity: 0.01, renderer,
+      } as L.PolylineOptions)
+      linie.on('click', (e) => { L.DomEvent.stopPropagation(e); onKlick(i) })
+      linien.push(linie)
+    })
+    const gruppe = L.layerGroup(linien).addTo(map)
+    return () => { map.removeLayer(gruppe) }
+  }, [pfade, onKlick, map])
+
+  const ausgewaehltesPfad = ausgewaehlterIdx !== null ? pfade[ausgewaehlterIdx] : null
+  if (!ausgewaehltesPfad || ausgewaehltesPfad.length < 2) return null
+  return (
+    <Polyline
+      positions={ausgewaehltesPfad.map((p) => [p.lat, p.lng] as [number, number])}
+      interactive={false}
+      pathOptions={{ color: GELB, weight: 6, opacity: 1 }} />
+  )
+}
+
 type TileVariante = 'satellit' | 'osm'
 
 const MapView = memo(function MapView({
@@ -222,6 +259,10 @@ const MapView = memo(function MapView({
   const [trasseSichtbar, setTrasseSichtbar] = useState(true)
   const [hausanschluesseSichtbar, setHausanschluesseSichtbar] = useState(true)
   const [adressenSichtbar, setAdressenSichtbar] = useState(true)
+  const [nvtSichtbar, setNvtSichtbar] = useState(true)
+  const [schachtSichtbar, setSchachtSichtbar] = useState(true)
+  // Segment-Markierung außerhalb des Bearbeitungsmodus (reines Ansehen).
+  const [ausgewaehltesSegmentNormal, setAusgewaehltesSegmentNormal] = useState<number | null>(null)
   const [warnModalOffen, setWarnModalOffen] = useState(false)
   // Referenz der zuletzt gesehenen Liste — erlaubt, das Warnmodal direkt beim
   // Render zu öffnen sobald eine NEUE (andere Referenz) Liste ankommt, ohne
@@ -327,6 +368,7 @@ const MapView = memo(function MapView({
       setAktivesSegment(null)
       setAktivMenu(null)
       setSegmentStart(null)
+      setAusgewaehltesSegmentNormal(null)
 
       if (pfade.length > 0) {
         startedWithSingleRef.current = false
@@ -857,6 +899,16 @@ const MapView = memo(function MapView({
           style={layerBtnStyle(adressenSichtbar)}>
           <span style={{ width: 10, height: 10, borderRadius: '50%', background: adressFarbe, display: 'inline-block', flexShrink: 0 }} />Adressen
         </button>
+        <button onClick={() => setNvtSichtbar((v) => !v)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
+          style={layerBtnStyle(nvtSichtbar)}>
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: '#7c3aed', display: 'inline-block', flexShrink: 0 }} />NVT
+        </button>
+        <button onClick={() => setSchachtSichtbar((v) => !v)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
+          style={layerBtnStyle(schachtSichtbar)}>
+          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#0d9488', display: 'inline-block', flexShrink: 0 }} />Schacht
+        </button>
       </div>
 
       <MapContainer center={[51.1657, 10.4515]} zoom={6} style={{ height: '100%', width: '100%' }}
@@ -877,7 +929,10 @@ const MapView = memo(function MapView({
           nvtSetzenModus={nvtManuellSetzenAktiv && !neuerNvtPosition} onNvtSetzenZiel={handleNvtSetzenZiel}
           schachtSetzenModus={schachtSetzenAktiv} onSchachtSetzenZiel={handleSchachtSetzenZiel}
           menuOffen={!!aktivMenu} onMenuSchliessen={() => setAktivMenu(null)}
-          onMapKlick={editierbarAktiv && !kleinProjekt ? handleDeselect : undefined} />
+          onMapKlick={() => {
+            if (editierbarAktiv && !kleinProjekt) handleDeselect()
+            setAusgewaehltesSegmentNormal(null)
+          }} />
         <AutoZoom adressen={adressen} />
         <TopographieWMS sichtbar={topoSichtbar} />
         <FlyTo ziel={flugZiel} />
@@ -889,6 +944,8 @@ const MapView = memo(function MapView({
               <>
                 <TrasseNetzwerk pfade={trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track')} farbe={trasseFarbe} opacity={0.9} />
                 <TrasseNetzwerk pfade={trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track')} farbe={feldwegFarbe} opacity={0.9} />
+                <TrasseKlickbar pfade={trassePfade} ausgewaehlterIdx={ausgewaehltesSegmentNormal}
+                  onKlick={(i) => setAusgewaehltesSegmentNormal((prev) => (prev === i ? null : i))} />
               </>
             )
             : trasse.length >= 2
@@ -981,6 +1038,7 @@ const MapView = memo(function MapView({
                       zeigeMenu(e, [
                         { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleEditPunktLoeschen(i); setAktivMenu(null) } },
                         { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
+                        segmentDefinierenMenuEintrag(editSegmentIdx, p),
                       ])
                     },
                     dragstart: () => setAktivMenu(null),
@@ -1049,6 +1107,7 @@ const MapView = memo(function MapView({
                     zeigeMenu(e, [
                       { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleKleinPunktLoeschen(pi, i); setAktivMenu(null) } },
                       { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
+                      segmentDefinierenMenuEintrag(pi, p),
                     ])
                   },
                   dragstart: () => setAktivMenu(null),
@@ -1124,7 +1183,7 @@ const MapView = memo(function MapView({
         })}
 
         {/* NVT-Standorte */}
-        {nvtStandorte.map((nvt, i) => {
+        {nvtSichtbar && nvtStandorte.map((nvt, i) => {
           const istUeberlastet = nvt.belegung > nvt.kapazitaet
           return (
             <Marker key={`nvt-${i}`} position={[nvt.position.lat, nvt.position.lng]} icon={nvtIcon}
@@ -1156,7 +1215,7 @@ const MapView = memo(function MapView({
         })}
 
         {/* Schacht-Standorte */}
-        {schachtStandorte.map((schacht, i) => (
+        {schachtSichtbar && schachtStandorte.map((schacht, i) => (
           <Marker key={`schacht-${i}`} position={[schacht.position.lat, schacht.position.lng]} icon={schachtIcon}
             draggable
             eventHandlers={{

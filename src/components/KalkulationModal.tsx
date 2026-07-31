@@ -6,6 +6,8 @@ interface KalkulationModalProps {
   strasseLaenge: number
   feldwegLaenge: number
   hausanschluesseCount: number
+  nvtAnzahl: number
+  schachtAnzahl: number
   onClose: () => void
 }
 
@@ -13,11 +15,9 @@ interface KalkulationPreise {
   strassePreisProMeter: number
   feldwegPreisProMeter: number
   hausanschlussPreis: number
-  sondergebuehrAnzahl: number
-  sondergebuehrPreis: number
-  nvtAnzahl: number
+  sonderpositionAnzahl: number
+  sonderpositionPreis: number
   nvtPreis: number
-  schachtAnzahl: number
   schachtPreis: number
 }
 
@@ -27,11 +27,9 @@ const DEFAULT_PREISE: KalkulationPreise = {
   strassePreisProMeter: 45,
   feldwegPreisProMeter: 25,
   hausanschlussPreis: 800,
-  sondergebuehrAnzahl: 0,
-  sondergebuehrPreis: 250,
-  nvtAnzahl: 0,
+  sonderpositionAnzahl: 0,
+  sonderpositionPreis: 250,
   nvtPreis: 3500,
-  schachtAnzahl: 0,
   schachtPreis: 800,
 }
 
@@ -50,7 +48,7 @@ function formatEuro(betrag: number): string {
 }
 
 export default function KalkulationModal({
-  strasseLaenge, feldwegLaenge, hausanschluesseCount, onClose,
+  strasseLaenge, feldwegLaenge, hausanschluesseCount, nvtAnzahl, schachtAnzahl, onClose,
 }: KalkulationModalProps) {
   // Preise sind geräteweit gespeichert (nicht Teil des Projekts) — die
   // Sätze eurer Firma ändern sich kaum von Projekt zu Projekt, im
@@ -83,10 +81,10 @@ export default function KalkulationModal({
   const strasseSumme = strasseLaenge * preise.strassePreisProMeter
   const feldwegSumme = feldwegLaenge * preise.feldwegPreisProMeter
   const hausanschlussSumme = hausanschluesseCount * preise.hausanschlussPreis
-  const sondergebuehrSumme = preise.sondergebuehrAnzahl * preise.sondergebuehrPreis
-  const nvtSumme = preise.nvtAnzahl * preise.nvtPreis
-  const schachtSumme = preise.schachtAnzahl * preise.schachtPreis
-  const gesamt = strasseSumme + feldwegSumme + hausanschlussSumme + sondergebuehrSumme + nvtSumme + schachtSumme
+  const sonderpositionSumme = preise.sonderpositionAnzahl * preise.sonderpositionPreis
+  const nvtSumme = nvtAnzahl * preise.nvtPreis
+  const schachtSumme = schachtAnzahl * preise.schachtPreis
+  const gesamt = strasseSumme + feldwegSumme + hausanschlussSumme + sonderpositionSumme + nvtSumme + schachtSumme
 
   const zeile = (label: string, menge: string, summe: number) => (
     <div className="flex justify-between items-center text-xs py-1.5" style={{ borderBottom: '1px solid #1f2430' }}>
@@ -127,21 +125,34 @@ export default function KalkulationModal({
             <>
               {feld('Preis / Stück', 'hausanschlussPreis', '€')}
               <div />
-              {feld('Sondergebühr · Anzahl', 'sondergebuehrAnzahl', 'Stk.')}
-              {feld('Sondergebühr · Preis', 'sondergebuehrPreis', '€/Stk.')}
+              {feld('Sonderposition · Anzahl', 'sonderpositionAnzahl', 'Stk.')}
+              {feld('Sonderposition · Preis', 'sonderpositionPreis', '€/Stk.')}
+              <p className="col-span-2 text-xs text-gray-600 -mt-1.5">
+                Frei nutzbarer Zusatzposten, z.B. für Erschwerniszuschläge, Bohrungen oder sonstige Sonderfälle, die nicht über die Standardsätze abgedeckt sind.
+              </p>
             </>
           ))}
 
           {sektion('📡 NVT', (
             <>
-              {feld('Anzahl', 'nvtAnzahl', 'Stk.')}
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-gray-400">Anzahl (aus Projekt)</span>
+                <div className="flex items-center rounded-lg px-3 py-2 text-sm" style={{ border: '1px solid #374151', backgroundColor: '#0d1117', color: '#9ca3af' }}>
+                  {nvtAnzahl} Stk.
+                </div>
+              </div>
               {feld('Preis / Stück', 'nvtPreis', '€')}
             </>
           ))}
 
           {sektion('🕳️ Schacht', (
             <>
-              {feld('Anzahl', 'schachtAnzahl', 'Stk.')}
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-gray-400">Anzahl (aus Projekt)</span>
+                <div className="flex items-center rounded-lg px-3 py-2 text-sm" style={{ border: '1px solid #374151', backgroundColor: '#0d1117', color: '#9ca3af' }}>
+                  {schachtAnzahl} Stk.
+                </div>
+              </div>
               {feld('Preis / Stück', 'schachtPreis', '€')}
             </>
           ))}
@@ -150,9 +161,9 @@ export default function KalkulationModal({
             {zeile('Befestigte Oberfläche', `${Math.round(strasseLaenge)} m`, strasseSumme)}
             {zeile('Unbefestigte Oberfläche', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
             {zeile('Hausanschlüsse', `${hausanschluesseCount} Stk.`, hausanschlussSumme)}
-            {preise.sondergebuehrAnzahl > 0 && zeile('Sondergebühr', `${preise.sondergebuehrAnzahl} Stk.`, sondergebuehrSumme)}
-            {preise.nvtAnzahl > 0 && zeile('NVT', `${preise.nvtAnzahl} Stk.`, nvtSumme)}
-            {preise.schachtAnzahl > 0 && zeile('Schacht', `${preise.schachtAnzahl} Stk.`, schachtSumme)}
+            {preise.sonderpositionAnzahl > 0 && zeile('Sonderposition', `${preise.sonderpositionAnzahl} Stk.`, sonderpositionSumme)}
+            {nvtAnzahl > 0 && zeile('NVT', `${nvtAnzahl} Stk.`, nvtSumme)}
+            {schachtAnzahl > 0 && zeile('Schacht', `${schachtAnzahl} Stk.`, schachtSumme)}
             <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid #262b36' }}>
               <span className="text-sm font-medium text-gray-300">Gesamt</span>
               <span className="text-lg font-semibold text-blue-400">{formatEuro(gesamt)}</span>
