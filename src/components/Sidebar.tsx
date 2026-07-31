@@ -6,6 +6,7 @@ import KalkulationModal from './KalkulationModal'
 import EinstellungenModal from './EinstellungenModal'
 
 interface SidebarProps {
+  projektName: string
   adressenCount: number
   gefilterteAdressenAnzahl: number
   neueAdressenOhneHsAnzahl: number
@@ -66,6 +67,7 @@ function formatMeter(meter: number): string {
 }
 
 export default function Sidebar({
+  projektName,
   adressenCount,
   gefilterteAdressenAnzahl,
   neueAdressenOhneHsAnzahl,
@@ -561,6 +563,7 @@ export default function Sidebar({
 
       {kalkulationOffen && (
         <KalkulationModal
+          projektName={projektName}
           strasseLaenge={strasseLaenge}
           feldwegLaenge={feldwegLaenge}
           hausanschluesseCount={hausanschluesseCount}

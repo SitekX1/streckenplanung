@@ -1347,18 +1347,6 @@ const MapView = memo(function MapView({
         </div>
       )}
 
-      {segmentStart && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #4ade80' }}>
-          📍 Segment-Start gesetzt — zweiten Punkt auf demselben Abschnitt antippen für Segment-Ende
-          <button onClick={() => setSegmentStart(null)}
-            className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
-            ✕ Abbrechen
-          </button>
-        </div>
-      )}
-
       {nvtManuellSetzenAktiv && !neuerNvtPosition && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
           style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
@@ -1526,11 +1514,19 @@ const MapView = memo(function MapView({
       {editierbarAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg"
           style={{
-            backgroundColor: ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : '#111827',
-            border: `1px solid ${ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : '#374151'}`,
+            backgroundColor: segmentStart ? '#052e2b' : ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : '#111827',
+            border: `1px solid ${segmentStart ? '#4ade80' : ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : '#374151'}`,
             padding: '10px 16px', maxWidth: '92vw',
           }}>
-          {ziehStartId ? (
+          {segmentStart ? (
+            <p style={{ color: '#bbf7d0', fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+              📍 <b>Segment-Start gesetzt</b> — zweiten Punkt auf demselben Abschnitt antippen für Segment-Ende
+              <button onClick={() => setSegmentStart(null)}
+                style={{ background: '#374151', color: '#f9fafb', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}>
+                ✕ Abbrechen
+              </button>
+            </p>
+          ) : ziehStartId ? (
             <p style={{ color: '#fed7aa', fontSize: 12, margin: 0 }}>
               🖊️ <b>Zeichenmodus</b> — Auf Karte tippen = neues Segment &nbsp;·&nbsp; Punkt antippen = verbinden &nbsp;·&nbsp; ESC
             </p>

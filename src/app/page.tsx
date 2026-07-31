@@ -15,6 +15,7 @@ import { exportKML } from '../lib/kmlExport'
 import { exportShapefile } from '../lib/shapefileExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
 import { berechneNvtStandorte } from '../lib/nvt'
+import { segmentiereAnPunkten } from '../lib/segmentierung'
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false })
 
@@ -816,8 +817,20 @@ export default function Home() {
     if (ergebnis.nichtErreichbar.length > 0) {
       console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
     }
+
+    // Trasse an ALLEN NVT-Standorten (bestehende + neu generierte) segmentieren
+    // — sonst laufen die Segmente unstrukturiert quer durchs Dorf, unabhängig
+    // davon, welcher NVT welchen Abschnitt tatsächlich versorgt.
+    const alleNvtPositionen = [...nvtStandorte, ...ergebnis.standorte].map((n) => n.position)
+    const kindsFuerPfade = passendeKinds(pfade, trassePfadeKinds)
+    const segmentiert = segmentiereAnPunkten(pfade, kindsFuerPfade, alleNvtPositionen)
+    setTrassePfade(segmentiert.pfade)
+    setTrassePfadeKinds(segmentiert.kinds)
+    setTrasse(segmentiert.pfade.flat())
+    setLaengen(berechneLaengen(segmentiert.pfade, hausanschluesse, segmentiert.kinds))
+
     setNvtModalOffen(false)
-  }, [startpunkt, trassePfade, trasse, adressen, hausanschluesse, aussiedlerhofUuids, pushHistory, nvtStandorte])
+  }, [startpunkt, trassePfade, trasse, trassePfadeKinds, adressen, hausanschluesse, aussiedlerhofUuids, pushHistory, nvtStandorte])
 
   const handleKMLExport = useCallback(() => {
     exportKML({
@@ -928,6 +941,7 @@ export default function Home() {
   return (
     <div className="flex h-screen overflow-hidden bg-[#0f0f0f]">
       <Sidebar
+        projektName={projektName}
         adressenCount={adressen.length}
         gefilterteAdressenAnzahl={gefilterteAdressenAnzahl}
         neueAdressenOhneHsAnzahl={neueAdressenOhneHsAnzahl}

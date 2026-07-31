@@ -1,8 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { exportKalkulationPdf } from '../lib/kalkulationPdfExport'
 
 interface KalkulationModalProps {
+  projektName: string
   strasseLaenge: number
   feldwegLaenge: number
   hausanschluesseCount: number
@@ -48,7 +50,7 @@ function formatEuro(betrag: number): string {
 }
 
 export default function KalkulationModal({
-  strasseLaenge, feldwegLaenge, hausanschluesseCount, nvtAnzahl, schachtAnzahl, onClose,
+  projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, nvtAnzahl, schachtAnzahl, onClose,
 }: KalkulationModalProps) {
   // Preise sind geräteweit gespeichert (nicht Teil des Projekts) — die
   // Sätze eurer Firma ändern sich kaum von Projekt zu Projekt, im
@@ -85,6 +87,24 @@ export default function KalkulationModal({
   const nvtSumme = nvtAnzahl * preise.nvtPreis
   const schachtSumme = schachtAnzahl * preise.schachtPreis
   const gesamt = strasseSumme + feldwegSumme + hausanschlussSumme + sonderpositionSumme + nvtSumme + schachtSumme
+
+  const handlePdfExport = () => {
+    const zeilen = [
+      { label: 'Befestigte Oberfläche', menge: `${Math.round(strasseLaenge)} m`, einzelpreis: `${preise.strassePreisProMeter} €/m`, summe: strasseSumme },
+      { label: 'Unbefestigte Oberfläche', menge: `${Math.round(feldwegLaenge)} m`, einzelpreis: `${preise.feldwegPreisProMeter} €/m`, summe: feldwegSumme },
+      { label: 'Hausanschlüsse', menge: `${hausanschluesseCount} Stk.`, einzelpreis: `${preise.hausanschlussPreis} €/Stk.`, summe: hausanschlussSumme },
+      ...(preise.sonderpositionAnzahl > 0
+        ? [{ label: 'Sonderposition', menge: `${preise.sonderpositionAnzahl} Stk.`, einzelpreis: `${preise.sonderpositionPreis} €/Stk.`, summe: sonderpositionSumme }]
+        : []),
+      ...(nvtAnzahl > 0
+        ? [{ label: 'NVT', menge: `${nvtAnzahl} Stk.`, einzelpreis: `${preise.nvtPreis} €/Stk.`, summe: nvtSumme }]
+        : []),
+      ...(schachtAnzahl > 0
+        ? [{ label: 'Schacht', menge: `${schachtAnzahl} Stk.`, einzelpreis: `${preise.schachtPreis} €/Stk.`, summe: schachtSumme }]
+        : []),
+    ]
+    exportKalkulationPdf({ projektName, zeilen, gesamt })
+  }
 
   const zeile = (label: string, menge: string, summe: number) => (
     <div className="flex justify-between items-center text-xs py-1.5" style={{ borderBottom: '1px solid #1f2430' }}>
@@ -169,6 +189,11 @@ export default function KalkulationModal({
               <span className="text-lg font-semibold text-blue-400">{formatEuro(gesamt)}</span>
             </div>
           </div>
+
+          <button onClick={handlePdfExport}
+            className="w-full px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors">
+            📄 Als PDF exportieren
+          </button>
 
           <p className="text-xs text-gray-600 text-center">
             Preise werden geräteweit gespeichert und gelten projektübergreifend.
