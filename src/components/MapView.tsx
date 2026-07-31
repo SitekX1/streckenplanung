@@ -252,6 +252,10 @@ const MapView = memo(function MapView({
   const [aktivMenu, setAktivMenu] = useState<AktivMenu>(null)
   const [neuerHsStart, setNeuerHsStart] = useState<NeuerHsStart>(null)
   const [aktivesSegment, setAktivesSegment] = useState<string | null>(null)
+  // Manuelle Segment-Definition: erster Klick merkt sich Pfad+Position als
+  // Start, zweiter Klick auf DEMSELBEN Pfad schneidet den Abschnitt dazwischen
+  // als eigenständiges Segment heraus (für den Export wichtig).
+  const [segmentStart, setSegmentStart] = useState<{ pfadIdx: number; pos: LatLng } | null>(null)
 
   const trasseRef = useRef<LatLng[]>([])
   const trassePfadeRef = useRef<LatLng[][]>([])
@@ -301,6 +305,7 @@ const MapView = memo(function MapView({
       setEditPunkte([])
       setAktivesSegment(null)
       setAktivMenu(null)
+      setSegmentStart(null)
 
       if (pfade.length > 0) {
         startedWithSingleRef.current = false
@@ -366,6 +371,7 @@ const MapView = memo(function MapView({
       setNeuerHsStart(null)
       setAktivMenu(null)
       setAktivesSegment(null)
+      setSegmentStart(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
@@ -375,6 +381,7 @@ const MapView = memo(function MapView({
       if (e.key !== 'Escape') return
       setZiehStartId(null); setZiehStartPos(null)
       setNeuerHsStart(null); setAktivMenu(null)
+      setSegmentStart(null)
       handleDeselect()
     }
     window.addEventListener('keydown', onKey)
@@ -520,6 +527,51 @@ const MapView = memo(function MapView({
     localPfadeKindsRef.current = neueKinds
     setLocalPfadeKinds(neueKinds)
     setAktivesSegment(null)
+  }
+
+  // Schneidet den Abschnitt zwischen dem zuvor per "Segment-Start hier
+  // setzen" gemerkten Punkt und der jetzt geklickten Position als
+  // eigenständiges Segment aus dem Pfad heraus (davor/dazwischen/danach —
+  // bis zu drei Teile statt der bisherigen zwei bei "Verbindung trennen").
+  // Funktioniert für Groß- UND Klein-Projekt gleichermaßen, da beide über
+  // localPfade[pfadIdx] arbeiten (im Groß-Projekt ist pfadIdx = editSegmentIdx).
+  function handleSegmentDefinieren(pfadIdx: number, endPos: LatLng) {
+    if (!segmentStart || segmentStart.pfadIdx !== pfadIdx) return
+    const pfad = localPfadeRef.current[pfadIdx]
+    if (!pfad || pfad.length < 3) return
+    try {
+      const line = turf.lineString(pfad.map((p) => [p.lng, p.lat]))
+      const idxStart = turf.nearestPointOnLine(line, turf.point([segmentStart.pos.lng, segmentStart.pos.lat])).properties.index ?? 0
+      const idxEnd = turf.nearestPointOnLine(line, turf.point([endPos.lng, endPos.lat])).properties.index ?? 0
+      const von = Math.min(idxStart, idxEnd)
+      const bis = Math.max(idxStart, idxEnd)
+      if (bis - von < 1) return // zu nah beieinander / gleicher Punkt
+      const stuecke = [pfad.slice(0, von + 1), pfad.slice(von, bis + 1), pfad.slice(bis)].filter((t) => t.length >= 2)
+      if (stuecke.length < 2) return
+      editiertRef.current = true
+      const kind = localPfadeKindsRef.current[pfadIdx] ?? 'paved'
+      const neuePfade = [...localPfadeRef.current.slice(0, pfadIdx), ...stuecke, ...localPfadeRef.current.slice(pfadIdx + 1)]
+      localPfadeRef.current = neuePfade
+      setLocalPfade(neuePfade)
+      const neueKinds = [...localPfadeKindsRef.current.slice(0, pfadIdx), ...stuecke.map(() => kind), ...localPfadeKindsRef.current.slice(pfadIdx + 1)]
+      localPfadeKindsRef.current = neueKinds
+      setLocalPfadeKinds(neueKinds)
+      setSegmentStart(null)
+      setAktivesSegment(null)
+      setEditSegmentIdx(null)
+      editSegmentIdxRef.current = null
+      setEditPunkte([])
+      editPunkteRef.current = []
+    } catch { /* ignore */ }
+  }
+
+  // Menü-Eintrag "Segment-Start/Ende hier setzen" — je nachdem, ob für
+  // diesen Pfad bereits ein Startpunkt gemerkt ist.
+  function segmentDefinierenMenuEintrag(pfadIdx: number, pos: LatLng): MenuAktion {
+    if (segmentStart?.pfadIdx === pfadIdx) {
+      return { label: '🏁 Segment-Ende hier setzen', farbe: '#4ade80', action: () => { handleSegmentDefinieren(pfadIdx, pos); setAktivMenu(null) } }
+    }
+    return { label: '📍 Segment-Start hier setzen', farbe: '#4ade80', action: () => { setSegmentStart({ pfadIdx, pos }); setAktivMenu(null) } }
   }
 
   // Trennt den Pfad an der geklickten Stelle in zwei eigenständige Pfade auf.
@@ -846,6 +898,7 @@ const MapView = memo(function MapView({
                             label: localPfadeKinds[pi] === 'track' ? '🛣️ Als Straße markieren' : '🚜 Als Feldweg markieren',
                             farbe: '#fbbf24', action: () => { handleSegmentKindToggle(pi); setAktivMenu(null) },
                           },
+                          segmentDefinierenMenuEintrag(pi, pos),
                           { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
                         ])
                       }
@@ -871,6 +924,7 @@ const MapView = memo(function MapView({
                           label: (editSegmentIdx !== null && localPfadeKinds[editSegmentIdx] === 'track') ? '🛣️ Als Straße markieren' : '🚜 Als Feldweg markieren',
                           farbe: '#fbbf24', action: () => { if (editSegmentIdx !== null) handleSegmentKindToggle(editSegmentIdx); setAktivMenu(null) },
                         },
+                        ...(editSegmentIdx !== null ? [segmentDefinierenMenuEintrag(editSegmentIdx, pos)] : []),
                         { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleSegmentLoeschen(); setAktivMenu(null) } },
                       ])
                     },
@@ -936,6 +990,7 @@ const MapView = memo(function MapView({
                         label: localPfadeKinds[pi] === 'track' ? '🛣️ Als Straße markieren' : '🚜 Als Feldweg markieren',
                         farbe: '#fbbf24', action: () => { handleSegmentKindToggle(pi); setAktivMenu(null) },
                       },
+                      segmentDefinierenMenuEintrag(pi, pos),
                       { label: '🗑️ Segment löschen', farbe: '#f87171', action: () => { handleKleinSegmentLoeschen(pi); setAktivMenu(null) } },
                     ])
                   },
@@ -1163,6 +1218,18 @@ const MapView = memo(function MapView({
             className="px-3 py-1 rounded text-xs font-medium"
             style={{ backgroundColor: '#a16207', color: '#fff' }}>
             ✓ Fertig
+          </button>
+        </div>
+      )}
+
+      {segmentStart && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #4ade80' }}>
+          📍 Segment-Start gesetzt — zweiten Punkt auf demselben Abschnitt antippen für Segment-Ende
+          <button onClick={() => setSegmentStart(null)}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            ✕ Abbrechen
           </button>
         </div>
       )}
