@@ -618,12 +618,46 @@ export default function Home() {
     })
   }, [pushHistory])
 
+  const handleNvtVerschoben = useCallback((nvtIdx: number, position: LatLng) => {
+    pushHistory('NVT verschoben')
+    setNvtStandorte((prev) => prev.map((nvt, i) => (i === nvtIdx ? { ...nvt, position } : nvt)))
+  }, [pushHistory])
+
+  // Ordnet jeden bereits einem NVT zugeordneten Hausanschluss neu dem
+  // (Luftlinien-)nächsten der AKTUELLEN NVT-Standorte zu — gedacht als
+  // Werkzeug nach dem manuellen Verschieben eines oder mehrerer NVT, damit
+  // man nicht jeden Hausanschluss einzeln von Hand neu zuweisen muss.
+  const handleNvtHausanschluesseNeuZuweisen = useCallback(() => {
+    if (nvtStandorte.length === 0) return
+    pushHistory('NVT-Zuweisung neu berechnet')
+
+    const hausById = new Map(hausanschluesse.map((h) => [h.id, h]))
+    const alleZugeordnetenIds = new Set(nvtStandorte.flatMap((n) => n.hausanschlussIds))
+
+    const gruppenProNvt: string[][] = nvtStandorte.map(() => [])
+    for (const hausId of alleZugeordnetenIds) {
+      const haus = hausById.get(hausId)
+      if (!haus) continue
+      let besterIdx = 0
+      let besteDist = Infinity
+      nvtStandorte.forEach((nvt, i) => {
+        const dLat = nvt.position.lat - haus.trassenPunkt.lat
+        const dLng = nvt.position.lng - haus.trassenPunkt.lng
+        const d2 = dLat * dLat + dLng * dLng
+        if (d2 < besteDist) { besteDist = d2; besterIdx = i }
+      })
+      gruppenProNvt[besterIdx].push(hausId)
+    }
+
+    setNvtStandorte((prev) =>
+      prev.map((nvt, i) => ({ ...nvt, hausanschlussIds: gruppenProNvt[i], belegung: gruppenProNvt[i].length }))
+    )
+  }, [nvtStandorte, hausanschluesse, pushHistory])
+
   const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[]) => {
     if (!startpunkt || ausgewaehlteOrteKeys.length === 0) return
     const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
     if (pfade.length === 0) return
-
-    pushHistory('NVT generiert')
 
     const orteSet = new Set(ausgewaehlteOrteKeys)
     const adressUuidsImDorf = new Set(
@@ -631,6 +665,23 @@ export default function Home() {
         .filter((a) => orteSet.has(`${a.plz}_${a.ortsname}_${a.ortsteil}`))
         .map((a) => a.uuid)
     )
+
+    // Schutz gegen versehentliches doppeltes Generieren fuers selbe Dorf —
+    // legt sonst einen kompletten zweiten Satz NVT ueber die bestehenden.
+    const bereitsZugeordneteHausIds = new Set(nvtStandorte.flatMap((n) => n.hausanschlussIds))
+    const ueberschneidungAnzahl = hausanschluesse.filter(
+      (h) => adressUuidsImDorf.has(h.addressUuid) && bereitsZugeordneteHausIds.has(h.id)
+    ).length
+    if (ueberschneidungAnzahl > 0) {
+      const weiter = confirm(
+        `${ueberschneidungAnzahl} Hausanschluss(e) in der Auswahl haben bereits einen NVT. ` +
+        `Trotzdem neu generieren? (bestehende NVT bleiben erhalten, es kommen weitere hinzu)`
+      )
+      if (!weiter) return
+    }
+
+    pushHistory('NVT generiert')
+
     const relevanteHausanschluesse = hausanschluesse.filter(
       (h) => adressUuidsImDorf.has(h.addressUuid) && !aussiedlerhofUuids.has(h.addressUuid)
     )
@@ -641,7 +692,7 @@ export default function Home() {
       console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
     }
     setNvtModalOffen(false)
-  }, [startpunkt, trassePfade, trasse, adressen, hausanschluesse, aussiedlerhofUuids, pushHistory])
+  }, [startpunkt, trassePfade, trasse, adressen, hausanschluesse, aussiedlerhofUuids, pushHistory, nvtStandorte])
 
   const handleKMLExport = useCallback(() => {
     exportKML({
@@ -760,6 +811,7 @@ export default function Home() {
         onUndoZu={handleUndoZu}
         nvtStandorteAnzahl={nvtStandorte.length}
         onNvtButtonKlick={() => setNvtModalOffen(true)}
+        onNvtNeuZuweisenKlick={handleNvtHausanschluesseNeuZuweisen}
         onAdressFarbeAendern={setAdressFarbe}
         onTrasseFarbeAendern={setTrasseFarbe}
         onHausanschlussFarbeAendern={setHausanschlussfarbe}
@@ -811,6 +863,7 @@ export default function Home() {
           onNvtManuellSetzenAbbrechen={handleNvtManuellSetzenAbbrechen}
           onNvtLoeschen={handleNvtLoeschen}
           onNvtHausanschlussToggle={handleNvtHausanschlussToggle}
+          onNvtVerschoben={handleNvtVerschoben}
         />
         {nvtModalOffen && (
           <NVTModal

@@ -34,6 +34,7 @@ interface SidebarProps {
   onUndoZu: (index: number) => void
   nvtStandorteAnzahl: number
   onNvtButtonKlick: () => void
+  onNvtNeuZuweisenKlick: () => void
   onAdressFarbeAendern: (farbe: string) => void
   onTrasseFarbeAendern: (farbe: string) => void
   onHausanschlussFarbeAendern: (farbe: string) => void
@@ -93,6 +94,7 @@ export default function Sidebar({
   onUndoZu,
   nvtStandorteAnzahl,
   onNvtButtonKlick,
+  onNvtNeuZuweisenKlick,
   onAdressFarbeAendern,
   onTrasseFarbeAendern,
   onHausanschlussFarbeAendern,
@@ -466,7 +468,7 @@ export default function Sidebar({
         <div className="border-t border-gray-800" />
 
         {/* Sektion: NVT (dev) */}
-        <div>
+        <div className="flex flex-col gap-1.5">
           <button
             onClick={onNvtButtonKlick}
             disabled={!trasseVorhanden || hausanschluesseCount === 0}
@@ -474,6 +476,16 @@ export default function Sidebar({
           >
             📡 NVT generieren {nvtStandorteAnzahl > 0 && `(${nvtStandorteAnzahl})`}
           </button>
+          {nvtStandorteAnzahl > 0 && (
+            <button
+              onClick={onNvtNeuZuweisenKlick}
+              title="Nach manuellem Verschieben eines NVT: alle zugeordneten Hausanschlüsse neu dem jeweils nächsten NVT zuordnen"
+              className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              style={{ backgroundColor: '#1e293b', color: '#93c5fd', border: '1px solid #334155' }}
+            >
+              🔄 Hausanschlüsse neu zuweisen
+            </button>
+          )}
         </div>
 
         <div className="border-t border-gray-800" />

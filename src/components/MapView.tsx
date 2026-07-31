@@ -97,6 +97,7 @@ interface MapViewProps {
   onNvtManuellSetzenAbbrechen?: () => void
   onNvtLoeschen?: (nvtIdx: number) => void
   onNvtHausanschlussToggle?: (nvtIdx: number, hausId: string) => void
+  onNvtVerschoben?: (nvtIdx: number, position: LatLng) => void
 }
 
 function KlickHandler({
@@ -193,7 +194,7 @@ const MapView = memo(function MapView({
   nvtManuellSetzenAktiv = false,
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
   onAussiedlerhofToggle, onAussiedlerhofMarkierenFertig,
-  onNvtManuellHinzufuegen, onNvtManuellSetzenAbbrechen, onNvtLoeschen, onNvtHausanschlussToggle,
+  onNvtManuellHinzufuegen, onNvtManuellSetzenAbbrechen, onNvtLoeschen, onNvtHausanschlussToggle, onNvtVerschoben,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -1043,6 +1044,7 @@ const MapView = memo(function MapView({
           const istUeberlastet = nvt.belegung > nvt.kapazitaet
           return (
             <Marker key={`nvt-${i}`} position={[nvt.position.lat, nvt.position.lng]} icon={nvtIcon}
+              draggable
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
@@ -1055,10 +1057,14 @@ const MapView = memo(function MapView({
                     { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onNvtLoeschen?.(i); setAusgewaehltesNvtIdx(null); setNvtZuweisenAktiv(false); setAktivMenu(null) } },
                   ])
                 },
+                dragend: (e) => {
+                  const ll = (e.target as L.Marker).getLatLng()
+                  onNvtVerschoben?.(i, { lat: ll.lat, lng: ll.lng })
+                },
               }}>
               <Tooltip>
                 NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt{istUeberlastet ? ' · ⚠️ überbelegt' : ''}
-                {ausgewaehltesNvtIdx === i ? ' · Hausanschlüsse markiert' : ' · antippen zum Markieren · lang drücken für Aktionen'}
+                {ausgewaehltesNvtIdx === i ? ' · Hausanschlüsse markiert' : ' · ziehen zum Verschieben · antippen zum Markieren · lang drücken für Aktionen'}
               </Tooltip>
             </Marker>
           )
