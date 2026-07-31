@@ -71,6 +71,55 @@ const GELB = '#facc15'
 const MAX_HANDLES = 80
 // Schwellenwert: ≤ 1000 Punkte → Klein-Projekt (alle Handles sofort sichtbar)
 const KLEIN_PROJEKT_SCHWELLE = 1000
+// Ab welcher Nähe (Meter) beim Ziehen eines Punkts ein Schnapp-Ziel markiert
+// und beim Loslassen tatsächlich exakt übernommen wird.
+const SNAP_SCHWELLE_METER = 5
+
+function haversineMeter(a: LatLng, b: LatLng): number {
+  const R = 6_371_000
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(s))
+}
+
+// Sucht beim Ziehen eines Punkts das nächstgelegene Schnapp-Ziel — entweder
+// ein bestehender Punkt (Vertex) auf irgendeinem Trasse-Pfad, oder die
+// Projektion auf eine Pfad-Linie selbst (falls näher als jeder einzelne
+// Vertex). Der gerade gezogene Punkt wird über (ausschlussPfadIdx,
+// ausschlussPunktIdx) von der Suche ausgenommen, damit er nicht sich selbst
+// "trifft". Gibt null zurück, wenn nichts innerhalb der Schwelle liegt.
+function findeSchnappziel(
+  position: LatLng,
+  pfade: LatLng[][],
+  ausschlussPfadIdx: number,
+  ausschlussPunktIdx: number
+): LatLng | null {
+  let bestPos: LatLng | null = null
+  let bestDist = SNAP_SCHWELLE_METER
+
+  pfade.forEach((pfad, pi) => {
+    pfad.forEach((p, i) => {
+      if (pi === ausschlussPfadIdx && i === ausschlussPunktIdx) return
+      const d = haversineMeter(position, p)
+      if (d < bestDist) { bestDist = d; bestPos = p }
+    })
+    if (pfad.length >= 2) {
+      try {
+        const line = turf.lineString(pfad.map((p) => [p.lng, p.lat]))
+        const nearest = turf.nearestPointOnLine(line, turf.point([position.lng, position.lat]))
+        const [lng, lat] = nearest.geometry.coordinates
+        const projPos = { lat, lng }
+        const d = haversineMeter(position, projPos)
+        if (d < bestDist) { bestDist = d; bestPos = projPos }
+      } catch { /* ignorieren — z.B. bei entarteten Linien */ }
+    }
+  })
+
+  return bestPos
+}
 
 interface MapViewProps {
   adressen: Address[]
@@ -311,6 +360,10 @@ const MapView = memo(function MapView({
   const [deletedStack, setDeletedStack] = useState<Hausstich[]>([])
   const [ziehStartId, setZiehStartId] = useState<string | null>(null)
   const [ziehStartPos, setZiehStartPos] = useState<LatLng | null>(null)
+  // Beim Ziehen eines Punkt-Handles: Position eines nahegelegenen Schnapp-
+  // Ziels (Punkt oder Linie), das beim Loslassen übernommen wird — nur
+  // während eines aktiven Drags gesetzt, sonst null.
+  const [schnappZiel, setSchnappZiel] = useState<LatLng | null>(null)
   const [aktivMenu, setAktivMenu] = useState<AktivMenu>(null)
   const [neuerHsStart, setNeuerHsStart] = useState<NeuerHsStart>(null)
   const [aktivesSegment, setAktivesSegment] = useState<string | null>(null)
@@ -369,6 +422,7 @@ const MapView = memo(function MapView({
       setAktivMenu(null)
       setSegmentStart(null)
       setAusgewaehltesSegmentNormal(null)
+      setSchnappZiel(null)
 
       if (pfade.length > 0) {
         startedWithSingleRef.current = false
@@ -1042,7 +1096,19 @@ const MapView = memo(function MapView({
                       ])
                     },
                     dragstart: () => setAktivMenu(null),
-                    dragend: (e) => { const ll = (e.target as L.Marker).getLatLng(); handleEditPunktBewegt(i, { lat: ll.lat, lng: ll.lng }) },
+                    drag: (e) => {
+                      const ll = (e.target as L.Marker).getLatLng()
+                      const linienLive = localPfadeRef.current.map((pf, idx) => (idx === editSegmentIdx ? editPunkteRef.current : pf))
+                      setSchnappZiel(findeSchnappziel({ lat: ll.lat, lng: ll.lng }, linienLive, editSegmentIdx ?? -1, i))
+                    },
+                    dragend: (e) => {
+                      const ll = (e.target as L.Marker).getLatLng()
+                      const pos = { lat: ll.lat, lng: ll.lng }
+                      const linienLive = localPfadeRef.current.map((pf, idx) => (idx === editSegmentIdx ? editPunkteRef.current : pf))
+                      const ziel = findeSchnappziel(pos, linienLive, editSegmentIdx ?? -1, i)
+                      handleEditPunktBewegt(i, ziel ?? pos)
+                      setSchnappZiel(null)
+                    },
                   }}>
                   {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
                 </Marker>
@@ -1111,12 +1177,29 @@ const MapView = memo(function MapView({
                     ])
                   },
                   dragstart: () => setAktivMenu(null),
-                  dragend: (e) => { const ll = (e.target as L.Marker).getLatLng(); handleKleinPunktBewegt(pi, i, { lat: ll.lat, lng: ll.lng }) },
+                  drag: (e) => {
+                    const ll = (e.target as L.Marker).getLatLng()
+                    setSchnappZiel(findeSchnappziel({ lat: ll.lat, lng: ll.lng }, localPfadeRef.current, pi, i))
+                  },
+                  dragend: (e) => {
+                    const ll = (e.target as L.Marker).getLatLng()
+                    const pos = { lat: ll.lat, lng: ll.lng }
+                    const ziel = findeSchnappziel(pos, localPfadeRef.current, pi, i)
+                    handleKleinPunktBewegt(pi, i, ziel ?? pos)
+                    setSchnappZiel(null)
+                  },
                 }}>
                 {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
               </Marker>
             )
           })
+        )}
+
+        {/* Schnapp-Ziel beim Ziehen eines Punkts — zeigt live, wo genau
+            gelandet wird, wenn jetzt losgelassen wird. */}
+        {schnappZiel && (
+          <CircleMarker center={[schnappZiel.lat, schnappZiel.lng]} radius={11} interactive={false}
+            pathOptions={{ color: '#4ade80', weight: 3, fillColor: '#4ade80', fillOpacity: 0.35 }} />
         )}
 
         {/* Adressen */}
@@ -1494,8 +1577,8 @@ const MapView = memo(function MapView({
       {aktivMenu && !imZeichenModus && (
         <div style={{
           position: 'absolute',
-          left: Math.min(aktivMenu.screenX - 50, window.innerWidth - 185),
-          top: Math.max(aktivMenu.screenY - aktivMenu.aktionen.length * 46 - 10, 60),
+          left: Math.min(aktivMenu.screenX + 16, window.innerWidth - 185),
+          top: Math.max(aktivMenu.screenY - aktivMenu.aktionen.length * 46 - 26, 60),
           zIndex: 2000, backgroundColor: '#1a1a1a',
           border: `1px solid ${aktivesSegment ? GELB : '#374151'}`,
           borderRadius: '10px', overflow: 'hidden',
