@@ -58,6 +58,19 @@ function haversine(a: LatLng, b: LatLng): number {
 // echten Geometrie neu berechnet, bleibt also exakt.
 const FELDWEG_KOSTEN_FAKTOR = 1.15
 
+// Grobe Umrechnung "Breitengrad-äquivalente Gradeinheit" → Meter (siehe
+// sucheNaechsteKante: sowohl bx als auch by sind in Breitengrad-Einheiten
+// skaliert, also ist 1° ≈ 111.320m für beide Achsen gültig).
+const GRAD_ZU_METER = 111_320
+
+// Wie weit darf die nächste ECHTE Straße (nicht-Zufahrt) höchstens entfernt
+// sein, damit eine näher liegende Zufahrt (highway=service) trotzdem
+// gemieden wird? Deckt den ueblichen Fall "Haus liegt direkt an einer
+// Straße" ab, ohne bei einer ausschließlich über eine Zufahrt erreichbaren
+// Häusergruppe (oder einem ganzen als "service" getaggten Sträßchen) quer
+// durchs Dorf an eine völlig andere Straße anzubinden.
+const ZUFAHRT_BEVORZUGUNG_MAX_METER = 60
+
 export class RoadGraph {
   adjacency: Map<number, Array<{ to: number; dist: number; weight: number; kind: WegKind; istZufahrt: boolean }>> = new Map()
   coordinates: Map<number, LatLng> = new Map()
@@ -168,15 +181,20 @@ export class RoadGraph {
   // zwar (kein Fehler, kein Luftlinien-Fallback), aber über die falsche Straße.
   //
   // Zufahrten (highway=service — Einfahrten/Stichwege/Hofzufahrten) werden
-  // dabei bewusst zuerst ausgeklammert: ohne das würde die Trasse für ein
-  // einzelnes Haus, das schon direkt an der eigentlichen Straße liegt, ein
-  // paar Meter in eine private Zufahrt hineinfahren, nur weil die geometrisch
-  // hauchdünn näher liegt — unrealistischer Trassenverlauf für einen Meter
-  // gesparten Hausanschluss. Nur wenn wirklich KEINE echte Straße erreichbar
-  // ist (z.B. ein Aussiedlerhof nur über die Zufahrt selbst), wird die
-  // Zufahrt als Fallback doch benutzt.
+  // dabei bevorzugt gemieden, ABER NUR wenn eine echte Straße auch wirklich
+  // in der Nähe liegt (siehe ZUFAHRT_BEVORZUGUNG_MAX_METER) — sonst würde
+  // z.B. ein ganzes als "service" getaggtes Wohnsträßchen komplett
+  // übersprungen und stattdessen an eine völlig andere, weit entfernte
+  // Straße im Datensatz angebunden. Der ursprüngliche Zweck ist enger: nur
+  // die ganz knappen Fälle vermeiden, wo die Trasse für ein einzelnes Haus,
+  // das schon direkt an der eigentlichen Straße liegt, ein paar Meter in
+  // eine private Zufahrt hineinfahren würde, nur weil die geometrisch
+  // hauchdünn näher liegt.
   nearestPointOnGraph(coord: LatLng): number {
-    const treffer = this.sucheNaechsteKante(coord, true) ?? this.sucheNaechsteKante(coord, false)
+    const nurStrasse = this.sucheNaechsteKante(coord, true)
+    const alle = this.sucheNaechsteKante(coord, false)
+    const strasseZuWeitWeg = !nurStrasse || Math.sqrt(nurStrasse.dist2) * GRAD_ZU_METER > ZUFAHRT_BEVORZUGUNG_MAX_METER
+    const treffer = strasseZuWeitWeg ? alle : nurStrasse
     if (!treffer) return this.nearestNode(coord)
     const { a: bestA, b: bestB, t: bestT } = treffer
 
