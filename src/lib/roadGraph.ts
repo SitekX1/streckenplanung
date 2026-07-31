@@ -58,21 +58,8 @@ function haversine(a: LatLng, b: LatLng): number {
 // echten Geometrie neu berechnet, bleibt also exakt.
 const FELDWEG_KOSTEN_FAKTOR = 1.15
 
-// Grobe Umrechnung "Breitengrad-äquivalente Gradeinheit" → Meter (siehe
-// sucheNaechsteKante: sowohl bx als auch by sind in Breitengrad-Einheiten
-// skaliert, also ist 1° ≈ 111.320m für beide Achsen gültig).
-const GRAD_ZU_METER = 111_320
-
-// Wie weit darf die nächste ECHTE Straße (nicht-Zufahrt) höchstens entfernt
-// sein, damit eine näher liegende Zufahrt (highway=service) trotzdem
-// gemieden wird? Deckt den ueblichen Fall "Haus liegt direkt an einer
-// Straße" ab, ohne bei einer ausschließlich über eine Zufahrt erreichbaren
-// Häusergruppe (oder einem ganzen als "service" getaggten Sträßchen) quer
-// durchs Dorf an eine völlig andere Straße anzubinden.
-const ZUFAHRT_BEVORZUGUNG_MAX_METER = 60
-
 export class RoadGraph {
-  adjacency: Map<number, Array<{ to: number; dist: number; weight: number; kind: WegKind; istZufahrt: boolean }>> = new Map()
+  adjacency: Map<number, Array<{ to: number; dist: number; weight: number; kind: WegKind }>> = new Map()
   coordinates: Map<number, LatLng> = new Map()
   private naechsteVirtuelleId = -1
 
@@ -81,14 +68,10 @@ export class RoadGraph {
     if (!this.adjacency.has(id)) this.adjacency.set(id, [])
   }
 
-  // istZufahrt = highway=service (Einfahrten/Zufahrtswege/Stichwege) — zählt
-  // als reguläre Straße (kind bleibt 'paved', keine Extra-Kosten fürs
-  // Durchqueren), wird aber beim Anbindungspunkt-Suchen (nearestPointOnGraph)
-  // bevorzugt gemieden. Siehe dort für den Hintergrund.
-  addEdge(a: number, b: number, dist: number, oneway: boolean, kind: WegKind = 'paved', istZufahrt = false) {
+  addEdge(a: number, b: number, dist: number, oneway: boolean, kind: WegKind = 'paved') {
     const weight = kind === 'track' ? dist * FELDWEG_KOSTEN_FAKTOR : dist
-    this.adjacency.get(a)?.push({ to: b, dist, weight, kind, istZufahrt })
-    if (!oneway) this.adjacency.get(b)?.push({ to: a, dist, weight, kind, istZufahrt })
+    this.adjacency.get(a)?.push({ to: b, dist, weight, kind })
+    if (!oneway) this.adjacency.get(b)?.push({ to: a, dist, weight, kind })
   }
 
   // Für Kartenfärbung/Längenaufschlüsselung (Straße vs. Feldweg): welcher Art
@@ -122,13 +105,15 @@ export class RoadGraph {
     return bestId
   }
 
-  // Sucht den nächsten Punkt unter allen Kanten, optional Zufahrten
-  // (highway=service) ausgeschlossen. Reine Geometrie-Suche, legt noch
-  // keinen Knoten an.
-  private sucheNaechsteKante(
-    coord: LatLng,
-    ohneZufahrten: boolean
-  ): { a: number; b: number; t: number; dist2: number } | null {
+  // Nächsten Punkt auf dem GESAMTEN Straßennetz finden (nicht nur auf
+  // existierenden Knoten) — bei Bedarf wird mitten auf einer Kante ein neuer
+  // virtueller Knoten eingefügt. Ohne das würde nearestNode() ein Haus an
+  // einer nur grob digitalisierten Straße (wenige OSM-Knoten) fälschlich an
+  // den nächstgelegenen BELIEBIGEN Knoten anhängen — und das kann eine private
+  // Einfahrt oder eine ganz andere Straße sein, wenn die eigene Straße zufällig
+  // weiter entfernte Stützpunkte hat. Ergebnis: die Trasse "erreicht" das Haus
+  // zwar (kein Fehler, kein Luftlinien-Fallback), aber über die falsche Straße.
+  nearestPointOnGraph(coord: LatLng): number {
     const cosLat = Math.cos((coord.lat * Math.PI) / 180)
     let bestDist2 = Infinity
     let bestA = -1
@@ -137,8 +122,7 @@ export class RoadGraph {
     const gesehen = new Set<string>()
 
     for (const [a, kanten] of this.adjacency) {
-      for (const { to: b, istZufahrt } of kanten) {
-        if (ohneZufahrten && istZufahrt) continue
+      for (const { to: b } of kanten) {
         const key = a < b ? `${a}_${b}` : `${b}_${a}`
         if (gesehen.has(key)) continue
         gesehen.add(key)
@@ -168,36 +152,7 @@ export class RoadGraph {
       }
     }
 
-    return bestA === -1 ? null : { a: bestA, b: bestB, t: bestT, dist2: bestDist2 }
-  }
-
-  // Nächsten Punkt auf dem GESAMTEN Straßennetz finden (nicht nur auf
-  // existierenden Knoten) — bei Bedarf wird mitten auf einer Kante ein neuer
-  // virtueller Knoten eingefügt. Ohne das würde nearestNode() ein Haus an
-  // einer nur grob digitalisierten Straße (wenige OSM-Knoten) fälschlich an
-  // den nächstgelegenen BELIEBIGEN Knoten anhängen — und das kann eine private
-  // Einfahrt oder eine ganz andere Straße sein, wenn die eigene Straße zufällig
-  // weiter entfernte Stützpunkte hat. Ergebnis: die Trasse "erreicht" das Haus
-  // zwar (kein Fehler, kein Luftlinien-Fallback), aber über die falsche Straße.
-  //
-  // Zufahrten (highway=service — Einfahrten/Stichwege/Hofzufahrten) werden
-  // dabei bevorzugt gemieden, ABER NUR wenn eine echte Straße auch wirklich
-  // in der Nähe liegt (siehe ZUFAHRT_BEVORZUGUNG_MAX_METER) — sonst würde
-  // z.B. ein ganzes als "service" getaggtes Wohnsträßchen komplett
-  // übersprungen und stattdessen an eine völlig andere, weit entfernte
-  // Straße im Datensatz angebunden. Der ursprüngliche Zweck ist enger: nur
-  // die ganz knappen Fälle vermeiden, wo die Trasse für ein einzelnes Haus,
-  // das schon direkt an der eigentlichen Straße liegt, ein paar Meter in
-  // eine private Zufahrt hineinfahren würde, nur weil die geometrisch
-  // hauchdünn näher liegt.
-  nearestPointOnGraph(coord: LatLng): number {
-    const nurStrasse = this.sucheNaechsteKante(coord, true)
-    const alle = this.sucheNaechsteKante(coord, false)
-    const strasseZuWeitWeg = !nurStrasse || Math.sqrt(nurStrasse.dist2) * GRAD_ZU_METER > ZUFAHRT_BEVORZUGUNG_MAX_METER
-    const treffer = strasseZuWeitWeg ? alle : nurStrasse
-    if (!treffer) return this.nearestNode(coord)
-    const { a: bestA, b: bestB, t: bestT } = treffer
-
+    if (bestA === -1) return this.nearestNode(coord)
     // Nahe genug an einem vorhandenen Endpunkt → keinen neuen Knoten anlegen
     if (bestT < 1e-4) return bestA
     if (bestT > 1 - 1e-4) return bestB
@@ -210,14 +165,12 @@ export class RoadGraph {
     }
 
     const warBeidseitig = (this.adjacency.get(bestB) ?? []).some((e) => e.to === bestA)
-    const kante = (this.adjacency.get(bestA) ?? []).find((e) => e.to === bestB)
-    const kind = kante?.kind ?? 'paved'
-    const istZufahrt = kante?.istZufahrt ?? false
+    const kind = (this.adjacency.get(bestA) ?? []).find((e) => e.to === bestB)?.kind ?? 'paved'
     const neueId = this.naechsteVirtuelleId--
     this.addNode(neueId, projCoord)
     this.removeEdge(bestA, bestB)
-    this.addEdge(bestA, neueId, haversine(ca, projCoord), false, kind, istZufahrt)
-    this.addEdge(neueId, bestB, haversine(projCoord, cb), false, kind, istZufahrt)
+    this.addEdge(bestA, neueId, haversine(ca, projCoord), false, kind)
+    this.addEdge(neueId, bestB, haversine(projCoord, cb), false, kind)
     if (!warBeidseitig) {
       // urspruengliche Kante war nur a→b (oneway) → Rueckrichtung entfernen,
       // Reihenfolge a→neueId→b bleibt erhalten
@@ -373,7 +326,6 @@ export function buildRoadGraph(netz: OsmNetz, adressen: LatLng[] = []): RoadGrap
 
   for (const way of netz.ways) {
     const istFeldweg = way.highway === 'track'
-    const istZufahrt = way.highway === 'service'
     for (let i = 0; i < way.nodeIds.length - 1; i++) {
       const a = kanonisch.get(way.nodeIds[i]) ?? way.nodeIds[i]
       const b = kanonisch.get(way.nodeIds[i + 1]) ?? way.nodeIds[i + 1]
@@ -387,7 +339,7 @@ export function buildRoadGraph(netz: OsmNetz, adressen: LatLng[] = []): RoadGrap
         if (istInnerorts(mitte)) continue // innerorts: Feldweg ignorieren, nur Straße
         graph.addEdge(a, b, haversine(ca, cb), way.oneway, 'track')
       } else {
-        graph.addEdge(a, b, haversine(ca, cb), way.oneway, 'paved', istZufahrt)
+        graph.addEdge(a, b, haversine(ca, cb), way.oneway, 'paved')
       }
     }
   }
