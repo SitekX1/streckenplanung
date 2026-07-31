@@ -240,13 +240,19 @@ export function berechneNvtStandorte(
   hausanschluesse: Hausstich[],
   startpunkt: LatLng,
   distanzLimitMeter: number,
-  erlaubteKapazitaeten: number[]
+  erlaubteKapazitaeten: number[],
+  // Reserve pro Standort (z.B. 50 bei einem 120er → nur 70 tatsächlich
+  // belegt) — wirkt nur auf die Platzierungs-Logik (Zonengröße), die
+  // ausgewiesene "kapazitaet" bleibt die reale Rohr-/Boxgröße, damit im UI
+  // weiterhin z.B. "70/120" angezeigt wird, nicht "70/70".
+  kapazitaetsReserve = 0
 ): NvtErgebnis {
   if (hausanschluesse.length === 0 || erlaubteKapazitaeten.length === 0) {
     return { standorte: [], nichtErreichbar: [] }
   }
   const kapazitaetenAufsteigend = [...erlaubteKapazitaeten].sort((a, b) => a - b)
-  const maxKapazitaet = kapazitaetenAufsteigend[kapazitaetenAufsteigend.length - 1]
+  const effektiveKapazitaeten = kapazitaetenAufsteigend.map((k) => Math.max(1, k - kapazitaetsReserve))
+  const maxKapazitaet = effektiveKapazitaeten[effektiveKapazitaeten.length - 1]
 
   const graph = baueGraph(trassePfade)
   const startKnoten = graph.size > 0 ? naechsterKnoten(graph, startpunkt) : null
@@ -273,12 +279,15 @@ export function berechneNvtStandorte(
   const rohZonen = partitioniere(graph, terminals, maxKapazitaet, distanzLimitMeter)
   const zonen = legeZusammen(graph, rohZonen, maxKapazitaet, distanzLimitMeter)
 
-  const standorte: NvtStandort[] = zonen.map((zone) => ({
-    position: graph.get(zone.zentrum)!.coord,
-    kapazitaet: kapazitaetenAufsteigend.find((k) => k >= zone.terminals.length) ?? maxKapazitaet,
-    belegung: zone.terminals.length,
-    hausanschlussIds: zone.terminals.map((t) => t.hausId),
-  }))
+  const standorte: NvtStandort[] = zonen.map((zone) => {
+    const passenderIdx = effektiveKapazitaeten.findIndex((k) => k >= zone.terminals.length)
+    return {
+      position: graph.get(zone.zentrum)!.coord,
+      kapazitaet: passenderIdx === -1 ? kapazitaetenAufsteigend[kapazitaetenAufsteigend.length - 1] : kapazitaetenAufsteigend[passenderIdx],
+      belegung: zone.terminals.length,
+      hausanschlussIds: zone.terminals.map((t) => t.hausId),
+    }
+  })
 
   return { standorte, nichtErreichbar }
 }

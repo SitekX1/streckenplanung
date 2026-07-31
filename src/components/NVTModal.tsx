@@ -9,7 +9,7 @@ interface NVTModalProps {
   nvtVorhandenAnzahl: number
   onAussiedlerhoefeMarkieren: () => void
   onManuellSetzen: () => void
-  onGenerieren: (ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[]) => void
+  onGenerieren: (ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[], kapazitaetsReserve: number) => void
   onClose: () => void
 }
 
@@ -20,6 +20,7 @@ export default function NVTModal({
   const [ausgewaehlt, setAusgewaehlt] = useState<Set<string>>(new Set())
   const [distanz, setDistanz] = useState(500)
   const [kapazitaeten, setKapazitaeten] = useState<Set<number>>(new Set([96, 120]))
+  const [reserve, setReserve] = useState(0)
 
   function toggleKapazitaet(k: number) {
     setKapazitaeten((prev) => {
@@ -145,12 +146,30 @@ export default function NVTModal({
                 </p>
               </div>
 
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-400">Reserve pro Standort (Röhrchen frei lassen)</span>
+                <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid #374151', backgroundColor: '#111827' }}>
+                  <input
+                    type="number"
+                    min={0}
+                    value={reserve}
+                    onChange={(e) => setReserve(Math.max(0, Number(e.target.value) || 0))}
+                    className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
+                    style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
+                  />
+                  <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>Stk.</span>
+                </div>
+              </label>
+              <p className="text-xs text-gray-600 -mt-2">
+                z.B. 50 bei einem 120er → es werden nur bis zu 70 Hausanschlüsse belegt, 50 bleiben als Reserve frei. Wirkt auf alle ausgewählten Kapazitäten.
+              </p>
+
               {nvtVorhandenAnzahl > 0 && (
                 <p className="text-xs text-gray-500">Bereits {nvtVorhandenAnzahl} NVT-Standort(e) auf der Karte.</p>
               )}
 
               <button
-                onClick={() => onGenerieren([...ausgewaehlt], distanz, [...kapazitaeten])}
+                onClick={() => onGenerieren([...ausgewaehlt], distanz, [...kapazitaeten], reserve)}
                 disabled={ausgewaehlt.size === 0 || kapazitaeten.size === 0}
                 className="w-full px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
