@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic'
 import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
 import NVTModal from '../components/NVTModal'
+import BestaetigungsModal from '../components/BestaetigungsModal'
 import { Address, LatLng, Hausstich, OrtInfo, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
 import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
@@ -14,7 +15,7 @@ import { berechneHausanschluesse, berechneLaengen } from '../lib/hausanschluesse
 import { exportKML } from '../lib/kmlExport'
 import { exportShapefile } from '../lib/shapefileExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
-import { berechneNvtStandorte } from '../lib/nvt'
+import { berechneNvtStandorte, weiseHausanschluesseNeuZu } from '../lib/nvt'
 import { segmentiereAnPunkten } from '../lib/segmentierung'
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false })
@@ -207,6 +208,13 @@ export default function Home() {
   // Aussiedlerhöfe ohne eigenen NVT) — kapazitätslos, kein Automatik-Feature.
   const [schachtStandorte, setSchachtStandorte] = useState<SchachtStandort[]>([])
   const [schachtSetzenAktiv, setSchachtSetzenAktiv] = useState(false)
+  // Eigenes Bestätigungs-/Info-Modal statt nativer confirm()/alert()-Dialoge —
+  // ohne onAbbrechen wird nur ein "OK"-Button gezeigt (reine Info-Meldung).
+  const [bestaetigungsModal, setBestaetigungsModal] = useState<{
+    text: string
+    onBestaetigen: () => void
+    onAbbrechen?: () => void
+  } | null>(null)
 
   const pushHistory = useCallback((label: string) => {
     setHistory((prev) => [
@@ -746,39 +754,24 @@ export default function Home() {
   // man nicht jeden Hausanschluss einzeln von Hand neu zuweisen muss.
   const handleNvtHausanschluesseNeuZuweisen = useCallback(() => {
     if (nvtStandorte.length === 0) return
+    const pfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
+    if (pfade.length === 0) return
+
     pushHistory('NVT-Zuweisung neu berechnet')
 
-    const hausById = new Map(hausanschluesse.map((h) => [h.id, h]))
-    const alleZugeordnetenIds = new Set(nvtStandorte.flatMap((n) => n.hausanschlussIds))
+    const anzahlVorher = new Set(nvtStandorte.flatMap((n) => n.hausanschlussIds)).size
+    const neu = weiseHausanschluesseNeuZu(pfade, hausanschluesse, nvtStandorte)
+    setNvtStandorte(neu)
 
-    const gruppenProNvt: string[][] = nvtStandorte.map(() => [])
-    for (const hausId of alleZugeordnetenIds) {
-      const haus = hausById.get(hausId)
-      if (!haus) continue
-      let besterIdx = 0
-      let besteDist = Infinity
-      nvtStandorte.forEach((nvt, i) => {
-        const dLat = (nvt.position.lat - haus.trassenPunkt.lat) * 111_000
-        const dLng = (nvt.position.lng - haus.trassenPunkt.lng) * Math.cos((haus.trassenPunkt.lat * Math.PI) / 180) * 111_000
-        const d2 = dLat * dLat + dLng * dLng
-        if (d2 < besteDist) { besteDist = d2; besterIdx = i }
-      })
-      gruppenProNvt[besterIdx].push(hausId)
-    }
-
-    setNvtStandorte((prev) =>
-      prev.map((nvt, i) => ({ ...nvt, hausanschlussIds: gruppenProNvt[i], belegung: gruppenProNvt[i].length }))
-    )
-
-    const ueberbelegte = nvtStandorte
-      .map((nvt, i) => ({ nr: i + 1, belegung: gruppenProNvt[i].length, kapazitaet: nvt.kapazitaet }))
+    const ueberbelegte = neu
+      .map((nvt, i) => ({ nr: i + 1, belegung: nvt.belegung, kapazitaet: nvt.kapazitaet }))
       .filter((n) => n.belegung > n.kapazitaet)
 
-    const meldung = ueberbelegte.length > 0
-      ? `${alleZugeordnetenIds.size} Hausanschlüsse neu zugewiesen.\n\n⚠️ Überbelegt: ${ueberbelegte.map((n) => `NVT ${n.nr} (${n.belegung}/${n.kapazitaet})`).join(', ')}`
-      : `✓ ${alleZugeordnetenIds.size} Hausanschlüsse neu zugewiesen.`
-    alert(meldung)
-  }, [nvtStandorte, hausanschluesse, pushHistory])
+    const text = ueberbelegte.length > 0
+      ? `${anzahlVorher} Hausanschlüsse neu zugewiesen.\n\n⚠️ Überbelegt: ${ueberbelegte.map((n) => `NVT ${n.nr} (${n.belegung}/${n.kapazitaet})`).join(', ')}`
+      : `✓ ${anzahlVorher} Hausanschlüsse neu zugewiesen.`
+    setBestaetigungsModal({ text, onBestaetigen: () => setBestaetigungsModal(null) })
+  }, [nvtStandorte, hausanschluesse, trassePfade, trasse, pushHistory])
 
   const handleNvtGenerieren = useCallback((ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[], kapazitaetsReserve: number) => {
     if (!startpunkt || ausgewaehlteOrteKeys.length === 0) return
@@ -792,6 +785,33 @@ export default function Home() {
         .map((a) => a.uuid)
     )
 
+    const fuehreAus = () => {
+      pushHistory('NVT generiert')
+
+      const relevanteHausanschluesse = hausanschluesse.filter(
+        (h) => adressUuidsImDorf.has(h.addressUuid) && !aussiedlerhofUuids.has(h.addressUuid)
+      )
+
+      const ergebnis = berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter, erlaubteKapazitaeten, kapazitaetsReserve)
+      setNvtStandorte((prev) => [...prev, ...ergebnis.standorte])
+      if (ergebnis.nichtErreichbar.length > 0) {
+        console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
+      }
+
+      // Trasse an ALLEN NVT-Standorten (bestehende + neu generierte) segmentieren
+      // — sonst laufen die Segmente unstrukturiert quer durchs Dorf, unabhängig
+      // davon, welcher NVT welchen Abschnitt tatsächlich versorgt.
+      const alleNvtPositionen = [...nvtStandorte, ...ergebnis.standorte].map((n) => n.position)
+      const kindsFuerPfade = passendeKinds(pfade, trassePfadeKinds)
+      const segmentiert = segmentiereAnPunkten(pfade, kindsFuerPfade, alleNvtPositionen)
+      setTrassePfade(segmentiert.pfade)
+      setTrassePfadeKinds(segmentiert.kinds)
+      setTrasse(segmentiert.pfade.flat())
+      setLaengen(berechneLaengen(segmentiert.pfade, hausanschluesse, segmentiert.kinds))
+
+      setNvtModalOffen(false)
+    }
+
     // Schutz gegen versehentliches doppeltes Generieren fuers selbe Dorf —
     // legt sonst einen kompletten zweiten Satz NVT ueber die bestehenden.
     const bereitsZugeordneteHausIds = new Set(nvtStandorte.flatMap((n) => n.hausanschlussIds))
@@ -799,37 +819,15 @@ export default function Home() {
       (h) => adressUuidsImDorf.has(h.addressUuid) && bereitsZugeordneteHausIds.has(h.id)
     ).length
     if (ueberschneidungAnzahl > 0) {
-      const weiter = confirm(
-        `${ueberschneidungAnzahl} Hausanschluss(e) in der Auswahl haben bereits einen NVT. ` +
-        `Trotzdem neu generieren? (bestehende NVT bleiben erhalten, es kommen weitere hinzu)`
-      )
-      if (!weiter) return
+      setBestaetigungsModal({
+        text: `${ueberschneidungAnzahl} Hausanschluss(e) in der Auswahl haben bereits einen NVT. ` +
+          `Trotzdem neu generieren? (bestehende NVT bleiben erhalten, es kommen weitere hinzu)`,
+        onBestaetigen: () => { setBestaetigungsModal(null); fuehreAus() },
+        onAbbrechen: () => setBestaetigungsModal(null),
+      })
+      return
     }
-
-    pushHistory('NVT generiert')
-
-    const relevanteHausanschluesse = hausanschluesse.filter(
-      (h) => adressUuidsImDorf.has(h.addressUuid) && !aussiedlerhofUuids.has(h.addressUuid)
-    )
-
-    const ergebnis = berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter, erlaubteKapazitaeten, kapazitaetsReserve)
-    setNvtStandorte((prev) => [...prev, ...ergebnis.standorte])
-    if (ergebnis.nichtErreichbar.length > 0) {
-      console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
-    }
-
-    // Trasse an ALLEN NVT-Standorten (bestehende + neu generierte) segmentieren
-    // — sonst laufen die Segmente unstrukturiert quer durchs Dorf, unabhängig
-    // davon, welcher NVT welchen Abschnitt tatsächlich versorgt.
-    const alleNvtPositionen = [...nvtStandorte, ...ergebnis.standorte].map((n) => n.position)
-    const kindsFuerPfade = passendeKinds(pfade, trassePfadeKinds)
-    const segmentiert = segmentiereAnPunkten(pfade, kindsFuerPfade, alleNvtPositionen)
-    setTrassePfade(segmentiert.pfade)
-    setTrassePfadeKinds(segmentiert.kinds)
-    setTrasse(segmentiert.pfade.flat())
-    setLaengen(berechneLaengen(segmentiert.pfade, hausanschluesse, segmentiert.kinds))
-
-    setNvtModalOffen(false)
+    fuehreAus()
   }, [startpunkt, trassePfade, trasse, trassePfadeKinds, adressen, hausanschluesse, aussiedlerhofUuids, pushHistory, nvtStandorte])
 
   const handleKMLExport = useCallback(() => {
@@ -1044,6 +1042,13 @@ export default function Home() {
             onSchachtSetzen={handleSchachtSetzenStart}
             onGenerieren={handleNvtGenerieren}
             onClose={() => setNvtModalOffen(false)}
+          />
+        )}
+        {bestaetigungsModal && (
+          <BestaetigungsModal
+            text={bestaetigungsModal.text}
+            onBestaetigen={bestaetigungsModal.onBestaetigen}
+            onAbbrechen={bestaetigungsModal.onAbbrechen}
           />
         )}
       </main>

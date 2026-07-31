@@ -365,3 +365,45 @@ export function berechneNvtStandorte(
 
   return { standorte, nichtErreichbar }
 }
+
+// Ordnet jeden bereits einem NVT zugeordneten Hausanschluss neu dem (Netz-,
+// nicht Luftlinien-)nächsten der AKTUELLEN NVT-Standorte zu — gedacht als
+// Werkzeug nach manuellem Verschieben/Löschen einzelner NVT, damit man nicht
+// jeden Hausanschluss einzeln von Hand neu zuweisen muss. Nutzt dieselbe
+// Netzdistanz-Metrik wie berechneNvtStandorte/verfeinereZuweisung (vorher
+// nutzte der Sidebar-Button eine reine Luftlinien-Näherung, was auf einem
+// echten Straßennetz zu abweichenden — und für den Nutzer überraschenden —
+// Ergebnissen führen konnte).
+export function weiseHausanschluesseNeuZu(
+  trassePfade: LatLng[][],
+  hausanschluesse: Hausstich[],
+  nvtStandorte: NvtStandort[]
+): NvtStandort[] {
+  if (nvtStandorte.length === 0) return nvtStandorte
+
+  const graph = baueGraph(trassePfade)
+  if (graph.size === 0) return nvtStandorte
+
+  const hausById = new Map(hausanschluesse.map((h) => [h.id, h]))
+  const alleZugeordnetenIds = new Set(nvtStandorte.flatMap((n) => n.hausanschlussIds))
+
+  const nvtKnoten = nvtStandorte.map((n) => naechsterKnoten(graph, n.position))
+  const distanzenProNvt = nvtKnoten.map((k) => (k ? dijkstraVon(graph, k).dist : new Map<string, number>()))
+
+  const gruppenProNvt: string[][] = nvtStandorte.map(() => [])
+  for (const hausId of alleZugeordnetenIds) {
+    const haus = hausById.get(hausId)
+    if (!haus) continue
+    const hausKnoten = naechsterKnoten(graph, haus.trassenPunkt)
+    if (!hausKnoten) continue
+    let besterIdx = 0
+    let besteDist = Infinity
+    distanzenProNvt.forEach((dist, i) => {
+      const d = dist.get(hausKnoten) ?? Infinity
+      if (d < besteDist) { besteDist = d; besterIdx = i }
+    })
+    gruppenProNvt[besterIdx].push(hausId)
+  }
+
+  return nvtStandorte.map((nvt, i) => ({ ...nvt, hausanschlussIds: gruppenProNvt[i], belegung: gruppenProNvt[i].length }))
+}

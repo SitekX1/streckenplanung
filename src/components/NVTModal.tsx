@@ -20,9 +20,16 @@ export default function NVTModal({
   onAussiedlerhoefeMarkieren, onManuellSetzen, onSchachtSetzen, onGenerieren, onClose,
 }: NVTModalProps) {
   const [ausgewaehlt, setAusgewaehlt] = useState<Set<string>>(new Set())
-  const [distanz, setDistanz] = useState(500)
+  // Als Text statt Number gehalten, damit das Feld beim Löschen wirklich leer
+  // werden kann (bei Number-State sprang der Wert sofort auf 0/500 zurück,
+  // sobald man die letzte Ziffer entfernt hat — Eingabe war so kaum möglich).
+  // Der eigentliche Default greift erst beim tatsächlichen Verwenden (Klick
+  // auf "NVT generieren"), nicht bei jedem Tastendruck.
+  const [distanzText, setDistanzText] = useState('500')
   const [kapazitaeten, setKapazitaeten] = useState<Set<number>>(new Set([96, 120]))
-  const [reserve, setReserve] = useState(0)
+  const [reserveText, setReserveText] = useState('')
+  const distanz = Math.max(1, Number(distanzText) || 500)
+  const reserve = Math.max(0, Number(reserveText) || 0)
 
   function toggleKapazitaet(k: number) {
     setKapazitaeten((prev) => {
@@ -127,8 +134,8 @@ export default function NVTModal({
                   <input
                     type="number"
                     min={1}
-                    value={distanz}
-                    onChange={(e) => setDistanz(Number(e.target.value) || 500)}
+                    value={distanzText}
+                    onChange={(e) => setDistanzText(e.target.value)}
                     className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
                     style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
                   />
@@ -165,8 +172,8 @@ export default function NVTModal({
                   <input
                     type="number"
                     min={0}
-                    value={reserve}
-                    onChange={(e) => setReserve(Math.max(0, Number(e.target.value) || 0))}
+                    value={reserveText}
+                    onChange={(e) => setReserveText(e.target.value)}
                     className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
                     style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
                   />

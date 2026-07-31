@@ -284,6 +284,40 @@ function TrasseKlickbar({ pfade, ausgewaehlterIdx, onKlick }: {
   )
 }
 
+// Schnapp-Ziel-Anzeige beim Ziehen eines Punkt-Handles — bewusst NICHT über
+// React-State (setState während des Ziehens würde MapView neu rendern; da
+// react-leaflet die Marker-"position"-Prop nur per Referenzvergleich prüft
+// (updateMarker: `props.position !== prevProps.position`), erzeugt JEDES
+// Re-Rendern ein neues [lat,lng]-Array und reißt den gerade gezogenen Marker
+// per marker.setLatLng() zurück auf die alte Position — das Ziehen wirkte
+// dadurch "kaputt", der Punkt sprang beim Loslassen zurück). Stattdessen wird
+// hier ein einziger, dauerhaft auf der Karte liegender Leaflet-Layer rein
+// imperativ verschoben/ein-ausgeblendet, ohne jemals ein Re-Rendern auszulösen.
+function SchnappZielLayer({ layerRef }: { layerRef: React.MutableRefObject<L.CircleMarker | null> }) {
+  const map = useMap()
+  useEffect(() => {
+    const circle = L.circleMarker([0, 0], {
+      radius: 11, color: '#4ade80', weight: 3, fillColor: '#4ade80',
+      fillOpacity: 0, opacity: 0, interactive: false,
+    }).addTo(map)
+    layerRef.current = circle
+    return () => { circle.remove(); layerRef.current = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map])
+  return null
+}
+
+function zeigeSchnappZiel(layerRef: React.MutableRefObject<L.CircleMarker | null>, ziel: LatLng | null) {
+  const layer = layerRef.current
+  if (!layer) return
+  if (ziel) {
+    layer.setLatLng([ziel.lat, ziel.lng])
+    layer.setStyle({ opacity: 1, fillOpacity: 0.35 })
+  } else {
+    layer.setStyle({ opacity: 0, fillOpacity: 0 })
+  }
+}
+
 type TileVariante = 'satellit' | 'osm'
 
 const MapView = memo(function MapView({
@@ -360,10 +394,12 @@ const MapView = memo(function MapView({
   const [deletedStack, setDeletedStack] = useState<Hausstich[]>([])
   const [ziehStartId, setZiehStartId] = useState<string | null>(null)
   const [ziehStartPos, setZiehStartPos] = useState<LatLng | null>(null)
-  // Beim Ziehen eines Punkt-Handles: Position eines nahegelegenen Schnapp-
-  // Ziels (Punkt oder Linie), das beim Loslassen übernommen wird — nur
-  // während eines aktiven Drags gesetzt, sonst null.
-  const [schnappZiel, setSchnappZiel] = useState<LatLng | null>(null)
+  // Beim Ziehen eines Punkt-Handles: Ref auf den imperativ verwalteten
+  // Schnapp-Ziel-Layer (siehe SchnappZielLayer/zeigeSchnappZiel oben) — bewusst
+  // KEIN React-State, sonst reißt jedes Re-Rendern den gerade gezogenen
+  // Marker zurück auf seine alte Position (react-leaflet vergleicht die
+  // position-Prop nur per Referenz).
+  const schnappZielLayerRef = useRef<L.CircleMarker | null>(null)
   const [aktivMenu, setAktivMenu] = useState<AktivMenu>(null)
   const [neuerHsStart, setNeuerHsStart] = useState<NeuerHsStart>(null)
   const [aktivesSegment, setAktivesSegment] = useState<string | null>(null)
@@ -422,7 +458,7 @@ const MapView = memo(function MapView({
       setAktivMenu(null)
       setSegmentStart(null)
       setAusgewaehltesSegmentNormal(null)
-      setSchnappZiel(null)
+      zeigeSchnappZiel(schnappZielLayerRef, null)
 
       if (pfade.length > 0) {
         startedWithSingleRef.current = false
@@ -1099,7 +1135,7 @@ const MapView = memo(function MapView({
                     drag: (e) => {
                       const ll = (e.target as L.Marker).getLatLng()
                       const linienLive = localPfadeRef.current.map((pf, idx) => (idx === editSegmentIdx ? editPunkteRef.current : pf))
-                      setSchnappZiel(findeSchnappziel({ lat: ll.lat, lng: ll.lng }, linienLive, editSegmentIdx ?? -1, i))
+                      zeigeSchnappZiel(schnappZielLayerRef, findeSchnappziel({ lat: ll.lat, lng: ll.lng }, linienLive, editSegmentIdx ?? -1, i))
                     },
                     dragend: (e) => {
                       const ll = (e.target as L.Marker).getLatLng()
@@ -1107,7 +1143,7 @@ const MapView = memo(function MapView({
                       const linienLive = localPfadeRef.current.map((pf, idx) => (idx === editSegmentIdx ? editPunkteRef.current : pf))
                       const ziel = findeSchnappziel(pos, linienLive, editSegmentIdx ?? -1, i)
                       handleEditPunktBewegt(i, ziel ?? pos)
-                      setSchnappZiel(null)
+                      zeigeSchnappZiel(schnappZielLayerRef, null)
                     },
                   }}>
                   {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
@@ -1179,14 +1215,14 @@ const MapView = memo(function MapView({
                   dragstart: () => setAktivMenu(null),
                   drag: (e) => {
                     const ll = (e.target as L.Marker).getLatLng()
-                    setSchnappZiel(findeSchnappziel({ lat: ll.lat, lng: ll.lng }, localPfadeRef.current, pi, i))
+                    zeigeSchnappZiel(schnappZielLayerRef, findeSchnappziel({ lat: ll.lat, lng: ll.lng }, localPfadeRef.current, pi, i))
                   },
                   dragend: (e) => {
                     const ll = (e.target as L.Marker).getLatLng()
                     const pos = { lat: ll.lat, lng: ll.lng }
                     const ziel = findeSchnappziel(pos, localPfadeRef.current, pi, i)
                     handleKleinPunktBewegt(pi, i, ziel ?? pos)
-                    setSchnappZiel(null)
+                    zeigeSchnappZiel(schnappZielLayerRef, null)
                   },
                 }}>
                 {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
@@ -1197,10 +1233,7 @@ const MapView = memo(function MapView({
 
         {/* Schnapp-Ziel beim Ziehen eines Punkts — zeigt live, wo genau
             gelandet wird, wenn jetzt losgelassen wird. */}
-        {schnappZiel && (
-          <CircleMarker center={[schnappZiel.lat, schnappZiel.lng]} radius={11} interactive={false}
-            pathOptions={{ color: '#4ade80', weight: 3, fillColor: '#4ade80', fillOpacity: 0.35 }} />
-        )}
+        <SchnappZielLayer layerRef={schnappZielLayerRef} />
 
         {/* Adressen */}
         {adressenSichtbar && adressen.map((a) => {
