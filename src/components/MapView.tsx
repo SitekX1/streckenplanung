@@ -1046,36 +1046,20 @@ const MapView = memo(function MapView({
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
-                  setNvtZuweisenAktiv(false)
                   setAusgewaehltesNvtIdx((prev) => (prev === i ? null : i))
+                },
+                contextmenu: (e) => {
+                  if (e.originalEvent) e.originalEvent.stopPropagation()
+                  zeigeMenu(e, [
+                    { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesNvtIdx(i); setNvtZuweisenAktiv(true); setAktivMenu(null) } },
+                    { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onNvtLoeschen?.(i); setAusgewaehltesNvtIdx(null); setNvtZuweisenAktiv(false); setAktivMenu(null) } },
+                  ])
                 },
               }}>
               <Tooltip>
                 NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt{istUeberlastet ? ' · ⚠️ überbelegt' : ''}
-                {ausgewaehltesNvtIdx === i ? ' · Hausanschlüsse markiert' : ' · antippen für Details'}
+                {ausgewaehltesNvtIdx === i ? ' · Hausanschlüsse markiert' : ' · antippen zum Markieren · lang drücken für Aktionen'}
               </Tooltip>
-              <Popup>
-                <div className="text-sm">
-                  <p className="font-semibold">NVT {i + 1}</p>
-                  <p style={istUeberlastet ? { color: '#dc2626', fontWeight: 600 } : undefined}>
-                    {nvt.belegung}/{nvt.kapazitaet} belegt{istUeberlastet ? ' ⚠️ über Kapazität' : ''}
-                  </p>
-                  <button
-                    onClick={() => { setAusgewaehltesNvtIdx(i); setNvtZuweisenAktiv(true) }}
-                    className="mt-2 block w-full text-left px-2 py-1.5 rounded text-xs font-medium"
-                    style={{ backgroundColor: '#1e3a5f', color: '#93c5fd' }}
-                  >
-                    🔗 Hausanschlüsse zuweisen
-                  </button>
-                  <button
-                    onClick={() => { onNvtLoeschen?.(i); setAusgewaehltesNvtIdx(null); setNvtZuweisenAktiv(false) }}
-                    className="mt-1.5 block w-full text-left px-2 py-1.5 rounded text-xs font-medium"
-                    style={{ backgroundColor: '#450a0a', color: '#fca5a5' }}
-                  >
-                    🗑️ Standort löschen
-                  </button>
-                </div>
-              </Popup>
             </Marker>
           )
         })}
@@ -1297,7 +1281,7 @@ const MapView = memo(function MapView({
       )}
 
       {/* Kontextmenü */}
-      {editierbarAktiv && aktivMenu && !imZeichenModus && (
+      {aktivMenu && !imZeichenModus && (
         <div style={{
           position: 'absolute',
           left: Math.min(aktivMenu.screenX - 50, window.innerWidth - 185),
