@@ -113,8 +113,8 @@ export default function KalkulationModal({
         <div className="flex flex-col gap-3 p-5 overflow-y-auto">
           {sektion('🛣️ Trasse', (
             <>
-              {feld('Straße', 'strassePreisProMeter', '€/m')}
-              {feld('Feldweg', 'feldwegPreisProMeter', '€/m')}
+              {feld('Befestigte Oberfläche', 'strassePreisProMeter', '€/m')}
+              {feld('Unbefestigte Oberfläche', 'feldwegPreisProMeter', '€/m')}
             </>
           ))}
 
@@ -135,8 +135,8 @@ export default function KalkulationModal({
           ))}
 
           <div className="rounded-xl p-4 flex flex-col mt-1" style={{ backgroundColor: '#0f1216', border: '1px solid #262b36' }}>
-            {zeile('Straße', `${Math.round(strasseLaenge)} m`, strasseSumme)}
-            {zeile('Feldweg', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
+            {zeile('Befestigte Oberfläche', `${Math.round(strasseLaenge)} m`, strasseSumme)}
+            {zeile('Unbefestigte Oberfläche', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
             {zeile('Hausanschlüsse', `${hausanschluesseCount} Stk.`, hausanschlussSumme)}
             {preise.sondergebuehrAnzahl > 0 && zeile('Sondergebühr', `${preise.sondergebuehrAnzahl} Stk.`, sondergebuehrSumme)}
             {preise.nvtAnzahl > 0 && zeile('NVT', `${preise.nvtAnzahl} Stk.`, nvtSumme)}
