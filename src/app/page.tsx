@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic'
 import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
 import NVTModal from '../components/NVTModal'
-import { Address, LatLng, Hausstich, OrtInfo, WegKind, NvtStandort } from '../lib/types'
+import { Address, LatLng, Hausstich, OrtInfo, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
 import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
 import { buildRoadGraph } from '../lib/roadGraph'
@@ -134,6 +134,7 @@ type HistorySnapshot = {
   trassePfadeKinds: WegKind[]
   nvtStandorte: NvtStandort[]
   aussiedlerhofUuids: string[]
+  schachtStandorte: SchachtStandort[]
 }
 
 export default function Home() {
@@ -181,6 +182,11 @@ export default function Home() {
   // (siehe MapView) — für Einzelfälle wie 2-3 benachbarte Aussiedlerhöfe mit
   // eigenem kleinem NVT/Schacht statt der automatischen Dorf-weiten Planung.
   const [nvtManuellSetzenAktiv, setNvtManuellSetzenAktiv] = useState(false)
+  // Schacht: manuell gesetzter Kabelschacht/Übergabepunkt (z.B. Zwischenpunkt
+  // bei zu langer Strecke zwischen Dörfern, oder direkte Anbindung einzelner
+  // Aussiedlerhöfe ohne eigenen NVT) — kapazitätslos, kein Automatik-Feature.
+  const [schachtStandorte, setSchachtStandorte] = useState<SchachtStandort[]>([])
+  const [schachtSetzenAktiv, setSchachtSetzenAktiv] = useState(false)
 
   const pushHistory = useCallback((label: string) => {
     setHistory((prev) => [
@@ -188,10 +194,10 @@ export default function Home() {
       {
         label, trassePfade, trasse, hausanschluesse, laengen,
         trasseAdressenUuids: [...trasseAdressenUuids], trassePfadeKinds,
-        nvtStandorte, aussiedlerhofUuids: [...aussiedlerhofUuids],
+        nvtStandorte, aussiedlerhofUuids: [...aussiedlerhofUuids], schachtStandorte,
       },
     ])
-  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids])
+  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte])
 
   const wendeSnapshotAn = useCallback((snap: HistorySnapshot) => {
     setTrassePfade(snap.trassePfade)
@@ -202,6 +208,7 @@ export default function Home() {
     setTrassePfadeKinds(snap.trassePfadeKinds)
     setNvtStandorte(snap.nvtStandorte)
     setAussiedlerhofUuids(new Set(snap.aussiedlerhofUuids))
+    setSchachtStandorte(snap.schachtStandorte)
   }, [])
 
   const handleUndo = useCallback(() => {
@@ -553,6 +560,8 @@ export default function Home() {
     setAussiedlerhofMarkierenAktiv(false)
     setNvtModalOffen(false)
     setNvtStandorte([])
+    setSchachtStandorte([])
+    setSchachtSetzenAktiv(false)
   }, [])
 
   const handleAussiedlerhofToggle = useCallback((uuid: string) => {
@@ -596,13 +605,20 @@ export default function Home() {
 
   // Ordnet einen Hausanschluss exklusiv einem NVT zu (toggle: erneutes
   // Anklicken beim selben NVT entfernt ihn wieder) — war er vorher einem
-  // ANDEREN NVT zugeordnet, wird er dort automatisch entfernt.
+  // ANDEREN NVT oder einem Schacht zugeordnet, wird er dort automatisch entfernt.
   const handleNvtHausanschlussToggle = useCallback((nvtIdx: number, hausId: string) => {
     pushHistory('Hausanschluss zugewiesen')
     setNvtStandorte((prev) => {
       const ziel = prev[nvtIdx]
       if (!ziel) return prev
       const warBeimZielZugeordnet = ziel.hausanschlussIds.includes(hausId)
+      if (!warBeimZielZugeordnet) {
+        setSchachtStandorte((s) => s.map((schacht) =>
+          schacht.hausanschlussIds.includes(hausId)
+            ? { ...schacht, hausanschlussIds: schacht.hausanschlussIds.filter((id) => id !== hausId) }
+            : schacht
+        ))
+      }
       return prev.map((nvt, i) => {
         if (i === nvtIdx) {
           const neueIds = warBeimZielZugeordnet
@@ -622,6 +638,61 @@ export default function Home() {
   const handleNvtVerschoben = useCallback((nvtIdx: number, position: LatLng) => {
     pushHistory('NVT verschoben')
     setNvtStandorte((prev) => prev.map((nvt, i) => (i === nvtIdx ? { ...nvt, position } : nvt)))
+  }, [pushHistory])
+
+  const handleSchachtSetzenStart = useCallback(() => {
+    setNvtModalOffen(false)
+    setSchachtSetzenAktiv(true)
+  }, [])
+
+  const handleSchachtSetzenAbbrechen = useCallback(() => {
+    setSchachtSetzenAktiv(false)
+  }, [])
+
+  const handleSchachtGesetzt = useCallback((position: LatLng) => {
+    pushHistory('Schacht gesetzt')
+    setSchachtStandorte((prev) => [...prev, { position, hausanschlussIds: [] }])
+    setSchachtSetzenAktiv(false)
+  }, [pushHistory])
+
+  const handleSchachtLoeschen = useCallback((schachtIdx: number) => {
+    pushHistory('Schacht gelöscht')
+    setSchachtStandorte((prev) => prev.filter((_, i) => i !== schachtIdx))
+  }, [pushHistory])
+
+  const handleSchachtVerschoben = useCallback((schachtIdx: number, position: LatLng) => {
+    pushHistory('Schacht verschoben')
+    setSchachtStandorte((prev) => prev.map((s, i) => (i === schachtIdx ? { ...s, position } : s)))
+  }, [pushHistory])
+
+  // Ordnet einen Hausanschluss exklusiv einem Schacht zu — war er vorher
+  // einem ANDEREN Schacht oder einem NVT zugeordnet, wird er dort automatisch entfernt.
+  const handleSchachtHausanschlussToggle = useCallback((schachtIdx: number, hausId: string) => {
+    pushHistory('Hausanschluss zugewiesen')
+    setSchachtStandorte((prev) => {
+      const ziel = prev[schachtIdx]
+      if (!ziel) return prev
+      const warBeimZielZugeordnet = ziel.hausanschlussIds.includes(hausId)
+      if (!warBeimZielZugeordnet) {
+        setNvtStandorte((n) => n.map((nvt) =>
+          nvt.hausanschlussIds.includes(hausId)
+            ? { ...nvt, hausanschlussIds: nvt.hausanschlussIds.filter((id) => id !== hausId), belegung: nvt.hausanschlussIds.filter((id) => id !== hausId).length }
+            : nvt
+        ))
+      }
+      return prev.map((s, i) => {
+        if (i === schachtIdx) {
+          const neueIds = warBeimZielZugeordnet
+            ? s.hausanschlussIds.filter((id) => id !== hausId)
+            : [...s.hausanschlussIds, hausId]
+          return { ...s, hausanschlussIds: neueIds }
+        }
+        if (!warBeimZielZugeordnet && s.hausanschlussIds.includes(hausId)) {
+          return { ...s, hausanschlussIds: s.hausanschlussIds.filter((id) => id !== hausId) }
+        }
+        return s
+      })
+    })
   }, [pushHistory])
 
   // Ordnet jeden bereits einem NVT zugeordneten Hausanschluss neu dem
@@ -722,8 +793,9 @@ export default function Home() {
       hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
       trassePfadeKinds: trassePfadeKinds.length > 0 ? trassePfadeKinds : undefined,
       nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
+      schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, schachtStandorte])
 
   const handleProjektSpeichern = useCallback(() => {
     exportProjekt({
@@ -739,8 +811,9 @@ export default function Home() {
       trassePfadeKinds: trassePfadeKinds.length > 0 ? trassePfadeKinds : undefined,
       nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
       aussiedlerhofUuids: aussiedlerhofUuids.size > 0 ? [...aussiedlerhofUuids] : undefined,
+      schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte])
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
@@ -772,6 +845,8 @@ export default function Home() {
     setAussiedlerhofUuids(new Set(projekt.aussiedlerhofUuids ?? []))
     setAussiedlerhofMarkierenAktiv(false)
     setNvtModalOffen(false)
+    setSchachtStandorte(projekt.schachtStandorte ?? [])
+    setSchachtSetzenAktiv(false)
   }, [])
 
   const gefilterteAdressenAnzahl =
@@ -871,6 +946,8 @@ export default function Home() {
           aussiedlerhofMarkierenAktiv={aussiedlerhofMarkierenAktiv}
           nvtStandorte={nvtStandorte}
           nvtManuellSetzenAktiv={nvtManuellSetzenAktiv}
+          schachtStandorte={schachtStandorte}
+          schachtSetzenAktiv={schachtSetzenAktiv}
           onStartpunktGesetzt={handleStartpunktGesetzt}
           onTrasseGeaendert={handleTrasseGeaendert}
           onTrassePfadeGeaendert={handleTrassePfadeGeaendert}
@@ -882,14 +959,21 @@ export default function Home() {
           onNvtLoeschen={handleNvtLoeschen}
           onNvtHausanschlussToggle={handleNvtHausanschlussToggle}
           onNvtVerschoben={handleNvtVerschoben}
+          onSchachtGesetzt={handleSchachtGesetzt}
+          onSchachtSetzenAbbrechen={handleSchachtSetzenAbbrechen}
+          onSchachtLoeschen={handleSchachtLoeschen}
+          onSchachtHausanschlussToggle={handleSchachtHausanschlussToggle}
+          onSchachtVerschoben={handleSchachtVerschoben}
         />
         {nvtModalOffen && (
           <NVTModal
             orte={orte}
             aussiedlerhofAnzahl={aussiedlerhofUuids.size}
             nvtVorhandenAnzahl={nvtStandorte.length}
+            schachtVorhandenAnzahl={schachtStandorte.length}
             onAussiedlerhoefeMarkieren={handleAussiedlerhoefeMarkierenStart}
             onManuellSetzen={handleNvtManuellSetzenStart}
+            onSchachtSetzen={handleSchachtSetzenStart}
             onGenerieren={handleNvtGenerieren}
             onClose={() => setNvtModalOffen(false)}
           />

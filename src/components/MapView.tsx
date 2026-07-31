@@ -8,7 +8,7 @@ import {
 import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
-import { Address, LatLng, Hausstich, WegKind, NvtStandort } from '../lib/types'
+import { Address, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -46,6 +46,11 @@ const nvtIcon = new L.DivIcon({
   className: '',
   html: '<div style="width:16px;height:16px;background:#7c3aed;border:2px solid white;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.8)"></div>',
   iconSize: [16, 16], iconAnchor: [8, 8], popupAnchor: [0, -10],
+})
+const schachtIcon = new L.DivIcon({
+  className: '',
+  html: '<div style="width:14px;height:14px;background:#0d9488;border:2px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.8)"></div>',
+  iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9],
 })
 
 function berechneLinieLaenge(wp: LatLng[]): number {
@@ -87,6 +92,8 @@ interface MapViewProps {
   aussiedlerhofMarkierenAktiv?: boolean
   nvtStandorte?: NvtStandort[]
   nvtManuellSetzenAktiv?: boolean
+  schachtStandorte?: SchachtStandort[]
+  schachtSetzenAktiv?: boolean
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][], kinds: WegKind[]) => void
@@ -98,11 +105,16 @@ interface MapViewProps {
   onNvtLoeschen?: (nvtIdx: number) => void
   onNvtHausanschlussToggle?: (nvtIdx: number, hausId: string) => void
   onNvtVerschoben?: (nvtIdx: number, position: LatLng) => void
+  onSchachtGesetzt?: (position: LatLng) => void
+  onSchachtSetzenAbbrechen?: () => void
+  onSchachtLoeschen?: (schachtIdx: number) => void
+  onSchachtHausanschlussToggle?: (schachtIdx: number, hausId: string) => void
+  onSchachtVerschoben?: (schachtIdx: number, position: LatLng) => void
 }
 
 function KlickHandler({
   aktiv, onKlick, ziehModus, onZiehZiel, hsZeichenModus, onHsZeichenZiel,
-  nvtSetzenModus, onNvtSetzenZiel,
+  nvtSetzenModus, onNvtSetzenZiel, schachtSetzenModus, onSchachtSetzenZiel,
   menuOffen, onMenuSchliessen, onMapKlick,
 }: {
   aktiv: boolean
@@ -113,6 +125,8 @@ function KlickHandler({
   onHsZeichenZiel?: (p: LatLng) => void
   nvtSetzenModus?: boolean
   onNvtSetzenZiel?: (p: LatLng) => void
+  schachtSetzenModus?: boolean
+  onSchachtSetzenZiel?: (p: LatLng) => void
   menuOffen?: boolean
   onMenuSchliessen?: () => void
   onMapKlick?: () => void
@@ -124,6 +138,7 @@ function KlickHandler({
       if (ziehModus && onZiehZiel) onZiehZiel(pos)
       else if (hsZeichenModus && onHsZeichenZiel) onHsZeichenZiel(pos)
       else if (nvtSetzenModus && onNvtSetzenZiel) onNvtSetzenZiel(pos)
+      else if (schachtSetzenModus && onSchachtSetzenZiel) onSchachtSetzenZiel(pos)
       else if (aktiv) onKlick(pos)
       else onMapKlick?.()
     },
@@ -191,10 +206,11 @@ const MapView = memo(function MapView({
   feldwegFarbe, trassePfadeKinds,
   nichtAngebundeneAdressen = [],
   aussiedlerhofUuids = new Set(), aussiedlerhofMarkierenAktiv = false, nvtStandorte = [],
-  nvtManuellSetzenAktiv = false,
+  nvtManuellSetzenAktiv = false, schachtStandorte = [], schachtSetzenAktiv = false,
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
   onAussiedlerhofToggle, onAussiedlerhofMarkierenFertig,
   onNvtManuellHinzufuegen, onNvtManuellSetzenAbbrechen, onNvtLoeschen, onNvtHausanschlussToggle, onNvtVerschoben,
+  onSchachtGesetzt, onSchachtSetzenAbbrechen, onSchachtLoeschen, onSchachtHausanschlussToggle, onSchachtVerschoben,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -221,18 +237,23 @@ const MapView = memo(function MapView({
     [nichtAngebundeneAdressen]
   )
 
-  // Welches NVT ist gerade angeklickt — markiert dessen Hausanschlüsse auf der Karte.
+  // Welches NVT/Schacht ist gerade angeklickt — markiert dessen Hausanschlüsse
+  // auf der Karte. Beide Auswahlen schließen sich gegenseitig aus (siehe
+  // Klick-Handler der jeweiligen Marker weiter unten).
   const [ausgewaehltesNvtIdx, setAusgewaehltesNvtIdx] = useState<number | null>(null)
-  const hervorgehobeneHausIds = useMemo(
-    () => new Set(ausgewaehltesNvtIdx !== null ? nvtStandorte[ausgewaehltesNvtIdx]?.hausanschlussIds ?? [] : []),
-    [ausgewaehltesNvtIdx, nvtStandorte]
-  )
+  const [ausgewaehltesSchachtIdx, setAusgewaehltesSchachtIdx] = useState<number | null>(null)
+  const hervorgehobeneHausIds = useMemo(() => {
+    if (ausgewaehltesNvtIdx !== null) return new Set(nvtStandorte[ausgewaehltesNvtIdx]?.hausanschlussIds ?? [])
+    if (ausgewaehltesSchachtIdx !== null) return new Set(schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? [])
+    return new Set<string>()
+  }, [ausgewaehltesNvtIdx, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte])
   // Manuelles NVT setzen: nach Klick auf die Karte erst Kapazität abfragen,
   // bevor der Standort wirklich angelegt wird.
   const [neuerNvtPosition, setNeuerNvtPosition] = useState<LatLng | null>(null)
   const [neueNvtKapazitaet, setNeueNvtKapazitaet] = useState(24)
-  // Zuweisen-Modus: Hausanschlüsse anklicken ordnet sie dem ausgewählten NVT zu.
+  // Zuweisen-Modus: Hausanschlüsse anklicken ordnet sie dem ausgewählten NVT/Schacht zu.
   const [nvtZuweisenAktiv, setNvtZuweisenAktiv] = useState(false)
+  const [schachtZuweisenAktiv, setSchachtZuweisenAktiv] = useState(false)
 
   // Lokale Arbeitskopie der Pfade im Edit-Modus
   const [localPfade, setLocalPfade] = useState<LatLng[][]>([])
@@ -687,6 +708,13 @@ const MapView = memo(function MapView({
     onNvtManuellSetzenAbbrechen?.()
   }
 
+  // ── Schacht manuell setzen ────────────────────────────────────────────────
+  // Kein Bestätigungsschritt nötig (keine Kapazität abzufragen) — Klick auf
+  // die Karte legt den Standort direkt an, analog zum Startpunkt-Setzen.
+  function handleSchachtSetzenZiel(pos: LatLng) {
+    onSchachtGesetzt?.(pos)
+  }
+
   // ── Hausanschlüsse ────────────────────────────────────────────────────────
   function hausstichWp(h: Hausstich): LatLng[] {
     return h.wegpunkte && h.wegpunkte.length >= 2 ? h.wegpunkte : [h.hausKoordinate, h.trassenPunkt]
@@ -847,6 +875,7 @@ const MapView = memo(function MapView({
           ziehModus={!!ziehStartId} onZiehZiel={handleZiehZiel}
           hsZeichenModus={!!neuerHsStart} onHsZeichenZiel={handleNeuerHsZiel}
           nvtSetzenModus={nvtManuellSetzenAktiv && !neuerNvtPosition} onNvtSetzenZiel={handleNvtSetzenZiel}
+          schachtSetzenModus={schachtSetzenAktiv} onSchachtSetzenZiel={handleSchachtSetzenZiel}
           menuOffen={!!aktivMenu} onMenuSchliessen={() => setAktivMenu(null)}
           onMapKlick={editierbarAktiv && !kleinProjekt ? handleDeselect : undefined} />
         <AutoZoom adressen={adressen} />
@@ -1103,12 +1132,13 @@ const MapView = memo(function MapView({
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
+                  setAusgewaehltesSchachtIdx(null)
                   setAusgewaehltesNvtIdx((prev) => (prev === i ? null : i))
                 },
                 contextmenu: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
                   zeigeMenu(e, [
-                    { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesNvtIdx(i); setNvtZuweisenAktiv(true); setAktivMenu(null) } },
+                    { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesSchachtIdx(null); setAusgewaehltesNvtIdx(i); setNvtZuweisenAktiv(true); setAktivMenu(null) } },
                     { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onNvtLoeschen?.(i); setAusgewaehltesNvtIdx(null); setNvtZuweisenAktiv(false); setAktivMenu(null) } },
                   ])
                 },
@@ -1124,6 +1154,35 @@ const MapView = memo(function MapView({
             </Marker>
           )
         })}
+
+        {/* Schacht-Standorte */}
+        {schachtStandorte.map((schacht, i) => (
+          <Marker key={`schacht-${i}`} position={[schacht.position.lat, schacht.position.lng]} icon={schachtIcon}
+            draggable
+            eventHandlers={{
+              click: (e) => {
+                if (e.originalEvent) e.originalEvent.stopPropagation()
+                setAusgewaehltesNvtIdx(null)
+                setAusgewaehltesSchachtIdx((prev) => (prev === i ? null : i))
+              },
+              contextmenu: (e) => {
+                if (e.originalEvent) e.originalEvent.stopPropagation()
+                zeigeMenu(e, [
+                  { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesNvtIdx(null); setAusgewaehltesSchachtIdx(i); setSchachtZuweisenAktiv(true); setAktivMenu(null) } },
+                  { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onSchachtLoeschen?.(i); setAusgewaehltesSchachtIdx(null); setSchachtZuweisenAktiv(false); setAktivMenu(null) } },
+                ])
+              },
+              dragend: (e) => {
+                const ll = (e.target as L.Marker).getLatLng()
+                onSchachtVerschoben?.(i, { lat: ll.lat, lng: ll.lng })
+              },
+            }}>
+            <Tooltip>
+              Schacht {i + 1}{schacht.hausanschlussIds.length > 0 ? ` · ${schacht.hausanschlussIds.length} Hausanschluss(e)` : ''}
+              {ausgewaehltesSchachtIdx === i ? ' · Hausanschlüsse markiert' : ' · ziehen zum Verschieben · antippen zum Markieren · lang drücken für Aktionen'}
+            </Tooltip>
+          </Marker>
+        ))}
 
         {startpunkt && <Marker position={[startpunkt.lat, startpunkt.lng]} icon={startpunktIcon}><Tooltip>Startpunkt</Tooltip></Marker>}
 
@@ -1149,9 +1208,16 @@ const MapView = memo(function MapView({
             L.DomEvent.stopPropagation(e)
             if (ausgewaehltesNvtIdx !== null) onNvtHausanschlussToggle?.(ausgewaehltesNvtIdx, h.id)
           }
+          const hsSchachtZuweisenKlick = (e: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(e)
+            if (ausgewaehltesSchachtIdx !== null) onSchachtHausanschlussToggle?.(ausgewaehltesSchachtIdx, h.id)
+          }
+          const zuweisenModusAktiv = (nvtZuweisenAktiv && ausgewaehltesNvtIdx !== null) || (schachtZuweisenAktiv && ausgewaehltesSchachtIdx !== null)
           const klickHandler = nvtZuweisenAktiv && ausgewaehltesNvtIdx !== null
             ? { click: hsZuweisenKlick }
-            : editierbarAktiv ? { click: hsKlick } : {}
+            : schachtZuweisenAktiv && ausgewaehltesSchachtIdx !== null
+              ? { click: hsSchachtZuweisenKlick }
+              : editierbarAktiv ? { click: hsKlick } : {}
           return (
             <Fragment key={h.id}>
               <Polyline positions={positions}
@@ -1162,12 +1228,12 @@ const MapView = memo(function MapView({
                 }}
                 eventHandlers={klickHandler}>
                 <Tooltip>
-                  {nvtZuweisenAktiv ? (istHervorgehoben ? 'Antippen = entfernen · ' : 'Antippen = zuweisen · ') : editierbarAktiv ? 'Antippen = Menü · ' : ''}
+                  {zuweisenModusAktiv ? (istHervorgehoben ? 'Antippen = entfernen · ' : 'Antippen = zuweisen · ') : editierbarAktiv ? 'Antippen = Menü · ' : ''}
                   Hausanschluss: {h.laengeMeter.toFixed(1)} m
                 </Tooltip>
               </Polyline>
               {/* Breite unsichtbare Tipp-Fläche — die duenne HS-Linie ist auf Touch-Geraeten schwer zu treffen */}
-              {(editierbarAktiv || nvtZuweisenAktiv) && (
+              {(editierbarAktiv || zuweisenModusAktiv) && (
                 <Polyline positions={positions}
                   pathOptions={{ color: '#000', weight: 18, opacity: 0.01 }}
                   eventHandlers={klickHandler} />
@@ -1290,6 +1356,30 @@ const MapView = memo(function MapView({
             className="px-3 py-1 rounded text-xs font-medium"
             style={{ backgroundColor: '#3b82f6', color: '#fff' }}>
             ✓ Fertig
+          </button>
+        </div>
+      )}
+
+      {schachtZuweisenAktiv && ausgewaehltesSchachtIdx !== null && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #0d9488' }}>
+          🔗 Hausanschlüsse anklicken zum Zuweisen/Entfernen (Schacht {ausgewaehltesSchachtIdx + 1})
+          <button onClick={() => setSchachtZuweisenAktiv(false)}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: '#0d9488', color: '#fff' }}>
+            ✓ Fertig
+          </button>
+        </div>
+      )}
+
+      {schachtSetzenAktiv && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #0d9488' }}>
+          🕳️ Klick auf die Karte, um einen Schacht zu setzen
+          <button onClick={() => onSchachtSetzenAbbrechen?.()}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            ✕ Abbrechen
           </button>
         </div>
       )}

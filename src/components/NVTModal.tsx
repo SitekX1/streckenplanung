@@ -7,15 +7,17 @@ interface NVTModalProps {
   orte: OrtInfo[]
   aussiedlerhofAnzahl: number
   nvtVorhandenAnzahl: number
+  schachtVorhandenAnzahl: number
   onAussiedlerhoefeMarkieren: () => void
   onManuellSetzen: () => void
+  onSchachtSetzen: () => void
   onGenerieren: (ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[], kapazitaetsReserve: number) => void
   onClose: () => void
 }
 
 export default function NVTModal({
-  orte, aussiedlerhofAnzahl, nvtVorhandenAnzahl,
-  onAussiedlerhoefeMarkieren, onManuellSetzen, onGenerieren, onClose,
+  orte, aussiedlerhofAnzahl, nvtVorhandenAnzahl, schachtVorhandenAnzahl,
+  onAussiedlerhoefeMarkieren, onManuellSetzen, onSchachtSetzen, onGenerieren, onClose,
 }: NVTModalProps) {
   const [ausgewaehlt, setAusgewaehlt] = useState<Set<string>>(new Set())
   const [distanz, setDistanz] = useState(500)
@@ -84,6 +86,17 @@ export default function NVTModal({
               </button>
               <p className="text-xs text-gray-600 px-0.5">
                 Für Einzelfälle wie 2-3 benachbarte Aussiedlerhöfe — eigener Standort mit frei wählbarer Kapazität (z.B. kleiner 24er-Verband statt 96/120), Hausanschlüsse danach per Klick zuweisen.
+              </p>
+
+              <button
+                onClick={onSchachtSetzen}
+                className="w-full px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors hover:brightness-110"
+                style={{ backgroundColor: '#0f2a28', color: '#5eead4', border: '1px solid #0d9488' }}
+              >
+                🕳️ Schacht setzen {schachtVorhandenAnzahl > 0 && `(${schachtVorhandenAnzahl})`}
+              </button>
+              <p className="text-xs text-gray-600 px-0.5">
+                Kabelschacht/Übergabepunkt ohne Kapazitätsgrenze — z.B. als Zwischenpunkt bei zu langer Strecke zwischen Dörfern, oder zur direkten Anbindung einzelner Aussiedlerhöfe. Hausanschlüsse danach per Klick zuweisen.
               </p>
             </div>
           ))}

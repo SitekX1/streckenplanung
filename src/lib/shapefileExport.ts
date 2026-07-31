@@ -103,10 +103,23 @@ export async function exportShapefile(projekt: Projekt): Promise<void> {
     })),
   }
 
+  const schachtFc: GeoJSON.FeatureCollection = {
+    type: 'FeatureCollection',
+    features: (projekt.schachtStandorte ?? []).map((s, i) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [s.position.lng, s.position.lat] },
+      properties: {
+        schacht_nr: i + 1,
+        hausansch: s.hausanschlussIds.length,
+      },
+    })),
+  }
+
   await layerHinzufuegen(outerZip, 'Adressen', adressenFc)
   await layerHinzufuegen(outerZip, 'Trasse', trasseFc)
   await layerHinzufuegen(outerZip, 'Hausanschluesse', hausanschluesseFc)
   await layerHinzufuegen(outerZip, 'NVT', nvtFc)
+  await layerHinzufuegen(outerZip, 'Schacht', schachtFc)
 
   const blob = await outerZip.generateAsync({ type: 'blob' })
   const url = URL.createObjectURL(blob)

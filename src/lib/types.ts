@@ -47,6 +47,15 @@ export interface NvtStandort {
   hausanschlussIds: string[]
 }
 
+// Schacht = manuell gesetzter Kabelschacht/Übergabepunkt, z.B. als Zwischen-
+// punkt bei zu langen Strecken zwischen Dörfern, oder um einzelne (Aussiedler-)
+// Höfe direkt anzubinden ohne eigenen NVT. Anders als NvtStandort ohne
+// Kapazitätsgrenze — reiner Standort mit optional zugeordneten Hausanschlüssen.
+export interface SchachtStandort {
+  position: LatLng
+  hausanschlussIds: string[]
+}
+
 export interface Projekt {
   name: string
   erstelltAm: string
@@ -63,4 +72,5 @@ export interface Projekt {
   // NVT-Feature (nur dev-Branch)
   nvtStandorte?: NvtStandort[]
   aussiedlerhofUuids?: string[]
+  schachtStandorte?: SchachtStandort[]
 }

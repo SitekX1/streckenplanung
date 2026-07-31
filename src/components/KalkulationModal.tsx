@@ -17,6 +17,8 @@ interface KalkulationPreise {
   sondergebuehrPreis: number
   nvtAnzahl: number
   nvtPreis: number
+  schachtAnzahl: number
+  schachtPreis: number
 }
 
 const STORAGE_KEY = 'streckenplanung-kalkulation-preise'
@@ -29,6 +31,8 @@ const DEFAULT_PREISE: KalkulationPreise = {
   sondergebuehrPreis: 250,
   nvtAnzahl: 0,
   nvtPreis: 3500,
+  schachtAnzahl: 0,
+  schachtPreis: 800,
 }
 
 function ladePreise(): KalkulationPreise {
@@ -81,7 +85,8 @@ export default function KalkulationModal({
   const hausanschlussSumme = hausanschluesseCount * preise.hausanschlussPreis
   const sondergebuehrSumme = preise.sondergebuehrAnzahl * preise.sondergebuehrPreis
   const nvtSumme = preise.nvtAnzahl * preise.nvtPreis
-  const gesamt = strasseSumme + feldwegSumme + hausanschlussSumme + sondergebuehrSumme + nvtSumme
+  const schachtSumme = preise.schachtAnzahl * preise.schachtPreis
+  const gesamt = strasseSumme + feldwegSumme + hausanschlussSumme + sondergebuehrSumme + nvtSumme + schachtSumme
 
   const zeile = (label: string, menge: string, summe: number) => (
     <div className="flex justify-between items-center text-xs py-1.5" style={{ borderBottom: '1px solid #1f2430' }}>
@@ -134,12 +139,20 @@ export default function KalkulationModal({
             </>
           ))}
 
+          {sektion('🕳️ Schacht', (
+            <>
+              {feld('Anzahl', 'schachtAnzahl', 'Stk.')}
+              {feld('Preis / Stück', 'schachtPreis', '€')}
+            </>
+          ))}
+
           <div className="rounded-xl p-4 flex flex-col mt-1" style={{ backgroundColor: '#0f1216', border: '1px solid #262b36' }}>
             {zeile('Befestigte Oberfläche', `${Math.round(strasseLaenge)} m`, strasseSumme)}
             {zeile('Unbefestigte Oberfläche', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
             {zeile('Hausanschlüsse', `${hausanschluesseCount} Stk.`, hausanschlussSumme)}
             {preise.sondergebuehrAnzahl > 0 && zeile('Sondergebühr', `${preise.sondergebuehrAnzahl} Stk.`, sondergebuehrSumme)}
             {preise.nvtAnzahl > 0 && zeile('NVT', `${preise.nvtAnzahl} Stk.`, nvtSumme)}
+            {preise.schachtAnzahl > 0 && zeile('Schacht', `${preise.schachtAnzahl} Stk.`, schachtSumme)}
             <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid #262b36' }}>
               <span className="text-sm font-medium text-gray-300">Gesamt</span>
               <span className="text-lg font-semibold text-blue-400">{formatEuro(gesamt)}</span>
