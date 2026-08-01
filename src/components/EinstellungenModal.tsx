@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Firmendaten, ladeFirmendaten, speichereFirmendaten } from '../lib/firmendaten'
 
 interface EinstellungenModalProps {
@@ -50,13 +50,20 @@ export default function EinstellungenModal({
   onClose,
 }: EinstellungenModalProps) {
   // Geräteweit persistent per localStorage, unabhängig vom einzelnen Projekt
-  // (gleiches Muster wie die Kalkulations-Preise in KalkulationModal.tsx).
+  // (gleiches Muster wie die Kalkulations-Preise in KalkulationModal.tsx) —
+  // anders als bei den Preisen aber bewusst NICHT live bei jedem Tastendruck
+  // gespeichert, sondern erst per Klick auf "Speichern": Firmendaten tippt
+  // man einmal ein und ist fertig, ein Live-Save bei jedem Zeichen bringt
+  // hier nur unnötige localStorage-Schreibzugriffe ohne Mehrwert.
   const [firmendaten, setFirmendaten] = useState<Firmendaten>(ladeFirmendaten)
+  const [gespeichert, setGespeichert] = useState(false)
   const logoInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  const handleFirmendatenSpeichern = () => {
     speichereFirmendaten(firmendaten)
-  }, [firmendaten])
+    setGespeichert(true)
+    setTimeout(() => setGespeichert(false), 1800)
+  }
 
   const handleLogoDatei = async (file: File) => {
     try {
@@ -127,17 +134,53 @@ export default function EinstellungenModal({
               />
             </label>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-400">Adresse</span>
-              <textarea
-                value={firmendaten.adresse}
-                onChange={(e) => setFirmendaten((f) => ({ ...f, adresse: e.target.value }))}
-                rows={3}
-                placeholder={'Straße Hausnr.\nPLZ Ort'}
-                className="px-2.5 py-1.5 rounded text-sm outline-none resize-none"
-                style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
-              />
-            </label>
+            <div>
+              <span className="text-xs text-gray-400 block mb-1.5">Adresse</span>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={firmendaten.strasse}
+                    onChange={(e) => setFirmendaten((f) => ({ ...f, strasse: e.target.value }))}
+                    placeholder="Straße"
+                    className="flex-2 min-w-0 px-2.5 py-1.5 rounded text-sm outline-none"
+                    style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
+                  />
+                  <input
+                    type="text"
+                    value={firmendaten.hausnummer}
+                    onChange={(e) => setFirmendaten((f) => ({ ...f, hausnummer: e.target.value }))}
+                    placeholder="Nr."
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded text-sm outline-none"
+                    style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={firmendaten.plz}
+                    onChange={(e) => setFirmendaten((f) => ({ ...f, plz: e.target.value }))}
+                    placeholder="PLZ"
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded text-sm outline-none"
+                    style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
+                  />
+                  <input
+                    type="text"
+                    value={firmendaten.ort}
+                    onChange={(e) => setFirmendaten((f) => ({ ...f, ort: e.target.value }))}
+                    placeholder="Ort"
+                    className="flex-2 min-w-0 px-2.5 py-1.5 rounded text-sm outline-none"
+                    style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button onClick={handleFirmendatenSpeichern}
+              className="w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+              style={{ backgroundColor: gespeichert ? '#166534' : '#262b36', color: gespeichert ? '#86efac' : '#93c5fd' }}>
+              {gespeichert ? '✓ Gespeichert' : '💾 Speichern'}
+            </button>
             <p className="text-xs text-gray-600">Wird auf jedem Kalkulations-PDF-Export mit ausgegeben, geräteweit gespeichert.</p>
           </div>
         </div>

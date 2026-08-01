@@ -123,12 +123,6 @@ export function exportKalkulationPdf(daten: KalkulationPdfDaten): void {
   doc.setFont('helvetica', 'bold')
   doc.text('Gesamt', randLinks, y)
   doc.text(formatEuro(daten.gesamt), randRechts, y, { align: 'right' })
-  y += 14
-
-  doc.setFontSize(8)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(150)
-  doc.text('Unverbindliche Kostenschätzung auf Basis der Grobplanung — keine Ausschreibungs- oder Vertragsgrundlage.', randLinks, y)
 
   doc.save(`${daten.projektName}_Kalkulation.pdf`)
 }

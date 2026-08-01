@@ -879,8 +879,9 @@ export default function Home() {
       nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
       aussiedlerhofUuids: aussiedlerhofUuids.size > 0 ? [...aussiedlerhofUuids] : undefined,
       schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
+      aktiveOrteKeys,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, aktiveOrteKeys])
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
@@ -908,7 +909,10 @@ export default function Home() {
     setTrasseAdressenUuids(hatTrasse ? new Set(projekt.adressen.map((a) => a.uuid)) : new Set())
     const orteListe = extractOrte(projekt.adressen)
     setOrte(orteListe)
-    setAktiveOrteKeys(orteListe.map((o) => o.key))
+    const alleOrteKeys = orteListe.map((o) => o.key)
+    setAktiveOrteKeys(
+      projekt.aktiveOrteKeys ? projekt.aktiveOrteKeys.filter((k) => alleOrteKeys.includes(k)) : alleOrteKeys
+    )
     setNvtStandorte(projekt.nvtStandorte ?? [])
     setAussiedlerhofUuids(new Set(projekt.aussiedlerhofUuids ?? []))
     setAussiedlerhofMarkierenAktiv(false)

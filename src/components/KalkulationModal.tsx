@@ -119,6 +119,12 @@ export default function KalkulationModal({
         : []),
     ]
     const firmendaten = ladeFirmendaten()
+    const adresse = [
+      [firmendaten.strasse, firmendaten.hausnummer].filter(Boolean).join(' '),
+      [firmendaten.plz, firmendaten.ort].filter(Boolean).join(' '),
+    ]
+      .filter(Boolean)
+      .join('\n')
     exportKalkulationPdf({
       projektName,
       zeilen,
@@ -127,7 +133,7 @@ export default function KalkulationModal({
       logoBreite: firmendaten.logoBreite,
       logoHoehe: firmendaten.logoHoehe,
       firmenname: firmendaten.firmenname,
-      adresse: firmendaten.adresse,
+      adresse,
     })
   }
 

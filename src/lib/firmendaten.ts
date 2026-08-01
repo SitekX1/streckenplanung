@@ -10,7 +10,10 @@ export interface Firmendaten {
   logoBreite: number
   logoHoehe: number
   firmenname: string
-  adresse: string
+  strasse: string
+  hausnummer: string
+  plz: string
+  ort: string
 }
 
 const STORAGE_KEY = 'streckenplanung-firmendaten'
@@ -20,7 +23,10 @@ const DEFAULT_FIRMENDATEN: Firmendaten = {
   logoBreite: 0,
   logoHoehe: 0,
   firmenname: '',
-  adresse: '',
+  strasse: '',
+  hausnummer: '',
+  plz: '',
+  ort: '',
 }
 
 export function ladeFirmendaten(): Firmendaten {

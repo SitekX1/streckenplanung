@@ -73,4 +73,7 @@ export interface Projekt {
   nvtStandorte?: NvtStandort[]
   aussiedlerhofUuids?: string[]
   schachtStandorte?: SchachtStandort[]
+  // Welche Orte-Filter beim Speichern aktiv waren (Sidebar-Auswahl) — fehlt
+  // bei älteren Projekten, dann sind beim Laden wie bisher alle Orte aktiv.
+  aktiveOrteKeys?: string[]
 }
