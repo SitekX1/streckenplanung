@@ -11,6 +11,13 @@ export interface KalkulationPdfDaten {
   projektName: string
   zeilen: KalkulationZeile[]
   gesamt: number
+  // Firmendaten sind optional — ohne hinterlegtes Logo/Adresse (Einstellungen
+  // → Firma) bleibt der Kopfbereich einfach weg, kein Leerraum.
+  logoDataUrl?: string | null
+  logoBreite?: number
+  logoHoehe?: number
+  firmenname?: string
+  adresse?: string
 }
 
 function formatEuro(betrag: number): string {
@@ -23,6 +30,51 @@ export function exportKalkulationPdf(daten: KalkulationPdfDaten): void {
   const randLinks = 18
   const randRechts = seitenBreite - 18
   let y = 22
+
+  const hatLogo = !!daten.logoDataUrl && !!daten.logoBreite && !!daten.logoHoehe
+  const adresseZeilen = (daten.adresse ?? '').split('\n').filter((z) => z.trim() !== '')
+  const hatFirmentext = !!daten.firmenname || adresseZeilen.length > 0
+
+  if (hatLogo || hatFirmentext) {
+    // Kopfbereich mit fester Top-Kante — Bild (Top-Koordinate) und Text
+    // (Baseline-Koordinate) starten beide relativ dazu, damit sie optisch
+    // auf gleicher Höhe beginnen.
+    const kopfTop = 10
+    let kopfHoehe = 0
+
+    if (hatLogo) {
+      const MAX_W = 32, MAX_H = 18
+      const seitenverhaeltnis = daten.logoBreite! / daten.logoHoehe!
+      const logoBreiteMm = seitenverhaeltnis > MAX_W / MAX_H ? MAX_W : MAX_H * seitenverhaeltnis
+      const logoHoeheMm = seitenverhaeltnis > MAX_W / MAX_H ? MAX_W / seitenverhaeltnis : MAX_H
+      doc.addImage(daten.logoDataUrl!, 'PNG', randLinks, kopfTop, logoBreiteMm, logoHoeheMm)
+      kopfHoehe = Math.max(kopfHoehe, logoHoeheMm)
+    }
+
+    if (hatFirmentext) {
+      let textY = kopfTop + 4
+      if (daten.firmenname) {
+        doc.setFontSize(10)
+        doc.setFont('helvetica', 'bold')
+        doc.text(daten.firmenname, randRechts, textY, { align: 'right' })
+        textY += 5
+      }
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(90)
+      for (const zeile of adresseZeilen) {
+        doc.text(zeile, randRechts, textY, { align: 'right' })
+        textY += 4.5
+      }
+      doc.setTextColor(0)
+      kopfHoehe = Math.max(kopfHoehe, textY - kopfTop)
+    }
+
+    y = kopfTop + kopfHoehe + 8
+    doc.setDrawColor(220)
+    doc.line(randLinks, y, randRechts, y)
+    y += 10
+  }
 
   doc.setFontSize(18)
   doc.setFont('helvetica', 'bold')

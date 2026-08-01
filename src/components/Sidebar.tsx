@@ -7,6 +7,7 @@ import EinstellungenModal from './EinstellungenModal'
 
 interface SidebarProps {
   projektName: string
+  onProjektNameAendern: (name: string) => void
   adressenCount: number
   gefilterteAdressenAnzahl: number
   neueAdressenOhneHsAnzahl: number
@@ -68,6 +69,7 @@ function formatMeter(meter: number): string {
 
 export default function Sidebar({
   projektName,
+  onProjektNameAendern,
   adressenCount,
   gefilterteAdressenAnzahl,
   neueAdressenOhneHsAnzahl,
@@ -140,6 +142,9 @@ export default function Sidebar({
         <div>
           <h1 className="text-white font-semibold text-lg leading-tight">Trassenplaner</h1>
           <span className="text-xs text-gray-500 mt-0.5 block">Glasfaser Streckenplanung</span>
+          {projektName.trim() !== '' && projektName !== 'Neues Projekt' && (
+            <span className="text-xs mt-1 block" style={{ color: '#93c5fd' }}>📁 {projektName}</span>
+          )}
         </div>
         <button
           onClick={() => setEinstellungenOffen(true)}
@@ -156,6 +161,14 @@ export default function Sidebar({
         <div>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Projekt</p>
           <div className="flex flex-col gap-2">
+            <input
+              type="text"
+              value={projektName}
+              onChange={(e) => onProjektNameAendern(e.target.value)}
+              placeholder="Projektname"
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+              style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
+            />
             <button
               onClick={() => projektLadenRef.current?.click()}
               className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"

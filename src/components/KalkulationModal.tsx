@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { exportKalkulationPdf } from '../lib/kalkulationPdfExport'
+import { ladeFirmendaten } from '../lib/firmendaten'
 
 interface KalkulationModalProps {
   projektName: string
@@ -117,7 +118,17 @@ export default function KalkulationModal({
         ? [{ label: 'Schacht', menge: `${schachtAnzahl} Stk.`, einzelpreis: `${preise.schachtPreis} €/Stk.`, summe: schachtSumme }]
         : []),
     ]
-    exportKalkulationPdf({ projektName, zeilen, gesamt })
+    const firmendaten = ladeFirmendaten()
+    exportKalkulationPdf({
+      projektName,
+      zeilen,
+      gesamt,
+      logoDataUrl: firmendaten.logoDataUrl,
+      logoBreite: firmendaten.logoBreite,
+      logoHoehe: firmendaten.logoHoehe,
+      firmenname: firmendaten.firmenname,
+      adresse: firmendaten.adresse,
+    })
   }
 
   const zeile = (label: string, menge: string, summe: number) => (

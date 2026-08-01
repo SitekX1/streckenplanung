@@ -172,7 +172,7 @@ export default function Home() {
   const [laengen, setLaengen] = useState<Laengen>({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0, strasseLaenge: 0, feldwegLaenge: 0 })
   const [editierbarAktiv, setEditierbarAktiv] = useState(false)
   const [trasseMethode, setTrasseMethode] = useState('')
-  const [projektName] = useState('Neues Projekt')
+  const [projektName, setProjektName] = useState('Neues Projekt')
   const [adressFarbe, setAdressFarbe] = useState('#22c55e')
   const [trasseFarbe, setTrasseFarbe] = useState('#3b82f6')
   const [hausanschlussfarbe, setHausanschlussfarbe] = useState('#ef4444')
@@ -590,6 +590,7 @@ export default function Home() {
     setNvtStandorte([])
     setSchachtStandorte([])
     setSchachtSetzenAktiv(false)
+    setProjektName('Neues Projekt')
   }, [])
 
   const handleAussiedlerhofToggle = useCallback((uuid: string) => {
@@ -883,6 +884,7 @@ export default function Home() {
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
+    setProjektName(projekt.name)
     setAdressen(projekt.adressen)
     setStartpunkt(projekt.startpunkt)
     setTrasse(projekt.trasse)
@@ -942,6 +944,7 @@ export default function Home() {
     <div className="flex h-screen overflow-hidden bg-[#0f0f0f]">
       <Sidebar
         projektName={projektName}
+        onProjektNameAendern={setProjektName}
         adressenCount={adressen.length}
         gefilterteAdressenAnzahl={gefilterteAdressenAnzahl}
         neueAdressenOhneHsAnzahl={neueAdressenOhneHsAnzahl}
