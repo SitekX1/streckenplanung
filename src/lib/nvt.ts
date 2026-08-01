@@ -390,19 +390,44 @@ export function weiseHausanschluesseNeuZu(
   const nvtKnoten = nvtStandorte.map((n) => naechsterKnoten(graph, n.position))
   const distanzenProNvt = nvtKnoten.map((k) => (k ? dijkstraVon(graph, k).dist : new Map<string, number>()))
 
-  const gruppenProNvt: string[][] = nvtStandorte.map(() => [])
+  interface Kandidat { hausId: string; distanzen: number[]; naechsteDist: number }
+  const kandidaten: Kandidat[] = []
   for (const hausId of alleZugeordnetenIds) {
     const haus = hausById.get(hausId)
     if (!haus) continue
     const hausKnoten = naechsterKnoten(graph, haus.trassenPunkt)
     if (!hausKnoten) continue
-    let besterIdx = 0
-    let besteDist = Infinity
-    distanzenProNvt.forEach((dist, i) => {
-      const d = dist.get(hausKnoten) ?? Infinity
-      if (d < besteDist) { besteDist = d; besterIdx = i }
+    const distanzen = distanzenProNvt.map((dist) => dist.get(hausKnoten) ?? Infinity)
+    kandidaten.push({ hausId, distanzen, naechsteDist: Math.min(...distanzen) })
+  }
+
+  // Eindeutige Fälle (Haus klar am nächsten an einem Standort) zuerst
+  // zuweisen, damit knappe Grenzfälle erst entscheiden, wenn der
+  // Auslastungsstand der Standorte schon halbwegs feststeht.
+  kandidaten.sort((a, b) => a.naechsteDist - b.naechsteDist)
+
+  const gruppenProNvt: string[][] = nvtStandorte.map(() => [])
+  for (const { hausId, distanzen } of kandidaten) {
+    let bestIdx = -1
+    let besteKosten = Infinity
+    distanzen.forEach((d, i) => {
+      if (gruppenProNvt[i].length >= nvtStandorte[i].kapazitaet) return
+      // Je voller ein Standort relativ zu seiner eigenen Kapazität schon ist,
+      // desto unattraktiver wird er zusätzlich zur reinen Distanz — sonst
+      // läuft eine kleinere Box knapp an ihre Kapazitätsgrenze, während eine
+      // Nachbar-Box mit mehr Luft für dasselbe Haus fast genauso nah wäre.
+      // Reine Distanzzuweisung (vorher) ignorierte die Auslastung komplett.
+      const auslastung = gruppenProNvt[i].length / nvtStandorte[i].kapazitaet
+      const kosten = d * (1 + auslastung)
+      if (kosten < besteKosten) { besteKosten = kosten; bestIdx = i }
     })
-    gruppenProNvt[besterIdx].push(hausId)
+    if (bestIdx === -1) {
+      // Alle Standorte voll (praktisch nicht erwartet, da Kapazitäten zur
+      // Hausanschluss-Anzahl passen sollten) — Fallback: nächster Standort
+      // unabhängig von Kapazität, damit kein Haus unzugewiesen bleibt.
+      bestIdx = distanzen.indexOf(Math.min(...distanzen))
+    }
+    gruppenProNvt[bestIdx].push(hausId)
   }
 
   return nvtStandorte.map((nvt, i) => ({ ...nvt, hausanschlussIds: gruppenProNvt[i], belegung: gruppenProNvt[i].length }))

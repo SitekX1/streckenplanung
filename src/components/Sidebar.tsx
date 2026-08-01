@@ -551,8 +551,7 @@ export default function Sidebar({
             <button
               onClick={onShapefileExport}
               disabled={!trasseVorhanden}
-              className="w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{ backgroundColor: '#1e293b', color: '#93c5fd', border: '1px solid #334155' }}
+              className="w-full px-3 py-2 rounded-lg text-sm font-medium border border-[#334155] bg-[#1e293b] text-[#93c5fd] hover:bg-[#2a3b52] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#1e293b]"
             >
               🗺️ Shapefile exportieren
             </button>

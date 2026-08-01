@@ -49,7 +49,7 @@ const nvtIcon = new L.DivIcon({
 })
 const schachtIcon = new L.DivIcon({
   className: '',
-  html: '<div style="width:14px;height:14px;background:#0d9488;border:2px solid white;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.8)"></div>',
+  html: '<div style="width:14px;height:14px;background:#f97316;border:2px solid white;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.8)"></div>',
   iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9],
 })
 
@@ -1027,7 +1027,7 @@ const MapView = memo(function MapView({
         <button onClick={() => setSchachtSichtbar((v) => !v)}
           className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
           style={layerBtnStyle(schachtSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#0d9488', display: 'inline-block', flexShrink: 0 }} />Schacht
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: '#f97316', display: 'inline-block', flexShrink: 0 }} />Schacht
         </button>
       </div>
 

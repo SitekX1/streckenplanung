@@ -58,6 +58,16 @@ export default function KalkulationModal({
   // statt Effect, da localStorage nur einmalig beim ersten Rendern gelesen
   // werden muss (kein externer Trigger, auf den reagiert werden müsste).
   const [preise, setPreise] = useState<KalkulationPreise>(ladePreise)
+  // Rohtext je Feld getrennt von preise (Zahlen) gehalten — bei Number-State
+  // sprang das Feld beim Löschen der letzten Ziffer sofort auf 0 zurück,
+  // ein leeres Feld zum Neueintippen war nicht möglich (selbes Muster wie
+  // reserveText/distanzText in NVTModal.tsx).
+  const [preisTexte, setPreisTexte] = useState<Record<keyof KalkulationPreise, string>>(() => {
+    const initial = ladePreise()
+    return Object.fromEntries(
+      (Object.keys(initial) as (keyof KalkulationPreise)[]).map((k) => [k, String(initial[k])])
+    ) as Record<keyof KalkulationPreise, string>
+  })
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(preise)) } catch { /* ignorieren */ }
@@ -70,8 +80,12 @@ export default function KalkulationModal({
         <input
           type="number"
           min={0}
-          value={preise[key]}
-          onChange={(e) => setPreise((p) => ({ ...p, [key]: Number(e.target.value) || 0 }))}
+          value={preisTexte[key]}
+          onChange={(e) => {
+            const text = e.target.value
+            setPreisTexte((p) => ({ ...p, [key]: text }))
+            setPreise((p) => ({ ...p, [key]: Number(text) || 0 }))
+          }}
           className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
           style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
         />
