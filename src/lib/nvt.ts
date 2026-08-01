@@ -1,4 +1,4 @@
-import { LatLng, Hausstich, NvtStandort } from './types'
+import { LatLng, Hausstich, NvtStandort, SchachtStandort } from './types'
 
 function haversine(a: LatLng, b: LatLng): number {
   const dLat = ((b.lat - a.lat) * Math.PI) / 180
@@ -431,4 +431,27 @@ export function weiseHausanschluesseNeuZu(
   }
 
   return nvtStandorte.map((nvt, i) => ({ ...nvt, hausanschlussIds: gruppenProNvt[i], belegung: gruppenProNvt[i].length }))
+}
+
+export interface HausanschlussZuordnung {
+  nvtNr: number | null
+  schachtNr: number | null
+}
+
+// Für Export-Layer (KML/Shapefile) gedacht: liefert je Hausanschluss-ID die
+// menschenlesbare Nummer (1-basiert, wie im Plan/UI angezeigt) des NVT oder
+// Schacht, dem er zugeordnet ist — fehlt ein Eintrag, ist der Hausanschluss
+// (noch) keinem Standort zugeordnet.
+export function ermittleZuordnungen(
+  nvtStandorte: NvtStandort[],
+  schachtStandorte: SchachtStandort[]
+): Map<string, HausanschlussZuordnung> {
+  const map = new Map<string, HausanschlussZuordnung>()
+  nvtStandorte.forEach((nvt, i) => {
+    for (const hausId of nvt.hausanschlussIds) map.set(hausId, { nvtNr: i + 1, schachtNr: null })
+  })
+  schachtStandorte.forEach((schacht, i) => {
+    for (const hausId of schacht.hausanschlussIds) map.set(hausId, { nvtNr: null, schachtNr: i + 1 })
+  })
+  return map
 }

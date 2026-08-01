@@ -1,6 +1,7 @@
 import { zip as shpZip } from '@mapbox/shp-write'
 import JSZip from 'jszip'
 import { Projekt } from './types'
+import { ermittleZuordnungen } from './nvt'
 
 function segmentLaenge(pts: { lat: number; lng: number }[]): number {
   let total = 0
@@ -78,14 +79,21 @@ export async function exportShapefile(projekt: Projekt): Promise<void> {
       })),
   }
 
+  const zuordnungen = ermittleZuordnungen(projekt.nvtStandorte ?? [], projekt.schachtStandorte ?? [])
+
   const hausanschluesseFc: GeoJSON.FeatureCollection = {
     type: 'FeatureCollection',
     features: projekt.hausanschluesse.map((h) => {
       const linePts = h.wegpunkte && h.wegpunkte.length >= 2 ? h.wegpunkte : [h.trassenPunkt, h.hausKoordinate]
+      const zuordnung = zuordnungen.get(h.id)
       return {
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: linePts.map((p) => [p.lng, p.lat]) },
-        properties: { laenge_m: Math.round(h.laengeMeter * 10) / 10 },
+        properties: {
+          laenge_m: Math.round(h.laengeMeter * 10) / 10,
+          nvt_nr: zuordnung?.nvtNr ?? null,
+          schacht_nr: zuordnung?.schachtNr ?? null,
+        },
       }
     }),
   }

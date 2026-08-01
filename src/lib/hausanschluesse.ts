@@ -58,7 +58,13 @@ export async function berechneHausanschluesse(
       const hausKoordinate: LatLng = { lat: adresse.lat, lng: adresse.lon }
 
       return {
-        id: crypto.randomUUID(),
+        // Stabil = adresse.uuid, NICHT randomUUID(): sonst bekommt jede
+        // Adresse bei jedem "Hausanschlüsse neu generieren" eine neue id,
+        // während NVT/Schacht-hausanschlussIds noch die alten ids halten —
+        // die Zuordnung wird dadurch unsichtbar (0/Kapazität) und die
+        // Doppel-Generierungs-Schutzabfrage in handleNvtGenerieren (page.tsx,
+        // vergleicht per id) erkennt die Überschneidung nicht mehr.
+        id: adresse.uuid,
         addressUuid: adresse.uuid,
         trassenPunkt,
         hausKoordinate,

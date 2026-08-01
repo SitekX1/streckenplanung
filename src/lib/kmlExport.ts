@@ -1,4 +1,5 @@
 import { Projekt } from './types'
+import { ermittleZuordnungen } from './nvt'
 
 function xmlEscape(str: string): string {
   return str
@@ -45,6 +46,8 @@ export function exportKML(projekt: Projekt): void {
     )
     .join('\n')
 
+  const zuordnungen = ermittleZuordnungen(projekt.nvtStandorte ?? [], projekt.schachtStandorte ?? [])
+
   const hausanschlussPlacemarks = projekt.hausanschluesse
     .map((h) => {
       const linePts =
@@ -52,10 +55,16 @@ export function exportKML(projekt: Projekt): void {
           ? h.wegpunkte
           : [h.trassenPunkt, h.hausKoordinate]
       const coordStr = linePts.map((p) => `${p.lng},${p.lat},0`).join('\n          ')
+      const zuordnung = zuordnungen.get(h.id)
+      const zuordnungText = zuordnung?.nvtNr != null
+        ? `NVT ${zuordnung.nvtNr}`
+        : zuordnung?.schachtNr != null
+          ? `Schacht ${zuordnung.schachtNr}`
+          : null
       return `    <Placemark>
       <styleUrl>#hausstich</styleUrl>
       <name>Hausanschluss ${h.id.slice(0, 8)}</name>
-      <description>Länge: ${h.laengeMeter.toFixed(1)} m</description>
+      <description>Länge: ${h.laengeMeter.toFixed(1)} m${zuordnungText ? ` &#183; ${zuordnungText}` : ''}</description>
       <LineString>
         <coordinates>
           ${coordStr}
@@ -63,6 +72,28 @@ export function exportKML(projekt: Projekt): void {
       </LineString>
     </Placemark>`
     })
+    .join('\n')
+
+  const nvtPlacemarks = (projekt.nvtStandorte ?? [])
+    .map(
+      (n, i) => `    <Placemark>
+      <styleUrl>#nvt</styleUrl>
+      <name>NVT ${i + 1}</name>
+      <description>Belegung: ${n.belegung}/${n.kapazitaet}</description>
+      <Point><coordinates>${n.position.lng},${n.position.lat},0</coordinates></Point>
+    </Placemark>`
+    )
+    .join('\n')
+
+  const schachtPlacemarks = (projekt.schachtStandorte ?? [])
+    .map(
+      (s, i) => `    <Placemark>
+      <styleUrl>#schacht</styleUrl>
+      <name>Schacht ${i + 1}</name>
+      <description>${s.hausanschlussIds.length} Hausanschluss(e)</description>
+      <Point><coordinates>${s.position.lng},${s.position.lat},0</coordinates></Point>
+    </Placemark>`
+    )
     .join('\n')
 
   const kml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -78,6 +109,12 @@ export function exportKML(projekt: Projekt): void {
   </Style>
   <Style id="adresse">
     <IconStyle><color>ff00ff00</color></IconStyle>
+  </Style>
+  <Style id="nvt">
+    <IconStyle><color>ffed3a7c</color></IconStyle>
+  </Style>
+  <Style id="schacht">
+    <IconStyle><color>ff1673f9</color></IconStyle>
   </Style>
 
   <Folder>
@@ -121,7 +158,23 @@ ${adressenPlacemarks}
     <name>Hausanschlüsse</name>
 ${hausanschlussPlacemarks}
   </Folder>
-</Document>
+${
+  nvtPlacemarks
+    ? `  <Folder>
+    <name>NVT</name>
+${nvtPlacemarks}
+  </Folder>
+`
+    : ''
+}${
+  schachtPlacemarks
+    ? `  <Folder>
+    <name>Schacht</name>
+${schachtPlacemarks}
+  </Folder>
+`
+    : ''
+}</Document>
 </kml>`
 
   downloadBlob(kml, `${projekt.name}.kml`, 'application/vnd.google-earth.kml+xml')

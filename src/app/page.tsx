@@ -841,8 +841,10 @@ export default function Home() {
       hausanschluesse,
       trassenLaengeMeter: laengen.trassenLaenge,
       hausanschlussLaengeMeter: laengen.hausanschluesseLaenge,
+      nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
+      schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, nvtStandorte, schachtStandorte])
 
   const handleShapefileExport = useCallback(() => {
     exportShapefile({

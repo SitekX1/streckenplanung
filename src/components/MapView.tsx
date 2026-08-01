@@ -68,6 +68,11 @@ type AktivMenu = { screenX: number; screenY: number; aktionen: MenuAktion[] } | 
 type NeuerHsStart = { adresseUuid: string; pos: LatLng; name: string } | null
 
 const GELB = '#facc15'
+// Zyklisch pro NVT-Index vergeben (nvtIdx % Länge) — dieselbe reale Box hat
+// dadurch immer dieselbe Farbe, unabhängig davon, was sonst noch gerade
+// mitmarkiert ist, wenn mehrere NVT gleichzeitig zum Vergleichen markiert werden.
+const NVT_MARKIER_FARBEN = ['#22d3ee', '#f472b6', '#a3e635', '#fb923c', '#c084fc', '#facc15', '#38bdf8', '#fb7185']
+const SCHACHT_MARKIER_FARBE = '#22d3ee'
 const MAX_HANDLES = 80
 // Schwellenwert: ≤ 1000 Punkte → Klein-Projekt (alle Handles sofort sichtbar)
 const KLEIN_PROJEKT_SCHWELLE = 1000
@@ -361,16 +366,30 @@ const MapView = memo(function MapView({
     [nichtAngebundeneAdressen]
   )
 
-  // Welches NVT/Schacht ist gerade angeklickt — markiert dessen Hausanschlüsse
-  // auf der Karte. Beide Auswahlen schließen sich gegenseitig aus (siehe
-  // Klick-Handler der jeweiligen Marker weiter unten).
-  const [ausgewaehltesNvtIdx, setAusgewaehltesNvtIdx] = useState<number | null>(null)
+  // Welche NVT sind gerade angeklickt — markiert deren Hausanschlüsse auf der
+  // Karte, mit je eigener Farbe (siehe NVT_MARKIER_FARBEN), damit sich
+  // mehrere Standorte gleichzeitig zum Vergleichen markieren lassen. Schacht
+  // bleibt Einzelauswahl (schließt sich mit der NVT-Auswahl gegenseitig aus,
+  // siehe Klick-Handler der jeweiligen Marker weiter unten). Eine Löschung
+  // (Standort löschen) leert die NVT-Auswahl komplett statt nur den Index zu
+  // entfernen, weil sich sonst alle Indizes danach verschieben.
+  const [ausgewaehlteNvtIdxs, setAusgewaehlteNvtIdxs] = useState<Set<number>>(new Set())
   const [ausgewaehltesSchachtIdx, setAusgewaehltesSchachtIdx] = useState<number | null>(null)
-  const hervorgehobeneHausIds = useMemo(() => {
-    if (ausgewaehltesNvtIdx !== null) return new Set(nvtStandorte[ausgewaehltesNvtIdx]?.hausanschlussIds ?? [])
-    if (ausgewaehltesSchachtIdx !== null) return new Set(schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? [])
-    return new Set<string>()
-  }, [ausgewaehltesNvtIdx, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte])
+  const hausIdZuFarbe = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const nvtIdx of ausgewaehlteNvtIdxs) {
+      const farbe = NVT_MARKIER_FARBEN[nvtIdx % NVT_MARKIER_FARBEN.length]
+      for (const hausId of nvtStandorte[nvtIdx]?.hausanschlussIds ?? []) map.set(hausId, farbe)
+    }
+    if (ausgewaehltesSchachtIdx !== null) {
+      for (const hausId of schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? []) map.set(hausId, SCHACHT_MARKIER_FARBE)
+    }
+    return map
+  }, [ausgewaehlteNvtIdxs, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte])
+  // "Hausanschlüsse zuweisen" braucht genau EIN Ziel-NVT — der Zuweisen-Modus
+  // setzt die Auswahl beim Aktivieren bewusst auf ein Einzelelement (siehe
+  // Kontextmenü-Aktion der NVT-Marker), daher reicht hier size === 1.
+  const zuweisenZielNvtIdx = ausgewaehlteNvtIdxs.size === 1 ? [...ausgewaehlteNvtIdxs][0] : null
 
   // Gefilterte Pfad-Arrays für TrasseNetzwerk/TrasseKlickbar gememoized —
   // ohne das erzeugt JEDES .filter() in der JSX bei JEDEM Re-Render von
@@ -1334,13 +1353,18 @@ const MapView = memo(function MapView({
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
                   setAusgewaehltesSchachtIdx(null)
-                  setAusgewaehltesNvtIdx((prev) => (prev === i ? null : i))
+                  setAusgewaehlteNvtIdxs((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(i)) next.delete(i)
+                    else next.add(i)
+                    return next
+                  })
                 },
                 contextmenu: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
                   zeigeMenu(e, [
-                    { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesSchachtIdx(null); setAusgewaehltesNvtIdx(i); setNvtZuweisenAktiv(true); setAktivMenu(null) } },
-                    { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onNvtLoeschen?.(i); setAusgewaehltesNvtIdx(null); setNvtZuweisenAktiv(false); setAktivMenu(null) } },
+                    { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesSchachtIdx(null); setAusgewaehlteNvtIdxs(new Set([i])); setNvtZuweisenAktiv(true); setAktivMenu(null) } },
+                    { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onNvtLoeschen?.(i); setAusgewaehlteNvtIdxs(new Set()); setNvtZuweisenAktiv(false); setAktivMenu(null) } },
                   ])
                 },
                 dragend: (e) => {
@@ -1350,7 +1374,7 @@ const MapView = memo(function MapView({
               }}>
               <Tooltip>
                 NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt{istUeberlastet ? ' · ⚠️ überbelegt' : ''}
-                {ausgewaehltesNvtIdx === i ? ' · Hausanschlüsse markiert' : ' · ziehen zum Verschieben · antippen zum Markieren · lang drücken für Aktionen'}
+                {ausgewaehlteNvtIdxs.has(i) ? ' · Hausanschlüsse markiert' : ' · ziehen zum Verschieben · antippen zum Markieren (mehrere gleichzeitig möglich) · lang drücken für Aktionen'}
               </Tooltip>
             </Marker>
           )
@@ -1363,13 +1387,13 @@ const MapView = memo(function MapView({
             eventHandlers={{
               click: (e) => {
                 if (e.originalEvent) e.originalEvent.stopPropagation()
-                setAusgewaehltesNvtIdx(null)
+                setAusgewaehlteNvtIdxs(new Set())
                 setAusgewaehltesSchachtIdx((prev) => (prev === i ? null : i))
               },
               contextmenu: (e) => {
                 if (e.originalEvent) e.originalEvent.stopPropagation()
                 zeigeMenu(e, [
-                  { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesNvtIdx(null); setAusgewaehltesSchachtIdx(i); setSchachtZuweisenAktiv(true); setAktivMenu(null) } },
+                  { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehlteNvtIdxs(new Set()); setAusgewaehltesSchachtIdx(i); setSchachtZuweisenAktiv(true); setAktivMenu(null) } },
                   { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onSchachtLoeschen?.(i); setAusgewaehltesSchachtIdx(null); setSchachtZuweisenAktiv(false); setAktivMenu(null) } },
                 ])
               },
@@ -1392,7 +1416,8 @@ const MapView = memo(function MapView({
           const wp = hausstichWp(h)
           const segKey = `hs-${h.id}`
           const istAktiv = aktivesSegment === segKey
-          const istHervorgehoben = hervorgehobeneHausIds.has(h.id)
+          const hervorhebungsFarbe = hausIdZuFarbe.get(h.id)
+          const istHervorgehoben = hervorhebungsFarbe !== undefined
           const positions = wp.map((p) => [p.lat, p.lng] as [number, number])
           const hsKlick = (e: L.LeafletMouseEvent) => {
             L.DomEvent.stopPropagation(e)
@@ -1407,14 +1432,14 @@ const MapView = memo(function MapView({
           }
           const hsZuweisenKlick = (e: L.LeafletMouseEvent) => {
             L.DomEvent.stopPropagation(e)
-            if (ausgewaehltesNvtIdx !== null) onNvtHausanschlussToggle?.(ausgewaehltesNvtIdx, h.id)
+            if (zuweisenZielNvtIdx !== null) onNvtHausanschlussToggle?.(zuweisenZielNvtIdx, h.id)
           }
           const hsSchachtZuweisenKlick = (e: L.LeafletMouseEvent) => {
             L.DomEvent.stopPropagation(e)
             if (ausgewaehltesSchachtIdx !== null) onSchachtHausanschlussToggle?.(ausgewaehltesSchachtIdx, h.id)
           }
-          const zuweisenModusAktiv = (nvtZuweisenAktiv && ausgewaehltesNvtIdx !== null) || (schachtZuweisenAktiv && ausgewaehltesSchachtIdx !== null)
-          const klickHandler = nvtZuweisenAktiv && ausgewaehltesNvtIdx !== null
+          const zuweisenModusAktiv = (nvtZuweisenAktiv && zuweisenZielNvtIdx !== null) || (schachtZuweisenAktiv && ausgewaehltesSchachtIdx !== null)
+          const klickHandler = nvtZuweisenAktiv && zuweisenZielNvtIdx !== null
             ? { click: hsZuweisenKlick }
             : schachtZuweisenAktiv && ausgewaehltesSchachtIdx !== null
               ? { click: hsSchachtZuweisenKlick }
@@ -1423,7 +1448,7 @@ const MapView = memo(function MapView({
             <Fragment key={h.id}>
               <Polyline positions={positions}
                 pathOptions={{
-                  color: istAktiv ? GELB : istHervorgehoben ? '#22d3ee' : hausanschlussfarbe,
+                  color: istAktiv ? GELB : hervorhebungsFarbe ?? hausanschlussfarbe,
                   weight: istAktiv ? (editierbarAktiv ? 7 : 6) : istHervorgehoben ? 6 : (editierbarAktiv ? 3 : 2),
                   opacity: 0.95,
                 }}
@@ -1537,10 +1562,10 @@ const MapView = memo(function MapView({
         </div>
       )}
 
-      {nvtZuweisenAktiv && ausgewaehltesNvtIdx !== null && (
+      {nvtZuweisenAktiv && zuweisenZielNvtIdx !== null && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
           style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
-          🔗 Hausanschlüsse anklicken zum Zuweisen/Entfernen (NVT {ausgewaehltesNvtIdx + 1})
+          🔗 Hausanschlüsse anklicken zum Zuweisen/Entfernen (NVT {zuweisenZielNvtIdx + 1})
           <button onClick={() => setNvtZuweisenAktiv(false)}
             className="px-3 py-1 rounded text-xs font-medium"
             style={{ backgroundColor: '#3b82f6', color: '#fff' }}>
