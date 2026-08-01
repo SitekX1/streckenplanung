@@ -371,6 +371,25 @@ const MapView = memo(function MapView({
     if (ausgewaehltesSchachtIdx !== null) return new Set(schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? [])
     return new Set<string>()
   }, [ausgewaehltesNvtIdx, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte])
+
+  // Gefilterte Pfad-Arrays für TrasseNetzwerk/TrasseKlickbar gememoized —
+  // ohne das erzeugt JEDES .filter() in der JSX bei JEDEM Re-Render von
+  // MapView (Menü öffnen, Punkt ziehen, Suche tippen, ...) ein neues Array,
+  // dessen useEffect (in TrasseNetzwerk/TrasseKlickbar) daraufhin sämtliche
+  // Leaflet-Layer der kompletten Trasse abbaut und neu aufbaut — bei
+  // größeren Projekten spürbar langsamer mit jeder Interaktion.
+  const trassePfadeOhneFeldweg = useMemo(
+    () => trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track'),
+    [trassePfade, trassePfadeKinds]
+  )
+  const trassePfadeNurFeldweg = useMemo(
+    () => trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track'),
+    [trassePfade, trassePfadeKinds]
+  )
+  const handleSegmentNormalKlick = useCallback((i: number) => {
+    setAusgewaehltesSegmentNormal((prev) => (prev === i ? null : i))
+  }, [])
+
   // Manuelles NVT setzen: nach Klick auf die Karte erst Kapazität abfragen,
   // bevor der Standort wirklich angelegt wird.
   const [neuerNvtPosition, setNeuerNvtPosition] = useState<LatLng | null>(null)
@@ -390,6 +409,17 @@ const MapView = memo(function MapView({
   const [editPunkte, setEditPunkte] = useState<LatLng[]>([])
   // Klein-Projekt (≤ KLEIN_PROJEKT_SCHWELLE Punkte): alle Handles sofort sichtbar
   const [kleinProjekt, setKleinProjekt] = useState(false)
+
+  // Gememoized wie trassePfadeOhneFeldweg/-NurFeldweg oben — verhindert
+  // denselben Voll-Rebuild-der-Leaflet-Layer bei jedem Re-Render im Edit-Modus.
+  const localPfadeOhneFeldweg = useMemo(
+    () => localPfade.filter((_, i) => i !== editSegmentIdx && localPfadeKinds[i] !== 'track'),
+    [localPfade, localPfadeKinds, editSegmentIdx]
+  )
+  const localPfadeNurFeldweg = useMemo(
+    () => localPfade.filter((_, i) => i !== editSegmentIdx && localPfadeKinds[i] === 'track'),
+    [localPfade, localPfadeKinds, editSegmentIdx]
+  )
 
   const [deletedStack, setDeletedStack] = useState<Hausstich[]>([])
   const [ziehStartId, setZiehStartId] = useState<string | null>(null)
@@ -1032,10 +1062,10 @@ const MapView = memo(function MapView({
           trassePfade.length > 0
             ? (
               <>
-                <TrasseNetzwerk pfade={trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track')} farbe={trasseFarbe} opacity={0.9} />
-                <TrasseNetzwerk pfade={trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track')} farbe={feldwegFarbe} opacity={0.9} />
+                <TrasseNetzwerk pfade={trassePfadeOhneFeldweg} farbe={trasseFarbe} opacity={0.9} />
+                <TrasseNetzwerk pfade={trassePfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.9} />
                 <TrasseKlickbar pfade={trassePfade} ausgewaehlterIdx={ausgewaehltesSegmentNormal}
-                  onKlick={(i) => setAusgewaehltesSegmentNormal((prev) => (prev === i ? null : i))} />
+                  onKlick={handleSegmentNormalKlick} />
               </>
             )
             : trasse.length >= 2
@@ -1047,12 +1077,8 @@ const MapView = memo(function MapView({
         {trasseSichtbar && editierbarAktiv && !kleinProjekt && (
           <>
             {/* Canvas für nicht-ausgewählte Segmente — nach Kind eingefärbt */}
-            <TrasseNetzwerk
-              pfade={localPfade.filter((_, i) => i !== editSegmentIdx && localPfadeKinds[i] !== 'track')}
-              farbe={trasseFarbe} opacity={0.55} />
-            <TrasseNetzwerk
-              pfade={localPfade.filter((_, i) => i !== editSegmentIdx && localPfadeKinds[i] === 'track')}
-              farbe={feldwegFarbe} opacity={0.55} />
+            <TrasseNetzwerk pfade={localPfadeOhneFeldweg} farbe={trasseFarbe} opacity={0.55} />
+            <TrasseNetzwerk pfade={localPfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.55} />
             {/* Unsichtbare Klick-Flächen */}
             {localPfade.map((pfad, pi) =>
               pfad.length >= 2 ? (
