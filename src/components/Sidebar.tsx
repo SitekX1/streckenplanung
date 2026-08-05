@@ -24,6 +24,7 @@ interface SidebarProps {
   strasseLaenge: number
   feldwegLaenge: number
   trasseProgress: number
+  trasseLangsam: boolean
   hausanschluesseProgress: number
   editierbarAktiv: boolean
   adressFarbe: string
@@ -88,6 +89,7 @@ export default function Sidebar({
   strasseLaenge,
   feldwegLaenge,
   trasseProgress,
+  trasseLangsam,
   hausanschluesseProgress,
   editierbarAktiv,
   adressFarbe,
@@ -408,6 +410,11 @@ export default function Sidebar({
                     />
                   </div>
                   <p className="text-xs text-gray-500 text-right">{trasseProgress}%</p>
+                  {trasseLangsam && (
+                    <p className="text-xs text-amber-500 text-right">
+                      Straßendaten werden geladen – bei langsamer Verbindung kann das länger dauern …
+                    </p>
+                  )}
                 </div>
               ) : (
                 <button

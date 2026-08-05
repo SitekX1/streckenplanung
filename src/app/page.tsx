@@ -36,18 +36,47 @@ function extractOrte(adressen: Address[]): OrtInfo[] {
 // in Richtung bisMax kriechen statt bei "von" stehen zu bleiben, bis der
 // Promise auflöst. Sieht nach Fortschritt aus, ohne einen falschen exakten
 // Prozentsatz zu behaupten.
+//
+// Zwei Tempi statt einem: schnelle Rampe für die ersten ~60% der Spanne
+// (400ms/%), danach deutlich langsamer weiterkriechen (1800ms/%) bis bisMax.
+// Im Normalfall (Overpass antwortet nach wenigen Sekunden) ist der Balken
+// dadurch die ganze Zeit sichtbar noch in Bewegung, statt schon nach ~4s an
+// der Obergrenze hart stehen zu bleiben. Bei ungewöhnlich langen Wartezeiten
+// (z.B. blockierendes Firmennetzwerk) wird zusätzlich nach 8s ein Hinweis
+// eingeblendet, damit klar ist, dass die App noch arbeitet und nicht hängt.
 function mitTrickleFortschritt<T>(
   promise: Promise<T>,
   von: number,
   bisMax: number,
-  setProgress: (p: number) => void
+  setProgress: (p: number) => void,
+  setLangsamHinweis?: (zeigen: boolean) => void
 ): Promise<T> {
+  const start = Date.now()
+  const schnellBis = von + Math.round((bisMax - von) * 0.6)
+  const LANGSAM_SCHWELLE_MS = 8000
   let aktuell = von
-  const interval = setInterval(() => {
-    aktuell = Math.min(bisMax, aktuell + 1)
-    setProgress(aktuell)
-  }, 400)
-  return promise.finally(() => clearInterval(interval))
+  let langsamHinweisGezeigt = false
+  let timeoutId: ReturnType<typeof setTimeout>
+
+  function tick() {
+    if (aktuell < bisMax) {
+      aktuell += 1
+      setProgress(aktuell)
+    }
+    if (!langsamHinweisGezeigt && Date.now() - start > LANGSAM_SCHWELLE_MS) {
+      langsamHinweisGezeigt = true
+      setLangsamHinweis?.(true)
+    }
+    if (aktuell < bisMax) {
+      timeoutId = setTimeout(tick, aktuell < schnellBis ? 400 : 1800)
+    }
+  }
+  timeoutId = setTimeout(tick, 400)
+
+  return promise.finally(() => {
+    clearTimeout(timeoutId)
+    setLangsamHinweis?.(false)
+  })
 }
 
 // Reduziert eine Punktliste auf max. maxCount Punkte (gleichmäßig verteilt,
@@ -168,6 +197,7 @@ export default function Home() {
   const [trassePfade, setTrassePfade] = useState<LatLng[][]>([])
   const [hausanschluesse, setHausanschluesse] = useState<Hausstich[]>([])
   const [trasseProgress, setTrasseProgress] = useState(0)
+  const [trasseLangsam, setTrasseLangsam] = useState(false)
   const [hausanschluesseProgress, setHausanschluesseProgress] = useState(0)
   const [laengen, setLaengen] = useState<Laengen>({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0, strasseLaenge: 0, feldwegLaenge: 0 })
   const [editierbarAktiv, setEditierbarAktiv] = useState(false)
@@ -313,7 +343,7 @@ export default function Home() {
     try {
       setTrasseProgress(5)
       const bounds = berechneGrenzen(gefilterteAdressen, startpunkt)
-      const osmNetz = await mitTrickleFortschritt(fetchOsmNetz(bounds), 5, 16, setTrasseProgress)
+      const osmNetz = await mitTrickleFortschritt(fetchOsmNetz(bounds), 5, 16, setTrasseProgress, setTrasseLangsam)
       setTrasseProgress(18)
 
       const graph = buildRoadGraph(osmNetz, gefilterteAdressen.map((a) => ({ lat: a.lat, lng: a.lon })))
@@ -402,7 +432,7 @@ export default function Home() {
       // Bestehende Trasse gehört mit ins Overpass-Gebiet, sonst fehlen
       // ggf. die Straßendaten zwischen altem und neuem Dorf.
       const bounds = berechneGrenzen(gefilterteNeue, startpunkt, 0.008, vorhandenePfade.flat())
-      const osmNetz = await mitTrickleFortschritt(fetchOsmNetz(bounds), 5, 16, setTrasseProgress)
+      const osmNetz = await mitTrickleFortschritt(fetchOsmNetz(bounds), 5, 16, setTrasseProgress, setTrasseLangsam)
       setTrasseProgress(18)
 
       const graph = buildRoadGraph(osmNetz, gefilterteNeue.map((a) => ({ lat: a.lat, lng: a.lon })))
@@ -577,6 +607,7 @@ export default function Home() {
     setTrassePfade([])
     setHausanschluesse([])
     setTrasseProgress(0)
+    setTrasseLangsam(false)
     setHausanschluesseProgress(0)
     setLaengen({ trassenLaenge: 0, hausanschluesseLaenge: 0, gesamt: 0, strasseLaenge: 0, feldwegLaenge: 0 })
     setEditierbarAktiv(false)
@@ -965,6 +996,7 @@ export default function Home() {
         strasseLaenge={laengen.strasseLaenge}
         feldwegLaenge={laengen.feldwegLaenge}
         trasseProgress={trasseProgress}
+        trasseLangsam={trasseLangsam}
         hausanschluesseProgress={hausanschluesseProgress}
         editierbarAktiv={editierbarAktiv}
         adressFarbe={adressFarbe}
