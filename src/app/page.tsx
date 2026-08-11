@@ -16,7 +16,7 @@ import { exportKML } from '../lib/kmlExport'
 import { exportShapefile } from '../lib/shapefileExport'
 import { exportProjekt, importProjekt } from '../lib/projektSpeichern'
 import { berechneNvtStandorte, weiseHausanschluesseNeuZu } from '../lib/nvt'
-import { segmentiereAnPunkten } from '../lib/segmentierung'
+import { segmentiereAnPunkten, segmentiereAnKreuzungen } from '../lib/segmentierung'
 
 const MapView = dynamic(() => import('../components/MapView'), { ssr: false })
 
@@ -394,12 +394,16 @@ export default function Home() {
     }
 
     const { pfade: dedupPfade, kinds: dedupKinds } = deduplicatePfadeMitKind(pfade, passendeKinds(pfade, pfadeKinds))
-    setTrassePfade(dedupPfade)
-    setTrasse(dedupPfade.flat())
+    // Trennt Segmente zusätzlich an echten Straßenkreuzungen, die Steiner-Baum
+    // + Dedup nicht selbst als Abzweig erkannt haben (z.B. OSM-Topologielücken).
+    const { pfade: finalePfade, kinds: finaleKinds } = segmentiereAnKreuzungen(dedupPfade, dedupKinds)
+    setTrassePfade(finalePfade)
+    setTrasse(finalePfade.flat())
     setTrasseAdressenUuids(new Set(gefilterteAdressen.map((a) => a.uuid)))
-    setTrassePfadeKinds(dedupKinds)
+    setTrassePfadeKinds(finaleKinds)
+    setTrasseMethode((prev) => prev.startsWith('OSM Straßennetz ·') ? `OSM Straßennetz · ${finalePfade.length} Segmente` : prev)
     setTrasseProgress(100)
-    setLaengen(berechneLaengen(dedupPfade, [], dedupKinds))
+    setLaengen(berechneLaengen(finalePfade, [], finaleKinds))
     setTimeout(() => setTrasseProgress(0), 500)
   }, [startpunkt, adressen, aktiveOrteKeys, orte.length, pushHistory])
 
@@ -502,11 +506,15 @@ export default function Home() {
     }
 
     if (erfolgreich) {
-      setTrassePfade(allePfade)
-      setTrasse(allePfade.flat())
+      // Trennt Segmente zusätzlich an echten Straßenkreuzungen, die Steiner-Baum
+      // + Dedup nicht selbst als Abzweig erkannt haben (z.B. OSM-Topologielücken).
+      const { pfade: finalePfade, kinds: finaleKinds } = segmentiereAnKreuzungen(allePfade, alleKinds)
+      setTrassePfade(finalePfade)
+      setTrasse(finalePfade.flat())
       setTrasseAdressenUuids((prev) => new Set([...prev, ...gefilterteNeue.map((a) => a.uuid)]))
-      setTrassePfadeKinds(alleKinds)
-      setLaengen(berechneLaengen(allePfade, hausanschluesse, alleKinds))
+      setTrassePfadeKinds(finaleKinds)
+      setTrasseMethode((prev) => /Segmente$/.test(prev) ? prev.replace(/\d+ Segmente$/, `${finalePfade.length} Segmente`) : prev)
+      setLaengen(berechneLaengen(finalePfade, hausanschluesse, finaleKinds))
     }
 
     setTrasseProgress(100)

@@ -1,7 +1,14 @@
-import { zip as shpZip } from '@mapbox/shp-write'
+import { zip as shpZip, write as shpWriteRaw } from '@mapbox/shp-write'
 import JSZip from 'jszip'
 import { Projekt } from './types'
 import { ermittleZuordnungen } from './nvt'
+
+// Identischer WKT-String, den @mapbox/shp-write intern per Default für .prj
+// verwendet (src/prj.js) — hier dupliziert, damit layerHinzufuegenLinien()
+// (die den High-Level-Weg umgeht) exakt dieselbe Projektion schreibt wie
+// layerHinzufuegen() für die Punkt-Layer.
+const WGS84_PRJ =
+  'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]'
 
 function segmentLaenge(pts: { lat: number; lng: number }[]): number {
   let total = 0
@@ -41,6 +48,40 @@ async function layerHinzufuegen(
     const endung = pfad.split('.').pop()
     outerZip.file(`${ordner}/${ordner}.${endung}`, inhalt)
   }
+}
+
+// Wie layerHinzufuegen(), aber für LineString-Layer über die Low-Level-API
+// von shp-write statt über zip(). GRUND: shp-write's High-Level-Konvertierung
+// (src/geojson.js) packt bei Linien-FeatureCollections ALLE Features in EIN
+// einziges Multi-Part-Shapefile-Record statt einem Record pro Feature (Punkte
+// sind davon nicht betroffen, nur Linien) — mit dem Effekt, dass z.B. in QGIS
+// ein Klick auf EINEN Hausanschluss/EIN Trassensegment gleich ALLE markiert,
+// weil sie technisch ein einziger Datensatz sind. Verifiziert per Testskript
+// (Anzahl SHP-Records vor/nach Fix). Die Low-Level-write()-Funktion umgeht
+// genau diesen einen fehlerhaften Vorverarbeitungsschritt und erzeugt korrekt
+// ein Record pro Feature.
+async function layerHinzufuegenLinien(
+  outerZip: JSZip,
+  ordner: string,
+  geojson: GeoJSON.FeatureCollection
+): Promise<void> {
+  if (geojson.features.length === 0) return
+  const geometries = geojson.features.map((f) => (f.geometry as GeoJSON.LineString).coordinates)
+  const rows = geojson.features.map((f) => f.properties ?? {})
+
+  const dateien = await new Promise<{ shp: { buffer: ArrayBuffer }; shx: { buffer: ArrayBuffer }; dbf: { buffer: ArrayBuffer } }>(
+    (resolve, reject) => {
+      shpWriteRaw(rows, 'POLYLINE', geometries, (err, result) => {
+        if (err) reject(err)
+        else resolve(result)
+      })
+    }
+  )
+
+  outerZip.file(`${ordner}/${ordner}.shp`, dateien.shp.buffer)
+  outerZip.file(`${ordner}/${ordner}.shx`, dateien.shx.buffer)
+  outerZip.file(`${ordner}/${ordner}.dbf`, dateien.dbf.buffer)
+  outerZip.file(`${ordner}/${ordner}.prj`, WGS84_PRJ)
 }
 
 export async function exportShapefile(projekt: Projekt): Promise<void> {
@@ -124,10 +165,26 @@ export async function exportShapefile(projekt: Projekt): Promise<void> {
   }
 
   await layerHinzufuegen(outerZip, 'Adressen', adressenFc)
-  await layerHinzufuegen(outerZip, 'Trasse', trasseFc)
-  await layerHinzufuegen(outerZip, 'Hausanschluesse', hausanschluesseFc)
+  await layerHinzufuegenLinien(outerZip, 'Trasse', trasseFc)
+  await layerHinzufuegenLinien(outerZip, 'Hausanschluesse', hausanschluesseFc)
   await layerHinzufuegen(outerZip, 'NVT', nvtFc)
   await layerHinzufuegen(outerZip, 'Schacht', schachtFc)
+
+  // Zusätzlich Hausanschlüsse nach NVT/Schacht gruppiert als eigene Layer, damit
+  // man in QGIS/Tanis pro NVT/Schacht gezielt ein-/ausblenden kann statt nur
+  // über die nvt_nr/schacht_nr-Spalte im Gesamt-Layer filtern zu müssen.
+  const hausanschlussGruppen = new Map<string, GeoJSON.Feature[]>()
+  for (const feature of hausanschluesseFc.features) {
+    const nvtNr = feature.properties?.nvt_nr
+    const schachtNr = feature.properties?.schacht_nr
+    const ordner = nvtNr != null ? `Hausanschluesse_NVT${nvtNr}` : schachtNr != null ? `Hausanschluesse_Schacht${schachtNr}` : null
+    if (!ordner) continue
+    if (!hausanschlussGruppen.has(ordner)) hausanschlussGruppen.set(ordner, [])
+    hausanschlussGruppen.get(ordner)!.push(feature)
+  }
+  for (const [ordner, features] of hausanschlussGruppen) {
+    await layerHinzufuegenLinien(outerZip, ordner, { type: 'FeatureCollection', features })
+  }
 
   const blob = await outerZip.generateAsync({ type: 'blob' })
   const url = URL.createObjectURL(blob)

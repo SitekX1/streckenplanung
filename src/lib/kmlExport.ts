@@ -48,20 +48,13 @@ export function exportKML(projekt: Projekt): void {
 
   const zuordnungen = ermittleZuordnungen(projekt.nvtStandorte ?? [], projekt.schachtStandorte ?? [])
 
-  const hausanschlussPlacemarks = projekt.hausanschluesse
-    .map((h) => {
-      const linePts =
-        h.wegpunkte && h.wegpunkte.length >= 2
-          ? h.wegpunkte
-          : [h.trassenPunkt, h.hausKoordinate]
-      const coordStr = linePts.map((p) => `${p.lng},${p.lat},0`).join('\n          ')
-      const zuordnung = zuordnungen.get(h.id)
-      const zuordnungText = zuordnung?.nvtNr != null
-        ? `NVT ${zuordnung.nvtNr}`
-        : zuordnung?.schachtNr != null
-          ? `Schacht ${zuordnung.schachtNr}`
-          : null
-      return `    <Placemark>
+  function hausanschlussPlacemark(h: (typeof projekt.hausanschluesse)[number], zuordnungText: string | null): string {
+    const linePts =
+      h.wegpunkte && h.wegpunkte.length >= 2
+        ? h.wegpunkte
+        : [h.trassenPunkt, h.hausKoordinate]
+    const coordStr = linePts.map((p) => `${p.lng},${p.lat},0`).join('\n          ')
+    return `    <Placemark>
       <styleUrl>#hausstich</styleUrl>
       <name>Hausanschluss ${h.id.slice(0, 8)}</name>
       <description>Länge: ${h.laengeMeter.toFixed(1)} m${zuordnungText ? ` &#183; ${zuordnungText}` : ''}</description>
@@ -71,7 +64,30 @@ export function exportKML(projekt: Projekt): void {
         </coordinates>
       </LineString>
     </Placemark>`
-    })
+  }
+
+  // Hausanschlüsse nach NVT/Schacht gruppiert als Unterordner, damit
+  // man in QGIS/Tanis pro NVT/Schacht gezielt sehen/ein-ausblenden kann, welche
+  // Adressen dort zugeordnet sind (nicht nur als Attribut im Beschreibungstext).
+  const hausanschlussGruppen = new Map<string, string[]>()
+  for (const h of projekt.hausanschluesse) {
+    const zuordnung = zuordnungen.get(h.id)
+    const gruppenName = zuordnung?.nvtNr != null
+      ? `NVT ${zuordnung.nvtNr}`
+      : zuordnung?.schachtNr != null
+        ? `Schacht ${zuordnung.schachtNr}`
+        : 'Nicht zugeordnet'
+    const zuordnungText = gruppenName === 'Nicht zugeordnet' ? null : gruppenName
+    if (!hausanschlussGruppen.has(gruppenName)) hausanschlussGruppen.set(gruppenName, [])
+    hausanschlussGruppen.get(gruppenName)!.push(hausanschlussPlacemark(h, zuordnungText))
+  }
+  const hausanschlussUnterordner = [...hausanschlussGruppen.entries()]
+    .map(
+      ([name, placemarks]) => `    <Folder>
+      <name>${xmlEscape(name)}</name>
+${placemarks.join('\n')}
+    </Folder>`
+    )
     .join('\n')
 
   const nvtPlacemarks = (projekt.nvtStandorte ?? [])
@@ -156,7 +172,7 @@ ${adressenPlacemarks}
 
   <Folder>
     <name>Hausanschlüsse</name>
-${hausanschlussPlacemarks}
+${hausanschlussUnterordner}
   </Folder>
 ${
   nvtPlacemarks
