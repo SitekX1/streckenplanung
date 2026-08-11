@@ -20,12 +20,18 @@ function segmentLaenge(pts: { lat: number; lng: number }[]): number {
   return total
 }
 
-// Baut aus einem Punkt- oder Linien-FeatureCollection einen eigenen Shapefile-
-// Layer (shp/shx/dbf/prj) und hängt ihn als Unterordner in den übergebenen
+// Gemeinsamer Ordner INNERHALB des Zips, in dem alle Layer-Dateien flach
+// nebeneinander liegen (kein Unterordner pro Layer) — einfacher für den
+// Import in QGIS/Tanis: einmal entpacken/reinziehen, alle .shp direkt sichtbar,
+// unterscheidbar allein am Dateinamen (Adressen.shp, Trasse.shp, ...).
+const GEMEINSAMER_ORDNER = 'Shapefile'
+
+// Baut aus einem Punkt-FeatureCollection einen eigenen Shapefile-Layer
+// (shp/shx/dbf/prj) und hängt ihn in den gemeinsamen Ordner im übergebenen
 // JSZip ein. shp-write erzeugt pro Aufruf ein eigenes, vollständiges Zip —
-// das wird hier per JSZip.loadAsync() wieder "ausgepackt" und in den
-// gemeinsamen Ordner umgehängt, damit am Ende EIN Download mit allen Layern
-// entsteht statt vier einzelnen Zip-Dateien.
+// das wird hier per JSZip.loadAsync() wieder "ausgepackt" und umgehängt,
+// damit am Ende EIN Download mit allen Layern entsteht statt vier einzelnen
+// Zip-Dateien.
 async function layerHinzufuegen(
   outerZip: JSZip,
   ordner: string,
@@ -46,7 +52,7 @@ async function layerHinzufuegen(
     // "<ordner>.<endung>" umbenennen, da pro Aufruf ohnehin nur ein
     // Geometrietyp vorkommt (jeder Layer ist bei uns rein Punkt oder Linie).
     const endung = pfad.split('.').pop()
-    outerZip.file(`${ordner}/${ordner}.${endung}`, inhalt)
+    outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.${endung}`, inhalt)
   }
 }
 
@@ -78,10 +84,10 @@ async function layerHinzufuegenLinien(
     }
   )
 
-  outerZip.file(`${ordner}/${ordner}.shp`, dateien.shp.buffer)
-  outerZip.file(`${ordner}/${ordner}.shx`, dateien.shx.buffer)
-  outerZip.file(`${ordner}/${ordner}.dbf`, dateien.dbf.buffer)
-  outerZip.file(`${ordner}/${ordner}.prj`, WGS84_PRJ)
+  outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.shp`, dateien.shp.buffer)
+  outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.shx`, dateien.shx.buffer)
+  outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.dbf`, dateien.dbf.buffer)
+  outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.prj`, WGS84_PRJ)
 }
 
 export async function exportShapefile(projekt: Projekt): Promise<void> {
