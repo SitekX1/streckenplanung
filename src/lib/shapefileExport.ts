@@ -75,7 +75,13 @@ export async function layerHinzufuegenLinien(
   geojson: GeoJSON.FeatureCollection
 ): Promise<void> {
   if (geojson.features.length === 0) return
-  const geometries = geojson.features.map((f) => (f.geometry as GeoJSON.LineString).coordinates)
+  // shp-write's Low-Level-API erwartet pro Feature eine Liste von "Parts"
+  // (auch bei einer simplen Linie mit nur einem Part) — ohne dieses
+  // zusätzliche Array-Level interpretiert poly.js jeden einzelnen Punkt als
+  // eigenen Part (numParts = Punktanzahl statt 1), was die Geometrie für
+  // QGIS/GDAL ungültig macht und die komplette Linie unsichtbar werden lässt
+  // (verifiziert per Testskript: numParts vor/nach Fix).
+  const geometries = geojson.features.map((f) => [(f.geometry as GeoJSON.LineString).coordinates])
   const rows = geojson.features.map((f) => f.properties ?? {})
 
   const dateien = await new Promise<{ shp: { buffer: ArrayBuffer }; shx: { buffer: ArrayBuffer }; dbf: { buffer: ArrayBuffer } }>(
