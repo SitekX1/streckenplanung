@@ -14,12 +14,7 @@ import {
   berechneHausanschlussAnzahlProSegment,
   berechneNvtKapazitaetsbedarfProSegment,
 } from '../lib/faserdimensionierung'
-import {
-  aktivesMaterialProfil,
-  berechneKundenanschlussVerbaende,
-  ladeMaterialkatalog,
-  waehleKundenanschlussStufe,
-} from '../lib/materialkatalog'
+import { aktivesMaterialProfil, waehleVerbandMitReserve } from '../lib/materialkatalog'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -420,23 +415,19 @@ const MapView = memo(function MapView({
   // bei Straße/Feldweg, um das ohnehin fragile Drag-Verhalten dort nicht
   // anzufassen.
   const materialProfil = useMemo(() => aktivesMaterialProfil(bundesfoerderung), [bundesfoerderung])
-  const materialKatalog = useMemo(() => ladeMaterialkatalog(), [])
   const farbeProSegment = useMemo(() => {
     if (!startpunkt || trassePfade.length === 0) return trassePfade.map(() => trasseFarbe)
     const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
-    const bedarfProSegment = materialKatalog.kundenanschlussNachKapazitaet
-      ? berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
-      : berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
+    const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse)
+    const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
     return trassePfade.map((_, i) => {
       if (backbone[i]) return materialProfil.trasse.farbe
       const bedarf = bedarfProSegment[i] ?? 0
       if (bedarf <= 0) return trasseFarbe
-      const stufe = materialKatalog.kundenanschlussNachKapazitaet
-        ? berechneKundenanschlussVerbaende(materialProfil, bedarf)
-        : waehleKundenanschlussStufe(materialProfil, bedarf)
+      const stufe = waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined)
       return stufe.farbe
     })
-  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, materialProfil, materialKatalog, trasseFarbe])
+  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, trasseFarbe])
 
   const trassePfadeNachFarbeOhneFeldweg = useMemo(() => {
     const gruppen = new Map<string, LatLng[][]>()

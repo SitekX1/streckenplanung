@@ -41,20 +41,26 @@ export function passendesKabel(benoetigteFasern: number): { fasern: number; code
 }
 
 // Generische Bottom-up-Lastenverteilung über die Baumtopologie der Trasse:
-// jedes NVT/Schacht bündelt ein Gewicht, das entlang des kürzesten Pfads zum
+// jede "Quelle" (ein Punkt mit einem Gewicht) speist ihre Last an IHREM
+// EIGENEN Ort in den Graphen ein, die dann entlang des kürzesten Pfads zum
 // Startpunkt über alle Segmente "fließt", die auf diesem Weg liegen — ein
-// Segment nah am Start trägt entsprechend mehr Last als eins nah an einem
-// einzelnen NVT. Wird für die Faserzahl-, die Hausanschluss-Sammelverband-
-// UND die Kapazitäts-Dimensionierung genutzt (siehe unten) — je mit eigener
-// Gewichtsfunktion (Faserzahl/Stückzahl der Hausanschlüsse vs. nominale
-// NVT-Kapazität).
+// Segment nah am Start trägt entsprechend mehr Last als eins nah am
+// jeweiligen Einspeisepunkt.
+//
+// WICHTIG (2026-08-13, Alex-Korrektur anhand eines Gabelungsbeispiels): die
+// Quelle muss der TATSÄCHLICHE Abzweigpunkt jedes einzelnen Hausanschlusses
+// sein (Hausstich.trassenPunkt), NICHT die Position des zugehörigen
+// NVT/Schacht — sonst wird bei einer Gabelung, wo z.B. 5 Hausanschlüsse
+// desselben NVT über den einen Ast und 8 über den anderen laufen, fälschlich
+// die volle Summe (13) auf BEIDEN Ästen angenommen, statt sie korrekt nach
+// tatsächlicher Herkunft aufzuteilen. Für die Kapazitäts-Obergrenze
+// (berechneNvtKapazitaetsbedarfProSegment) ist die NVT-Position dagegen
+// weiterhin richtig, da die physische Box-Kapazität eine Eigenschaft des
+// NVT-Standorts selbst ist, nicht der einzelnen Hausanschlüsse.
 function berechneLastProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
-  nvtStandorte: NvtStandort[],
-  schachtStandorte: SchachtStandort[],
-  gewichtProNvt: (nvt: NvtStandort) => number,
-  gewichtProSchacht: (schacht: SchachtStandort) => number
+  quellen: { position: LatLng; gewicht: number }[]
 ): number[] {
   const leer = trassePfade.map(() => 0)
   if (trassePfade.length === 0) return leer
@@ -77,13 +83,9 @@ function berechneLastProSegment(
     }
   }
 
-  for (const nvt of nvtStandorte) {
-    const knoten = naechsterKnoten(graph, nvt.position)
-    if (knoten) addiereEntlangPfad(knoten, gewichtProNvt(nvt))
-  }
-  for (const schacht of schachtStandorte) {
-    const knoten = naechsterKnoten(graph, schacht.position)
-    if (knoten) addiereEntlangPfad(knoten, gewichtProSchacht(schacht))
+  for (const { position, gewicht } of quellen) {
+    const knoten = naechsterKnoten(graph, position)
+    if (knoten) addiereEntlangPfad(knoten, gewicht)
   }
 
   const r = (v: number) => Math.round(v * 100000) / 100000
@@ -112,29 +114,21 @@ export interface SegmentFaserbedarf {
   fasernGesamt: number
 }
 
-// Faserzahl pro Trasse-Segment — siehe berechneLastProSegment().
+// Faserzahl pro Trasse-Segment — Quelle ist der tatsächliche Abzweigpunkt
+// (trassenPunkt) jedes einzelnen Hausanschlusses, siehe berechneLastProSegment().
 export function berechneFaserbedarfProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
-  nvtStandorte: NvtStandort[],
-  schachtStandorte: SchachtStandort[],
   hausanschluesse: Hausstich[],
   adressen: Address[]
 ): SegmentFaserbedarf[] {
-  const hausById = new Map(hausanschluesse.map((h) => [h.id, h]))
   const adresseByUuid = new Map(adressen.map((a) => [a.uuid, a]))
+  const quellen = hausanschluesse.map((h) => ({
+    position: h.trassenPunkt,
+    gewicht: fasernFuerAdresse(adresseByUuid.get(h.addressUuid)),
+  }))
 
-  const gewicht = (hausIds: string[]) =>
-    hausIds.reduce((summe, id) => {
-      const haus = hausById.get(id)
-      const adresse = haus ? adresseByUuid.get(haus.addressUuid) : undefined
-      return summe + fasernFuerAdresse(adresse)
-    }, 0)
-
-  const basisProSegment = berechneLastProSegment(
-    trassePfade, startpunkt, nvtStandorte, schachtStandorte,
-    (nvt) => gewicht(nvt.hausanschlussIds), (schacht) => gewicht(schacht.hausanschlussIds)
-  )
+  const basisProSegment = berechneLastProSegment(trassePfade, startpunkt, quellen)
   return basisProSegment.map((basis) => {
     const reserve = Math.ceil(basis * RESERVE_ANTEIL)
     return { fasernBasis: basis, fasernReserve: reserve, fasernGesamt: basis + reserve }
@@ -142,41 +136,40 @@ export function berechneFaserbedarfProSegment(
 }
 
 // Anzahl der Hausanschlüsse, die kumulativ über jedes Trasse-Segment
-// Richtung Startpunkt versorgt werden — Grundlage für die dynamische
-// Kundenanschluss-Sammelverband-Dimensionierung (siehe materialkatalog.ts
-// "kundenanschlussStufen" + gisNbExport.ts Doppelbelegung): nah an einer
-// Gabelung trägt ein Segment die Summe aller Hausanschlüsse dahinter (z.B.
-// 24), auf dem Stich hinter der Gabelung nur noch die des jeweiligen Astes
-// (z.B. 5 oder 8) — ergibt automatisch kleinere Verbände Richtung Stichende.
+// Richtung Startpunkt versorgt werden — Quelle ist der tatsächliche
+// Abzweigpunkt (trassenPunkt) jedes einzelnen Hausanschlusses (NICHT die
+// Position des zugehörigen NVT, siehe Erklärung bei berechneLastProSegment).
+// Grundlage für die dynamische Kundenanschluss-Sammelverband-Dimensionierung
+// (siehe materialkatalog.ts waehleVerbandMitReserve): nah an einer Gabelung
+// trägt ein Segment die Summe aller Hausanschlüsse dahinter (z.B. 13 = 5+8),
+// auf dem Stich hinter der Gabelung nur noch die des jeweiligen Astes (5
+// oder 8) — ergibt automatisch kleinere Verbände Richtung Stichende.
 export function berechneHausanschlussAnzahlProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
-  nvtStandorte: NvtStandort[],
-  schachtStandorte: SchachtStandort[]
+  hausanschluesse: Hausstich[]
 ): number[] {
-  return berechneLastProSegment(
-    trassePfade, startpunkt, nvtStandorte, schachtStandorte,
-    (nvt) => nvt.hausanschlussIds.length, (schacht) => schacht.hausanschlussIds.length
-  )
+  const quellen = hausanschluesse.map((h) => ({ position: h.trassenPunkt, gewicht: 1 }))
+  return berechneLastProSegment(trassePfade, startpunkt, quellen)
 }
 
-// Wie berechneHausanschlussAnzahlProSegment(), aber mit der NOMINALEN
-// NVT-Kapazität statt der tatsächlichen Belegung als Gewicht — Grundlage für
-// die "volle Box verplanen"-Praxis (2026-08-12, Alex: "wir planen meistens
-// so, dass man den 120er zum Beispiel vollplant, also dass 120 Rohre da drin
-// sind am Schluss, umgerechnet 5x 24x7 Rohre verbunden"), statt nur den
-// tatsächlichen Bedarf zu decken. Schacht hat keine Kapazitätsgrenze (siehe
-// types.ts), daher dort weiterhin die tatsächliche Belegung.
+// Physische NVT-Kapazität als Obergrenze je Segment — HIER ist die
+// NVT-Position (nicht der einzelne Hausanschluss) die richtige Quelle, da
+// die Box-Kapazität eine Eigenschaft des Standorts selbst ist ("der Kasten
+// hat nur 120 Plätze, mehr geht nicht"), unabhängig davon, über welchen Ast
+// die einzelnen Hausanschlüsse tatsächlich anfahren. Schacht hat keine
+// Kapazitätsgrenze (siehe types.ts), daher dort die tatsächliche Belegung.
 export function berechneNvtKapazitaetsbedarfProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
   nvtStandorte: NvtStandort[],
   schachtStandorte: SchachtStandort[]
 ): number[] {
-  return berechneLastProSegment(
-    trassePfade, startpunkt, nvtStandorte, schachtStandorte,
-    (nvt) => nvt.kapazitaet, (schacht) => schacht.hausanschlussIds.length
-  )
+  const quellen = [
+    ...nvtStandorte.map((nvt) => ({ position: nvt.position, gewicht: nvt.kapazitaet })),
+    ...schachtStandorte.map((s) => ({ position: s.position, gewicht: s.hausanschlussIds.length })),
+  ]
+  return berechneLastProSegment(trassePfade, startpunkt, quellen)
 }
 
 // Bestimmt pro Trasse-Segment, ob es eine echte Backbone-Verbindung

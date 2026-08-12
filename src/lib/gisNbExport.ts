@@ -1,13 +1,7 @@
 import JSZip from 'jszip'
 import { Projekt } from './types'
 import { ermittleZuordnungen } from './nvt'
-import {
-  aktivesMaterialProfil,
-  berechneKundenanschlussVerbaende,
-  ladeMaterialkatalog,
-  waehleKundenanschlussStufe,
-  MaterialEintrag,
-} from './materialkatalog'
+import { aktivesMaterialProfil, waehleVerbandMitReserve, MaterialEintrag } from './materialkatalog'
 import {
   berechneFaserbedarfProSegment,
   berechneHausanschlussAnzahlProSegment,
@@ -140,10 +134,11 @@ function materialEigenschaften(m: MaterialEintrag) {
 // dahinterliegenden zweiten Verteiler NICHT (von Alex korrigiert
 // 2026-08-12: "nicht jede Trasse braucht zwei Leerrohrsegmente"). Zusätzlich
 // (Doppelbelegung, wo beides zutrifft) läuft auf jedem Segment mit
-// Hausanschlüssen dahinter ein dynamisch dimensionierter Kundenanschluss-
-// Sammelverband — kleiner werdend Richtung Stichenden/hinter Gabelungen
-// (siehe berechneHausanschlussAnzahlProSegment). Dazu je eine Linie pro
-// Hausanschluss-Stich (Ebene "hausanschluss", Hauszuführung zum Haus).
+// Hausanschlüssen dahinter ein Kundenanschluss-Sammelverband nach dem
+// TATSÄCHLICHEN Bedarf dieses Astes (siehe waehleVerbandMitReserve in
+// materialkatalog.ts — mit Reserve-Stufensprung bei knapper Auslastung,
+// gedeckelt durch die physische NVT-Kapazität als Obergrenze). Dazu je eine
+// Linie pro Hausanschluss-Stich (Ebene "hausanschluss", Hauszuführung zum Haus).
 function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
   const profil = aktivesMaterialProfil(projekt.bundesfoerderung)
   const trassePfade = projekt.trassePfade && projekt.trassePfade.length > 0 ? projekt.trassePfade : [projekt.trasse]
@@ -152,14 +147,15 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
 
   const nvtStandorte = projekt.nvtStandorte ?? []
   const schachtStandorte = projekt.schachtStandorte ?? []
-  const nachKapazitaet = ladeMaterialkatalog().kundenanschlussNachKapazitaet
-  // "Volle Box"-Praxis (Default, siehe berechneKundenanschlussVerbaende):
-  // nominale NVT-Kapazität statt tatsächlicher Belegung als Bemessungsgrundlage.
   const bedarfProSegment =
     projekt.startpunkt != null
-      ? nachKapazitaet
-        ? berechneNvtKapazitaetsbedarfProSegment(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
-        : berechneHausanschlussAnzahlProSegment(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
+      ? berechneHausanschlussAnzahlProSegment(trassePfade, projekt.startpunkt, projekt.hausanschluesse)
+      : trassePfade.map(() => 0)
+  // Physische NVT-Kapazität als harte Obergrenze je Segment ("der Kasten hat
+  // nur 120 Plätze, mehr geht nicht") — separat vom tatsächlichen Bedarf.
+  const kapazitaetsObergrenzeProSegment =
+    projekt.startpunkt != null
+      ? berechneNvtKapazitaetsbedarfProSegment(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
       : trassePfade.map(() => 0)
   const backboneProSegment =
     projekt.startpunkt != null
@@ -186,9 +182,8 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
 
     const bedarf = bedarfProSegment[i] ?? 0
     if (bedarf > 0) {
-      const stufe = nachKapazitaet
-        ? berechneKundenanschlussVerbaende(profil, bedarf)
-        : waehleKundenanschlussStufe(profil, bedarf)
+      const kapazitaetsObergrenze = kapazitaetsObergrenzeProSegment[i] || undefined
+      const stufe = waehleVerbandMitReserve(profil, bedarf, kapazitaetsObergrenze)
       features.push({
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: coords },
@@ -231,14 +226,7 @@ function verbindungenLayer(projekt: Projekt): GeoJSON.FeatureCollection {
 
   const faserbedarf =
     projekt.startpunkt != null
-      ? berechneFaserbedarfProSegment(
-          trassePfade,
-          projekt.startpunkt,
-          projekt.nvtStandorte ?? [],
-          projekt.schachtStandorte ?? [],
-          projekt.hausanschluesse,
-          projekt.adressen
-        )
+      ? berechneFaserbedarfProSegment(trassePfade, projekt.startpunkt, projekt.hausanschluesse, projekt.adressen)
       : trassePfade.map(() => ({ fasernBasis: 0, fasernReserve: 0, fasernGesamt: 0 }))
 
   trassePfade.forEach((pfad, i) => {

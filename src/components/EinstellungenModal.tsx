@@ -92,17 +92,9 @@ export default function EinstellungenModal({
     })
   }
 
-  const toggleNachKapazitaet = (aktiv: boolean) => {
+  const aendereAuslastungsSchwelle = (schwelle: number) => {
     setKatalog((k) => {
-      const naechster = { ...k, kundenanschlussNachKapazitaet: aktiv }
-      speichereMaterialkatalog(naechster)
-      return naechster
-    })
-  }
-
-  const aendereReservePlaetze = (plaetze: number) => {
-    setKatalog((k) => {
-      const naechster = { ...k, mindestReservePlaetze: Math.max(0, plaetze) }
+      const naechster = { ...k, auslastungsSchwelle: Math.min(0.99, Math.max(0.01, schwelle)) }
       speichereMaterialkatalog(naechster)
       return naechster
     })
@@ -363,37 +355,22 @@ export default function EinstellungenModal({
           <p className="text-xs text-gray-600 mb-2.5">
             Wird pro Projekt automatisch angewendet — je nachdem, ob unten in der Sidebar &bdquo;Bundesförderung&ldquo; aktiviert ist. Die Farbe je Material-Typ (rechts neben der Bezeichnung) bestimmt auch die Einfärbung der Trasse auf der Karte.
           </p>
-          <label
-            className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg mb-2 cursor-pointer"
-            style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}
-          >
-            <input
-              type="checkbox"
-              checked={katalog.kundenanschlussNachKapazitaet}
-              onChange={(e) => toggleNachKapazitaet(e.target.checked)}
-              className="accent-blue-500 w-4 h-4 mt-0.5 shrink-0"
-            />
-            <span className="flex flex-col gap-0.5">
-              <span className="text-xs text-gray-300">Kundenanschluss-Verband auf volle NVT-Kapazität planen</span>
-              <span className="text-[10px] text-gray-600">
-                An (Standard): richtet sich nach der nominalen NVT-Kapazität statt dem aktuellen Bedarf. Aus: nur so viele Röhrchen wie tatsächlich Hausanschlüsse dahinterliegen. In beiden Fällen gilt die Reserve unten zusätzlich.
-              </span>
-            </span>
-          </label>
-          <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg mb-3"
+          <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg mb-1"
             style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
-            <span className="text-xs text-gray-300 flex-1">Mindest-Reserve (freizuhaltende Plätze)</span>
+            <span className="text-xs text-gray-300 flex-1">Reserve-Schwelle (Stufensprung ab Auslastung)</span>
             <input
               type="number"
-              min={0}
-              value={katalog.mindestReservePlaetze}
-              onChange={(e) => aendereReservePlaetze(Number(e.target.value) || 0)}
+              min={1}
+              max={99}
+              value={Math.round(katalog.auslastungsSchwelle * 100)}
+              onChange={(e) => aendereAuslastungsSchwelle((Number(e.target.value) || 0) / 100)}
               className="w-16 px-2 py-1.5 rounded text-sm outline-none text-right"
               style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
             />
+            <span className="text-xs text-gray-500">%</span>
           </div>
-          <p className="text-[10px] text-gray-600 -mt-2 mb-3">
-            Wird vor der Stufen-/Bündelwahl auf den Bedarf aufgeschlagen — ein NVT/Verband ist damit nie randvoll bestückt, außer es geht rechnerisch nicht anders.
+          <p className="text-[10px] text-gray-600 mb-3">
+            Wäre die knapp passende Verband-Stufe über dieser Auslastung, wird automatisch die nächstgrößere gewählt (z.B. 5 Kunden bei Schwelle 70 % → 12x7 statt 7x7, da 5/7 ≈ 71 %). Physisch gedeckelt durch die jeweilige NVT-Kapazität — die wird nie überschritten.
           </p>
           <div className="flex flex-col gap-3">
             <div>

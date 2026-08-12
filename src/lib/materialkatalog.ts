@@ -109,29 +109,18 @@ const STORAGE_KEY = 'streckenplanung-materialkatalog'
 interface GespeicherterKatalog {
   firma: MaterialProfil
   foerderung: MaterialProfil
-  // Wenn true (Default — "meistens" laut Alex, 2026-08-12): der
-  // Kundenanschluss-Sammelverband wird auf die volle nominale NVT-Kapazität
-  // geplant (z.B. 120er-Box → mehrere Bündel), nicht nur auf den tatsächlich
-  // aktuell benötigten Bedarf. Wenn false: kleinste ausreichende Einzelstufe
-  // nach tatsächlichem Bedarf (frühere Logik). In beiden Fällen wird
-  // zusätzlich mindestReservePlaetze aufgeschlagen.
-  kundenanschlussNachKapazitaet: boolean
-  // Explizite Anzahl freizuhaltender Röhrchen-Plätze (2026-08-12, Alex-
-  // Korrektur: "ein 120er NVT soll wenn möglich NIE mit 120 Röhrchen
-  // bestückt sein — mindestens 12 oder 24 Plätze freilassen"). Ersetzt die
-  // vorherige pauschale 15%-Prozent-Reserve durch eine feste, einstellbare
-  // Stückzahl, die vor der Stufen-/Bündelwahl auf den Bedarf aufgeschlagen
-  // wird — "wenn möglich nicht voll, außer es geht rechnerisch nicht anders"
-  // ergibt sich automatisch daraus, dass die nächstgrößere Stufe/das nächste
-  // Bündel gewählt wird, sooft das reicht.
-  mindestReservePlaetze: number
+  // Ab welcher Auslastung (0–1) der knapp passenden Stufe automatisch eine
+  // Nummer größer gewählt wird — 2026-08-12, Alex' konkretes Beispiel:
+  // 5 Kunden auf einem Ast → 12x7 statt 7x7 (5/7 ≈ 71 % Auslastung, löst
+  // aus), 8 Kunden → bleibt bei 12x7 (8/12 ≈ 67 %, löst NICHT aus). 0.7
+  // liegt zwischen beiden Werten und trifft damit genau Alex' Beispiel.
+  auslastungsSchwelle: number
 }
 
 const KATALOG_DEFAULT: GespeicherterKatalog = {
   firma: FIRMA_DEFAULT,
   foerderung: FOERDERUNG_DEFAULT,
-  kundenanschlussNachKapazitaet: true,
-  mindestReservePlaetze: 24,
+  auslastungsSchwelle: 0.7,
 }
 
 // Geräteweit persistent, gleiches Muster wie Kalkulations-Preise/Firmendaten
@@ -155,14 +144,10 @@ export function ladeMaterialkatalog(): GespeicherterKatalog {
         hausanschluss: { ...FOERDERUNG_DEFAULT.hausanschluss, ...parsed.foerderung?.hausanschluss },
         kundenanschlussStufen: stufen(parsed.foerderung?.kundenanschlussStufen, FOERDERUNG_DEFAULT.kundenanschlussStufen),
       },
-      kundenanschlussNachKapazitaet:
-        typeof parsed.kundenanschlussNachKapazitaet === 'boolean'
-          ? parsed.kundenanschlussNachKapazitaet
-          : KATALOG_DEFAULT.kundenanschlussNachKapazitaet,
-      mindestReservePlaetze:
-        typeof parsed.mindestReservePlaetze === 'number'
-          ? parsed.mindestReservePlaetze
-          : KATALOG_DEFAULT.mindestReservePlaetze,
+      auslastungsSchwelle:
+        typeof parsed.auslastungsSchwelle === 'number'
+          ? parsed.auslastungsSchwelle
+          : KATALOG_DEFAULT.auslastungsSchwelle,
     }
   } catch {
     return KATALOG_DEFAULT
@@ -188,38 +173,59 @@ export function profilName(bundesfoerderung: boolean | undefined): MaterialProfi
   return bundesfoerderung ? 'foerderung' : 'firma'
 }
 
-// Wählt für eine gegebene Hausanschluss-Anzahl (aus
-// berechneHausanschlussAnzahlProSegment) die kleinste ausreichende Stufe des
-// Kundenanschluss-Sammelverbands — reicht keine Stufe aus, wird die größte
-// genommen (Grenzfall: sehr große Zone vor einem großen NVT).
+// Wählt den Kundenanschluss-Sammelverband für einen gegebenen tatsächlichen
+// Bedarf (aus berechneHausanschlussAnzahlProSegment), mit Reserve-Logik nach
+// Alex' konkreten Beispielen (2026-08-12):
 //
-// KEINE mindestReservePlaetze-Reserve hier (bewusst anders als
-// berechneKundenanschlussVerbaende unten): diese Funktion greift nur, wenn
-// "auf NVT-Kapazität planen" AUS ist, der Nutzer also explizit den reinen
-// tatsächlichen Bedarf sehen will — ein fester Reserve-Aufschlag (z.B. 24)
-// würde bei kleinen Ästen (5 Häuser) sonst fast immer sofort die größte
-// Stufe erzwingen und genau das kaputtmachen, was der Nutzer mit dieser
-// Einstellung eigentlich wollte (kleinere Verbände Richtung Stichende, siehe
-// Alex' früheres Beispiel "5 und 8 Häuser reicht vielleicht 12x7 oder 7x7").
-export function waehleKundenanschlussStufe(profil: MaterialProfil, hausanschlussAnzahl: number): MaterialEintrag {
-  const stufen = [...profil.kundenanschlussStufen].sort((a, b) => a.lrAnzahl - b.lrAnzahl)
-  return stufen.find((s) => s.lrAnzahl >= hausanschlussAnzahl) ?? stufen[stufen.length - 1]
-}
+// 1. Normalfall (Bedarf passt in eine einzelne Stufe): die knapp
+//    ausreichende Stufe wird gewählt — außer sie wäre über der
+//    auslastungsSchwelle (Default 70 %) ausgelastet, dann wird die nächst-
+//    größere Stufe genommen ("5 Kunden → 12x7 statt 7x7, weil ich noch
+//    Reserve haben will; 8 Kunden → bleibt bei 12x7, das ist schon
+//    ausreichend Luft").
+// 2. Großfall (Bedarf übersteigt selbst die größte Stufe, z.B. Bedarf nahe
+//    der NVT-Kapazität): so viele Bündel der GRÖSSTEN Stufe wie nötig,
+//    wieder mit Aufrundung bei knapper Auslastung ("5x 24x7 für ein
+//    NVT mit 80 tatsächlichen von 120 möglichen Anschlüssen — nicht mehr,
+//    das wäre schon zu knapp").
+// 3. Kappung: kapazitaetsObergrenze (z.B. die nominale NVT-Kapazität) wird
+//    NIE überschritten — "der Kasten hat nur 120 Plätze, mehr geht nicht,
+//    mehr wird auch nicht reinkommen". Reicht die Reserve-Aufrundung nicht
+//    mehr in die Box, wird ohne Zusatzreserve exakt bis zur Grenze gefüllt
+//    ("wenn's nicht anders geht, dann halt voll").
+export function waehleVerbandMitReserve(
+  profil: MaterialProfil,
+  bedarf: number,
+  kapazitaetsObergrenze?: number
+): MaterialEintrag {
+  const stufenAufsteigend = [...profil.kundenanschlussStufen].sort((a, b) => a.lrAnzahl - b.lrAnzahl)
+  const groesste = stufenAufsteigend[stufenAufsteigend.length - 1]
+  if (!groesste) return { lrArt: 15, lrAnzahl: 0, anzahl: 0, reserve: 0, bezeichnungFirma: '', farbe: '#6b7280', preisProMeter: 0 }
+  if (bedarf <= 0) return { ...groesste, anzahl: 0, reserve: 0 }
 
-// "Box mit Reserve"-Variante: deckt den Bedarf (typischerweise die nominale
-// NVT-Kapazität, siehe berechneNvtKapazitaetsbedarfProSegment) PLUS die
-// explizite mindestReservePlaetze-Stückzahl mit mehreren Bündeln der
-// GRÖSSTEN verfügbaren Stufe ab (z.B. 120 + 24 Reserve → 144 → 6x 24x7) — die
-// Box soll wenn möglich NICHT zu 100 % ausgereizt sein, außer es geht
-// rechnerisch nicht anders (ergibt sich automatisch, da immer aufgerundet
-// wird: reicht die aktuelle Bündelanzahl schon mit Reserve, bleibt sie
-// gleich; reicht sie exakt ohne Reserve, wird automatisch ein weiteres
-// Bündel ergänzt).
-export function berechneKundenanschlussVerbaende(profil: MaterialProfil, bedarf: number): MaterialEintrag {
-  const stufen = [...profil.kundenanschlussStufen].sort((a, b) => b.lrAnzahl - a.lrAnzahl)
-  const groesste = stufen[0]
-  if (!groesste || bedarf <= 0) return { ...groesste, anzahl: 0 }
-  const { mindestReservePlaetze } = ladeMaterialkatalog()
-  const bedarfMitReserve = bedarf + mindestReservePlaetze
-  return { ...groesste, anzahl: Math.max(1, Math.ceil(bedarfMitReserve / groesste.lrAnzahl)) }
+  const { auslastungsSchwelle } = ladeMaterialkatalog()
+  let ergebnis: MaterialEintrag
+
+  const passendeStufe = stufenAufsteigend.find((s) => s.lrAnzahl >= bedarf)
+  if (passendeStufe) {
+    const idx = stufenAufsteigend.indexOf(passendeStufe)
+    const naechsteGroessere = stufenAufsteigend[idx + 1]
+    const auslastung = bedarf / passendeStufe.lrAnzahl
+    const gewaehlt = naechsteGroessere && auslastung > auslastungsSchwelle ? naechsteGroessere : passendeStufe
+    ergebnis = { ...gewaehlt, anzahl: 1, reserve: Math.max(0, gewaehlt.lrAnzahl - bedarf) }
+  } else {
+    const rohAnzahl = Math.ceil(bedarf / groesste.lrAnzahl)
+    const auslastung = bedarf / (rohAnzahl * groesste.lrAnzahl)
+    const anzahl = auslastung > auslastungsSchwelle ? rohAnzahl + 1 : rohAnzahl
+    ergebnis = { ...groesste, anzahl, reserve: Math.max(0, anzahl * groesste.lrAnzahl - bedarf) }
+  }
+
+  if (kapazitaetsObergrenze != null && ergebnis.lrAnzahl === groesste.lrAnzahl) {
+    const maxAnzahl = Math.max(1, Math.floor(kapazitaetsObergrenze / groesste.lrAnzahl))
+    if (ergebnis.anzahl > maxAnzahl) {
+      ergebnis = { ...groesste, anzahl: maxAnzahl, reserve: Math.max(0, maxAnzahl * groesste.lrAnzahl - bedarf) }
+    }
+  }
+
+  return ergebnis
 }
