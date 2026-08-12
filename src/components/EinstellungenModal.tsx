@@ -103,7 +103,7 @@ export default function EinstellungenModal({
   const materialZeile = (profil: MaterialProfilName, ebene: 'trasse' | 'hausanschluss', label: string) => {
     const eintrag = katalog[profil][ebene]
     return (
-      <div className="flex flex-col gap-1.5 rounded-lg p-2.5" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
+      <div className="flex flex-col gap-2 rounded-xl p-3" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
         <span className="text-xs text-gray-400">{label}</span>
         <div className="flex gap-1.5">
           <input
@@ -111,7 +111,7 @@ export default function EinstellungenModal({
             value={eintrag.bezeichnungFirma}
             onChange={(e) => aktualisiereMaterial(profil, ebene, { bezeichnungFirma: e.target.value })}
             placeholder="Bezeichnung (z.B. 24x7)"
-            className="flex-1 min-w-0 px-2.5 py-1.5 rounded text-sm outline-none"
+            className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg text-sm outline-none"
             style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
           />
           <input
@@ -119,46 +119,46 @@ export default function EinstellungenModal({
             title="Kartenfarbe für dieses Material"
             value={eintrag.farbe}
             onChange={(e) => aktualisiereMaterial(profil, ebene, { farbe: e.target.value })}
-            className="w-9 h-8 rounded cursor-pointer border-0 p-0 shrink-0"
+            className="w-9 h-8 rounded-lg cursor-pointer border-0 p-0 shrink-0"
             style={{ background: 'transparent' }}
           />
         </div>
         <select
           value={eintrag.lrArt}
           onChange={(e) => aktualisiereMaterial(profil, ebene, { lrArt: Number(e.target.value) })}
-          className="px-2.5 py-1.5 rounded text-xs outline-none"
+          className="px-2.5 py-1.5 rounded-lg text-xs outline-none"
           style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
         >
           {LR_ART_KATALOG.map((e) => (
             <option key={e.code} value={e.code}>{e.code} — {e.label}</option>
           ))}
         </select>
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-4 gap-2">
           <label className="flex flex-col gap-0.5">
             <span className="text-[10px] text-gray-500">Röhrchen/Verb.</span>
             <input type="number" min={0} value={eintrag.lrAnzahl}
               onChange={(e) => aktualisiereMaterial(profil, ebene, { lrAnzahl: Number(e.target.value) || 0 })}
-              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+              className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
           </label>
           <label className="flex flex-col gap-0.5">
             <span className="text-[10px] text-gray-500">Verbände</span>
             <input type="number" min={0} value={eintrag.anzahl}
               onChange={(e) => aktualisiereMaterial(profil, ebene, { anzahl: Number(e.target.value) || 0 })}
-              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+              className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
           </label>
           <label className="flex flex-col gap-0.5">
             <span className="text-[10px] text-gray-500">Reserve</span>
             <input type="number" min={0} value={eintrag.reserve}
               onChange={(e) => aktualisiereMaterial(profil, ebene, { reserve: Number(e.target.value) || 0 })}
-              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+              className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+          </label>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-gray-500">€/m</span>
+            <input type="number" min={0} value={eintrag.preisProMeter}
+              onChange={(e) => aktualisiereMaterial(profil, ebene, { preisProMeter: Number(e.target.value) || 0 })}
+              className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
           </label>
         </div>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] text-gray-500">Materialpreis €/m</span>
-          <input type="number" min={0} value={eintrag.preisProMeter}
-            onChange={(e) => aktualisiereMaterial(profil, ebene, { preisProMeter: Number(e.target.value) || 0 })}
-            className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
-        </label>
       </div>
     )
   }
@@ -173,34 +173,34 @@ export default function EinstellungenModal({
   }
 
   const stufenZeilen = (profil: MaterialProfilName) => (
-    <div className="flex flex-col gap-1.5 rounded-lg p-2.5" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
+    <div className="flex flex-col gap-2 rounded-xl p-3" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
       <span className="text-xs text-gray-400">Kundenanschluss-Sammelverband (Doppelbelegung auf Trasse-Segmenten)</span>
       <span className="text-[10px] text-gray-600 -mt-1">Kleinste ausreichende Stufe wird je Segment automatisch gewählt, je nach Anzahl versorgter Hausanschlüsse dahinter.</span>
       {katalog[profil].kundenanschlussStufen.map((stufe, i) => (
-        <div key={i} className="grid grid-cols-5 gap-1.5 items-end">
+        <div key={i} className="grid grid-cols-5 gap-2 items-end">
           <input type="text" value={stufe.bezeichnungFirma}
             onChange={(e) => aktualisiereStufe(profil, i, { bezeichnungFirma: e.target.value })}
             placeholder="z.B. 7x7"
-            className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+            className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
           <input type="color" title="Kartenfarbe für diese Stufe" value={stufe.farbe}
             onChange={(e) => aktualisiereStufe(profil, i, { farbe: e.target.value })}
-            className="w-full h-7 rounded cursor-pointer border-0 p-0" style={{ background: 'transparent' }} />
+            className="w-full h-8 rounded-lg cursor-pointer border-0 p-0" style={{ background: 'transparent' }} />
           <select value={stufe.lrArt}
             onChange={(e) => aktualisiereStufe(profil, i, { lrArt: Number(e.target.value) })}
-            className="px-1.5 py-1 rounded text-[10px] outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}>
+            className="px-1.5 py-1.5 rounded-lg text-[10px] outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}>
             {LR_ART_KATALOG.map((e) => (<option key={e.code} value={e.code}>{e.code}</option>))}
           </select>
           <label className="flex flex-col gap-0.5">
             <span className="text-[9px] text-gray-500">Röhrchen</span>
             <input type="number" min={0} value={stufe.lrAnzahl}
               onChange={(e) => aktualisiereStufe(profil, i, { lrAnzahl: Number(e.target.value) || 0 })}
-              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+              className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
           </label>
           <label className="flex flex-col gap-0.5">
             <span className="text-[9px] text-gray-500">€/m</span>
             <input type="number" min={0} value={stufe.preisProMeter}
               onChange={(e) => aktualisiereStufe(profil, i, { preisProMeter: Number(e.target.value) || 0 })}
-              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+              className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
           </label>
         </div>
       ))}
@@ -217,13 +217,18 @@ export default function EinstellungenModal({
   }
 
   return (
-    <div className="fixed inset-0 z-1000 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-      <div className="rounded-lg shadow-lg p-4 flex flex-col gap-4 overflow-y-auto"
-        style={{ backgroundColor: '#1a1a1a', border: '1px solid #374151', width: 340, maxHeight: '85vh' }}>
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-white">⚙️ Einstellungen</span>
-          <button onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ color: '#9ca3af' }}>✕</button>
+    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+      <div className="rounded-2xl shadow-2xl flex flex-col overflow-y-auto"
+        style={{ backgroundColor: '#1a1a1a', border: '1px solid #2a2f3a', width: 560, maxWidth: '100%', maxHeight: '88vh' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b sticky top-0 z-10" style={{ borderColor: '#262b36', backgroundColor: '#1a1a1a' }}>
+          <span className="text-base font-semibold text-white">⚙️ Einstellungen</span>
+          <button onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-sm hover:bg-gray-800 transition-colors"
+            style={{ color: '#9ca3af' }}>
+            ✕
+          </button>
         </div>
+        <div className="flex flex-col gap-4 p-5">
 
         <div>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Firma (für Kalkulations-PDF)</p>
@@ -231,23 +236,23 @@ export default function EinstellungenModal({
             <div className="flex items-center gap-3">
               {firmendaten.logoDataUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={firmendaten.logoDataUrl} alt="Firmenlogo" className="rounded"
+                <img src={firmendaten.logoDataUrl} alt="Firmenlogo" className="rounded-lg"
                   style={{ maxWidth: 64, maxHeight: 40, backgroundColor: '#fff', padding: 2 }} />
               ) : (
-                <div className="flex items-center justify-center rounded text-xs text-gray-600"
+                <div className="flex items-center justify-center rounded-lg text-xs text-gray-600"
                   style={{ width: 64, height: 40, border: '1px dashed #374151' }}>
                   kein Logo
                 </div>
               )}
               <div className="flex flex-col gap-1">
                 <button onClick={() => logoInputRef.current?.click()}
-                  className="text-xs px-2.5 py-1.5 rounded"
+                  className="text-xs px-2.5 py-1.5 rounded-lg transition-colors hover:brightness-110"
                   style={{ backgroundColor: '#262b36', color: '#93c5fd' }}>
                   📷 Logo wählen
                 </button>
                 {firmendaten.logoDataUrl && (
                   <button onClick={() => setFirmendaten((f) => ({ ...f, logoDataUrl: null, logoBreite: 0, logoHoehe: 0 }))}
-                    className="text-xs px-2.5 py-1.5 rounded" style={{ color: '#f87171' }}>
+                    className="text-xs px-2.5 py-1.5 rounded-lg" style={{ color: '#f87171' }}>
                     Logo entfernen
                   </button>
                 )}
@@ -271,7 +276,7 @@ export default function EinstellungenModal({
                 type="text"
                 value={firmendaten.firmenname}
                 onChange={(e) => setFirmendaten((f) => ({ ...f, firmenname: e.target.value }))}
-                className="px-2.5 py-1.5 rounded text-sm outline-none"
+                className="px-2.5 py-1.5 rounded-lg text-sm outline-none"
                 style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
               />
             </label>
@@ -285,7 +290,7 @@ export default function EinstellungenModal({
                     value={firmendaten.strasse}
                     onChange={(e) => setFirmendaten((f) => ({ ...f, strasse: e.target.value }))}
                     placeholder="Straße"
-                    className="flex-2 min-w-0 px-2.5 py-1.5 rounded text-sm outline-none"
+                    className="flex-2 min-w-0 px-2.5 py-1.5 rounded-lg text-sm outline-none"
                     style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
                   />
                   <input
@@ -311,7 +316,7 @@ export default function EinstellungenModal({
                     value={firmendaten.ort}
                     onChange={(e) => setFirmendaten((f) => ({ ...f, ort: e.target.value }))}
                     placeholder="Ort"
-                    className="flex-2 min-w-0 px-2.5 py-1.5 rounded text-sm outline-none"
+                    className="flex-2 min-w-0 px-2.5 py-1.5 rounded-lg text-sm outline-none"
                     style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
                   />
                 </div>
@@ -336,13 +341,14 @@ export default function EinstellungenModal({
               { label: 'Feldweg-Anteil', value: feldwegFarbe, onChange: onFeldwegFarbeAendern },
               { label: 'Hausanschlüsse', value: hausanschlussfarbe, onChange: onHausanschlussFarbeAendern },
             ].map(({ label, value, onChange }) => (
-              <div key={label} className="flex items-center justify-between px-1">
+              <div key={label} className="flex items-center justify-between px-3 py-2 rounded-xl"
+                style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
                 <span className="text-xs text-gray-400">{label}</span>
                 <input
                   type="color"
                   value={value}
                   onChange={(e) => onChange(e.target.value)}
-                  className="w-8 h-6 rounded cursor-pointer border-0 p-0"
+                  className="w-8 h-6 rounded-lg cursor-pointer border-0 p-0"
                   style={{ background: 'transparent' }}
                 />
               </div>
@@ -355,7 +361,7 @@ export default function EinstellungenModal({
           <p className="text-xs text-gray-600 mb-2.5">
             Wird pro Projekt automatisch angewendet — je nachdem, ob unten in der Sidebar &bdquo;Bundesförderung&ldquo; aktiviert ist. Die Farbe je Material-Typ (rechts neben der Bezeichnung) bestimmt auch die Einfärbung der Trasse auf der Karte.
           </p>
-          <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg mb-1"
+          <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl mb-1"
             style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
             <span className="text-xs text-gray-300 flex-1">Reserve-Schwelle (Stufensprung ab Auslastung)</span>
             <input
@@ -364,7 +370,7 @@ export default function EinstellungenModal({
               max={99}
               value={Math.round(katalog.auslastungsSchwelle * 100)}
               onChange={(e) => aendereAuslastungsSchwelle((Number(e.target.value) || 0) / 100)}
-              className="w-16 px-2 py-1.5 rounded text-sm outline-none text-right"
+              className="w-16 px-2 py-1.5 rounded-lg text-sm outline-none text-right"
               style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
             />
             <span className="text-xs text-gray-500">%</span>
@@ -391,6 +397,7 @@ export default function EinstellungenModal({
             </div>
           </div>
           <p className="text-xs text-gray-600 mt-2">Änderungen werden sofort geräteweit gespeichert.</p>
+        </div>
         </div>
       </div>
     </div>

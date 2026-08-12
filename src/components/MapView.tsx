@@ -249,7 +249,7 @@ function FlyTo({ ziel }: { ziel: LatLng | null }) {
   return null
 }
 
-function TrasseNetzwerk({ pfade, farbe, opacity = 0.9 }: { pfade: LatLng[][]; farbe: string; opacity?: number }) {
+function TrasseNetzwerk({ pfade, farbe, opacity = 0.9, weight = 4 }: { pfade: LatLng[][]; farbe: string; opacity?: number; weight?: number }) {
   const map = useMap()
   useEffect(() => {
     const gueltige = pfade.filter((p) => p.length >= 2)
@@ -257,11 +257,11 @@ function TrasseNetzwerk({ pfade, farbe, opacity = 0.9 }: { pfade: LatLng[][]; fa
     const renderer = L.canvas({ padding: 0.1 })
     const gruppe = L.layerGroup(
       gueltige.map((pfad) =>
-        L.polyline(pfad.map((p) => [p.lat, p.lng] as [number, number]), { color: farbe, weight: 4, opacity, renderer } as L.PolylineOptions)
+        L.polyline(pfad.map((p) => [p.lat, p.lng] as [number, number]), { color: farbe, weight, opacity, renderer } as L.PolylineOptions)
       )
     ).addTo(map)
     return () => { map.removeLayer(gruppe) }
-  }, [pfade, farbe, opacity, map])
+  }, [pfade, farbe, opacity, weight, map])
   return null
 }
 
@@ -437,38 +437,65 @@ const MapView = memo(function MapView({
   // bei Straße/Feldweg, um das ohnehin fragile Drag-Verhalten dort nicht
   // anzufassen.
   const materialProfil = useMemo(() => aktivesMaterialProfil(bundesfoerderung), [bundesfoerderung])
-  // Volles Material (nicht nur die Farbe) pro Segment — Grundlage für die
-  // Kartenfarbe UND die Klick-Info-Box (2026-08-13, Alex: "ich möchte sehen,
-  // welcher Verbund wo langläuft"). null = kein Material zugewiesen (weder
-  // Backbone noch Hausanschlüsse dahinter, sollte bei einer echten Trasse
-  // praktisch nicht vorkommen).
-  const materialProSegment = useMemo((): (MaterialEintrag | null)[] => {
+  // Material pro Segment — Grundlage für die Kartenfarbe UND die Klick-Info-
+  // Box (2026-08-13, Alex: "ich möchte sehen, welcher Verbund wo langläuft").
+  // "haupt" ist das primär gezeigte Material (Kundenanschluss-Stufe, sonst
+  // Backbone), "zusatz" nur gesetzt bei Doppelbelegung (beides trifft zu) —
+  // dann läuft ZUSÄTZLICH das Backbone-Material auf demselben Segment, siehe
+  // Doppelbelegungs-Rendering unten (zwei Linien übereinander statt einer
+  // einzelnen Farbe, sonst wäre auf der Karte gar nicht sichtbar, dass dort
+  // zwei Verbände liegen — Alex-Feedback 2026-08-13).
+  const materialProSegment = useMemo((): Array<{ haupt: MaterialEintrag; zusatz: MaterialEintrag | null } | null> => {
     if (!startpunkt || trassePfade.length === 0) return trassePfade.map(() => null)
     const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
     const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse)
     const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
     return trassePfade.map((_, i) => {
       const bedarf = bedarfProSegment[i] ?? 0
-      if (bedarf > 0) return waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined)
-      if (backbone[i]) return materialProfil.trasse
+      const kunde = bedarf > 0 ? waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined) : null
+      const back = backbone[i] ? materialProfil.trasse : null
+      if (kunde && back) return { haupt: kunde, zusatz: back }
+      if (kunde) return { haupt: kunde, zusatz: null }
+      if (back) return { haupt: back, zusatz: null }
       return null
     })
   }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil])
   const farbeProSegment = useMemo(
-    () => materialProSegment.map((m) => m?.farbe ?? trasseFarbe),
+    () => materialProSegment.map((m) => m?.haupt.farbe ?? trasseFarbe),
     [materialProSegment, trasseFarbe]
   )
 
+  // Einfarbige Segmente (kein Doppelbelegung) — normales, Canvas-optimiertes
+  // Rendering, gruppiert nach Farbe wie bisher.
   const trassePfadeNachFarbeOhneFeldweg = useMemo(() => {
     const gruppen = new Map<string, LatLng[][]>()
     trassePfade.forEach((pfad, i) => {
       if (trassePfadeKinds[i] === 'track') return
+      if (materialProSegment[i]?.zusatz) return // Doppelbelegung, siehe unten
       const farbe = farbeProSegment[i] ?? trasseFarbe
       if (!gruppen.has(farbe)) gruppen.set(farbe, [])
       gruppen.get(farbe)!.push(pfad)
     })
     return [...gruppen.entries()]
-  }, [trassePfade, trassePfadeKinds, farbeProSegment, trasseFarbe])
+  }, [trassePfade, trassePfadeKinds, materialProSegment, farbeProSegment, trasseFarbe])
+
+  // Doppelbelegung: zwei Materialien auf demselben Segment — als zwei
+  // Linien übereinander gerendert (Zusatz-Material breiter dahinter, Haupt-
+  // Material schmaler davor), gruppiert nach Farbpaar. Bewusst KEINE
+  // gestrichelte/Punkt-Strich-Symbolik (von Alex explizit abgelehnt), nur
+  // Farbe + Linienbreite.
+  const trassePfadeDoppelbelegung = useMemo(() => {
+    const gruppen = new Map<string, { hauptFarbe: string; zusatzFarbe: string; pfade: LatLng[][] }>()
+    trassePfade.forEach((pfad, i) => {
+      if (trassePfadeKinds[i] === 'track') return
+      const m = materialProSegment[i]
+      if (!m?.zusatz) return
+      const key = `${m.haupt.farbe}|${m.zusatz.farbe}`
+      if (!gruppen.has(key)) gruppen.set(key, { hauptFarbe: m.haupt.farbe, zusatzFarbe: m.zusatz.farbe, pfade: [] })
+      gruppen.get(key)!.pfade.push(pfad)
+    })
+    return [...gruppen.values()]
+  }, [trassePfade, trassePfadeKinds, materialProSegment])
   const trassePfadeNurFeldweg = useMemo(
     () => trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track'),
     [trassePfade, trassePfadeKinds]
@@ -1149,6 +1176,17 @@ const MapView = memo(function MapView({
           .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
           .filter((a): a is Address => !!a)
         const ANZEIGE_LIMIT = 8
+        const materialZeile = (m: MaterialEintrag, zusatzLabel?: string) => (
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-1.5">
+              <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+              <span className="text-xs text-gray-200">{m.bezeichnungFirma || lrArtLabel(m.lrArt)}{zusatzLabel ? ` (${zusatzLabel})` : ''}</span>
+            </div>
+            <span className="text-[10px] text-gray-500 ml-4.5">
+              {m.anzahl}× {lrArtLabel(m.lrArt)}, Reserve {m.reserve} Röhrchen
+            </span>
+          </div>
+        )
         return (
           <div className="absolute bottom-3 left-64 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
             style={{ backgroundColor: '#1a1a1a', border: `1px solid ${GELB}` }}>
@@ -1157,17 +1195,12 @@ const MapView = memo(function MapView({
               <button onClick={() => setAusgewaehltesSegmentNormal(null)} className="text-xs" style={{ color: '#9ca3af' }}>✕</button>
             </div>
             {material ? (
-              <div className="flex items-center gap-1.5">
-                <span style={{ width: 12, height: 3, borderRadius: 2, background: material.farbe, display: 'inline-block', flexShrink: 0 }} />
-                <span className="text-xs text-gray-200">{material.bezeichnungFirma || lrArtLabel(material.lrArt)}</span>
-              </div>
+              <>
+                {materialZeile(material.haupt)}
+                {material.zusatz && materialZeile(material.zusatz, 'Doppelbelegung')}
+              </>
             ) : (
               <span className="text-xs text-gray-500">Kein Material zugewiesen</span>
-            )}
-            {material && (
-              <span className="text-[10px] text-gray-500">
-                {material.anzahl}× {lrArtLabel(material.lrArt)}, Reserve {material.reserve} Röhrchen
-              </span>
             )}
             <span className="text-[10px] text-gray-500">{hausIds.length} Hausanschluss(e) auf diesem Verbund:</span>
             <div className="flex flex-col gap-0.5">
@@ -1217,6 +1250,16 @@ const MapView = memo(function MapView({
               <>
                 {trassePfadeNachFarbeOhneFeldweg.map(([farbe, pfade]) => (
                   <TrasseNetzwerk key={farbe} pfade={pfade} farbe={farbe} opacity={0.9} />
+                ))}
+                {/* Doppelbelegung: Zusatz-Material breiter dahinter, Haupt-
+                    Material schmaler davor — macht auf der Karte sichtbar,
+                    dass hier zwei Verbände übereinander liegen (Alex,
+                    2026-08-13), statt einer einzelnen, nicht unterscheidbaren Farbe. */}
+                {trassePfadeDoppelbelegung.map(({ hauptFarbe, zusatzFarbe, pfade }, gi) => (
+                  <Fragment key={gi}>
+                    <TrasseNetzwerk pfade={pfade} farbe={zusatzFarbe} opacity={0.95} weight={10} />
+                    <TrasseNetzwerk pfade={pfade} farbe={hauptFarbe} opacity={1} weight={4} />
+                  </Fragment>
                 ))}
                 <TrasseNetzwerk pfade={trassePfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.9} />
                 <TrasseKlickbar pfade={trassePfade} ausgewaehlterIdx={ausgewaehltesSegmentNormal}

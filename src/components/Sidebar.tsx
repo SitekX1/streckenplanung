@@ -92,7 +92,8 @@ function Abschnitt({
     <div>
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between mb-2 group"
+        className="w-full flex items-center justify-between mb-2 px-2 py-1.5 rounded-xl transition-colors group"
+        style={{ backgroundColor: offen ? '#1a1a1a' : 'transparent' }}
       >
         <span className="text-xs font-medium text-gray-500 uppercase tracking-wider group-hover:text-gray-300 transition-colors">
           {titel}
@@ -102,10 +103,18 @@ function Abschnitt({
             <span className="text-[10px] text-gray-500 normal-case tracking-normal">{badge}</span>
           )}
           <span
-            className="text-gray-600 text-[10px] transition-transform inline-block"
-            style={{ transform: offen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+            className="flex items-center justify-center w-5 h-5 rounded-full transition-colors group-hover:bg-gray-700"
+            style={{ backgroundColor: '#262b36' }}
           >
-            ▶
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              className="text-gray-400 transition-transform duration-200"
+              style={{ transform: offen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+            >
+              <path d="M1.5 3.5L5 7L8.5 3.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </span>
         </span>
       </button>
