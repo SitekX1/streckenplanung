@@ -100,6 +100,14 @@ export default function EinstellungenModal({
     })
   }
 
+  const aendereReservePlaetze = (plaetze: number) => {
+    setKatalog((k) => {
+      const naechster = { ...k, mindestReservePlaetze: Math.max(0, plaetze) }
+      speichereMaterialkatalog(naechster)
+      return naechster
+    })
+  }
+
   const materialZeile = (profil: MaterialProfilName, ebene: 'trasse' | 'hausanschluss', label: string) => {
     const eintrag = katalog[profil][ebene]
     return (
@@ -356,7 +364,7 @@ export default function EinstellungenModal({
             Wird pro Projekt automatisch angewendet — je nachdem, ob unten in der Sidebar &bdquo;Bundesförderung&ldquo; aktiviert ist. Die Farbe je Material-Typ (rechts neben der Bezeichnung) bestimmt auch die Einfärbung der Trasse auf der Karte.
           </p>
           <label
-            className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg mb-3 cursor-pointer"
+            className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg mb-2 cursor-pointer"
             style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}
           >
             <input
@@ -368,10 +376,25 @@ export default function EinstellungenModal({
             <span className="flex flex-col gap-0.5">
               <span className="text-xs text-gray-300">Kundenanschluss-Verband auf volle NVT-Kapazität planen</span>
               <span className="text-[10px] text-gray-600">
-                An (Standard): 120er-NVT → 5x 24x7 (= 120 Röhrchen), unabhängig vom aktuellen Bedarf. Aus: nur so viele Röhrchen wie tatsächlich Hausanschlüsse dahinterliegen.
+                An (Standard): richtet sich nach der nominalen NVT-Kapazität statt dem aktuellen Bedarf. Aus: nur so viele Röhrchen wie tatsächlich Hausanschlüsse dahinterliegen. In beiden Fällen gilt die Reserve unten zusätzlich.
               </span>
             </span>
           </label>
+          <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg mb-3"
+            style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
+            <span className="text-xs text-gray-300 flex-1">Mindest-Reserve (freizuhaltende Plätze)</span>
+            <input
+              type="number"
+              min={0}
+              value={katalog.mindestReservePlaetze}
+              onChange={(e) => aendereReservePlaetze(Number(e.target.value) || 0)}
+              className="w-16 px-2 py-1.5 rounded text-sm outline-none text-right"
+              style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
+            />
+          </div>
+          <p className="text-[10px] text-gray-600 -mt-2 mb-3">
+            Wird vor der Stufen-/Bündelwahl auf den Bedarf aufgeschlagen — ein NVT/Verband ist damit nie randvoll bestückt, außer es geht rechnerisch nicht anders.
+          </p>
           <div className="flex flex-col gap-3">
             <div>
               <span className="text-[11px] text-blue-400 font-medium block mb-1.5">Firmenstandard</span>
