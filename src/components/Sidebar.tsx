@@ -68,6 +68,50 @@ function formatMeter(meter: number): string {
   return `${Math.round(meter).toLocaleString('de-DE')} m`
 }
 
+// Einklappbarer Abschnitt: Titel + optionales Badge (nur sichtbar wenn
+// eingeklappt, zeigt eine Kurz-Zusammenfassung ohne den Inhalt aufklappen zu
+// müssen — z.B. Adressenanzahl oder Trassenlänge). Zustand liegt beim
+// Aufrufer (Sidebar selbst), nicht lokal im Abschnitt, damit man den
+// Default-Zustand pro Sektion einzeln steuern kann.
+function Abschnitt({
+  titel,
+  badge,
+  offen,
+  onToggle,
+  children,
+}: {
+  titel: string
+  badge?: string
+  offen: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between mb-2 group"
+      >
+        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider group-hover:text-gray-300 transition-colors">
+          {titel}
+        </span>
+        <span className="flex items-center gap-2">
+          {!offen && badge && (
+            <span className="text-[10px] text-gray-500 normal-case tracking-normal">{badge}</span>
+          )}
+          <span
+            className="text-gray-600 text-[10px] transition-transform inline-block"
+            style={{ transform: offen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+          >
+            ▶
+          </span>
+        </span>
+      </button>
+      {offen && children}
+    </div>
+  )
+}
+
 export default function Sidebar({
   projektName,
   onProjektNameAendern,
@@ -129,6 +173,23 @@ export default function Sidebar({
   const [einstellungenOffen, setEinstellungenOffen] = useState(false)
   const [verlaufOffen, setVerlaufOffen] = useState(false)
 
+  // Einklappbare Sektionen: Default so gewählt, dass der übliche Arbeitsablauf
+  // (Daten laden → Schritte → Auswertung prüfen) offen ist, seltener gebrauchte
+  // Sektionen (Projekt-Verwaltung, NVT, Export) starten eingeklappt — hält die
+  // Sidebar übersichtlich, auch wenn mit wachsendem Funktionsumfang mehr
+  // Sektionen dazukommen.
+  const [offeneSektionen, setOffeneSektionen] = useState<Set<string>>(
+    new Set(['daten', 'schritte', 'auswertung'])
+  )
+  const toggleSektion = (id: string) => {
+    setOffeneSektionen((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   const hatDaten = adressenCount > 0
   const kannTrasseGenerieren = startpunktGesetzt && hatDaten
   const isGeneratingTrasse = trasseProgress > 0 && trasseProgress < 100
@@ -160,8 +221,12 @@ export default function Sidebar({
       <div className="flex-1 px-4 py-4 flex flex-col gap-4">
 
         {/* Sektion: Projekt */}
-        <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Projekt</p>
+        <Abschnitt
+          titel="Projekt"
+          badge={projektName.trim() !== '' && projektName !== 'Neues Projekt' ? projektName : undefined}
+          offen={offeneSektionen.has('projekt')}
+          onToggle={() => toggleSektion('projekt')}
+        >
           <div className="flex flex-col gap-2">
             <input
               type="text"
@@ -240,13 +305,17 @@ export default function Sidebar({
               🗑️ Neu anfangen
             </button>
           </div>
-        </div>
+        </Abschnitt>
 
         <div className="border-t border-gray-800" />
 
         {/* Sektion: Daten */}
-        <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Daten</p>
+        <Abschnitt
+          titel="Daten"
+          badge={hatDaten ? `${adressenCount.toLocaleString('de-DE')} Adr.` : undefined}
+          offen={offeneSektionen.has('daten')}
+          onToggle={() => toggleSektion('daten')}
+        >
           <button
             onClick={() => excelInputRef.current?.click()}
             className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
@@ -312,14 +381,17 @@ export default function Sidebar({
               </div>
             </div>
           )}
-        </div>
+        </Abschnitt>
 
         <div className="border-t border-gray-800" />
 
         {/* Sektion: Schritte */}
-        <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">Schritte</p>
-
+        <Abschnitt
+          titel="Schritte"
+          badge={trasseVorhanden ? formatMeter(gesamtLaenge) : undefined}
+          offen={offeneSektionen.has('schritte')}
+          onToggle={() => toggleSektion('schritte')}
+        >
           {/* Hinweis Bearbeitungsmodus */}
           {editierbarAktiv && (
             <div className="mb-3 px-3 py-2 rounded-lg text-xs"
@@ -489,12 +561,18 @@ export default function Sidebar({
               )}
             </div>
           </div>
-        </div>
+        </Abschnitt>
 
         <div className="border-t border-gray-800" />
 
         {/* Sektion: NVT (dev) */}
-        <div className="flex flex-col gap-1.5">
+        <Abschnitt
+          titel="NVT"
+          badge={nvtStandorteAnzahl > 0 ? `${nvtStandorteAnzahl}` : undefined}
+          offen={offeneSektionen.has('nvt')}
+          onToggle={() => toggleSektion('nvt')}
+        >
+          <div className="flex flex-col gap-1.5">
           <button
             onClick={onNvtButtonKlick}
             disabled={!trasseVorhanden || hausanschluesseCount === 0}
@@ -512,13 +590,18 @@ export default function Sidebar({
               🔄 Hausanschlüsse neu zuweisen
             </button>
           )}
-        </div>
+          </div>
+        </Abschnitt>
 
         <div className="border-t border-gray-800" />
 
         {/* Sektion: Auswertung */}
-        <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">📏 Auswertung</p>
+        <Abschnitt
+          titel="📏 Auswertung"
+          badge={trasseVorhanden ? formatMeter(gesamtLaenge) : undefined}
+          offen={offeneSektionen.has('auswertung')}
+          onToggle={() => toggleSektion('auswertung')}
+        >
           <div className="rounded-xl p-3 flex flex-col gap-2" style={{ backgroundColor: '#1a1a1a' }}>
             <div className="flex justify-between items-center">
               <span className="text-xs text-gray-500">Trasse</span>
@@ -553,13 +636,16 @@ export default function Sidebar({
           >
             💰 Kalkulation
           </button>
-        </div>
+        </Abschnitt>
 
         <div className="border-t border-gray-800" />
 
         {/* Sektion: Export */}
-        <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Export</p>
+        <Abschnitt
+          titel="Export"
+          offen={offeneSektionen.has('export')}
+          onToggle={() => toggleSektion('export')}
+        >
           <div className="flex flex-col gap-2">
             <button
               onClick={onKMLExport}
@@ -576,7 +662,7 @@ export default function Sidebar({
               🗺️ Shapefile exportieren
             </button>
           </div>
-        </div>
+        </Abschnitt>
 
       </div>
 
