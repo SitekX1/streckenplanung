@@ -149,22 +149,21 @@ export function berechneHausanschlussAnzahlProSegment(
   return berechneLastProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, (hausIds) => hausIds.length)
 }
 
-// Bestimmt pro Trasse-Segment, ob es eine echte NVT-zu-NVT- (oder
-// Schacht-zu-Schacht-/gemischte) Verbindung darstellt — nur dort gehört das
-// feste Backbone-Material hin (2026-08-12, Alex: "nicht jede Trasse braucht
-// zwei Leerrohrsegmente, es kommt darauf an ob eine SV/NVT-zu-NVT-Verbindung
-// da ist"). Ein Segment gilt als Backbone, wenn auf dem Pfad vom Startpunkt
-// aus VOR diesem Segment bereits ein NVT/Schacht liegt UND HINTER diesem
-// Segment (im Teilbaum) noch mindestens ein weiterer NVT/Schacht folgt —
-// reine Zuführungen vom Start zum allerersten Verteiler sowie Stiche hinter
-// dem letzten Verteiler (nur noch Hausanschlüsse, kein weiterer Verteiler)
-// zählen NICHT als Backbone, nur der jeweilige Kundenanschluss-Sammelverband
-// läuft dort (siehe berechneHausanschlussAnzahlProSegment).
-//
-// Bekannte Annahme (noch nicht von Alex bestätigt): die allererste
-// Zuführung vom Start/PoP zum ersten Verteiler zählt NICHT als "NVT-zu-NVT"
-// und bekommt daher kein Backbone-Material — falls das nicht stimmt, muss
-// hier nachgebessert werden.
+// Bestimmt pro Trasse-Segment, ob es eine echte Backbone-Verbindung
+// darstellt (Startpunkt-zu-Verteiler oder Verteiler-zu-Verteiler) — nur dort
+// gehört das feste Backbone-Material hin (2026-08-12, Alex: "nicht jede
+// Trasse braucht zwei Leerrohrsegmente, es kommt darauf an ob eine
+// SV/NVT-zu-NVT-Verbindung da ist"; klargestellt: "vom Startpunkt bis zum
+// nächstliegenden NVT ist immer Backbone", der Startpunkt zählt hier also
+// selbst als Verteiler-Ende — daher unten mit in verteilerKnoten
+// aufgenommen). Ein Segment gilt als Backbone, wenn auf dem Pfad vom
+// Startpunkt aus VOR diesem Segment bereits ein Verteiler (Start, NVT oder
+// Schacht) liegt UND HINTER diesem Segment (im Teilbaum) noch mindestens ein
+// weiterer NVT/Schacht folgt — nur Stiche HINTER dem letzten Verteiler (nur
+// noch Hausanschlüsse, kein weiterer Verteiler mehr) zählen NICHT als
+// Backbone, dort läuft nur noch der Kundenanschluss-Sammelverband (siehe
+// berechneHausanschlussAnzahlProSegment) — ggf. überlagert mit dem Backbone
+// auf Segmenten, wo beides zutrifft (Doppelbelegung).
 export function ermittleBackboneSegmente(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
@@ -180,7 +179,10 @@ export function ermittleBackboneSegmente(
 
   const { dist: distVomStart, prev } = dijkstraVon(graph, startKnoten)
 
-  const verteilerKnoten = new Set<string>()
+  // Startpunkt zählt selbst als Verteiler-Ende (siehe Erklärung oben) —
+  // dadurch ist automatisch jede Zuführung vom Start zum jeweils
+  // nächstliegenden NVT/Schacht auf jedem abgehenden Ast Backbone.
+  const verteilerKnoten = new Set<string>([startKnoten])
   for (const nvt of nvtStandorte) {
     const k = naechsterKnoten(graph, nvt.position)
     if (k) verteilerKnoten.add(k)
