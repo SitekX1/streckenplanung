@@ -148,3 +148,89 @@ export function berechneHausanschlussAnzahlProSegment(
 ): number[] {
   return berechneLastProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, (hausIds) => hausIds.length)
 }
+
+// Bestimmt pro Trasse-Segment, ob es eine echte NVT-zu-NVT- (oder
+// Schacht-zu-Schacht-/gemischte) Verbindung darstellt — nur dort gehört das
+// feste Backbone-Material hin (2026-08-12, Alex: "nicht jede Trasse braucht
+// zwei Leerrohrsegmente, es kommt darauf an ob eine SV/NVT-zu-NVT-Verbindung
+// da ist"). Ein Segment gilt als Backbone, wenn auf dem Pfad vom Startpunkt
+// aus VOR diesem Segment bereits ein NVT/Schacht liegt UND HINTER diesem
+// Segment (im Teilbaum) noch mindestens ein weiterer NVT/Schacht folgt —
+// reine Zuführungen vom Start zum allerersten Verteiler sowie Stiche hinter
+// dem letzten Verteiler (nur noch Hausanschlüsse, kein weiterer Verteiler)
+// zählen NICHT als Backbone, nur der jeweilige Kundenanschluss-Sammelverband
+// läuft dort (siehe berechneHausanschlussAnzahlProSegment).
+//
+// Bekannte Annahme (noch nicht von Alex bestätigt): die allererste
+// Zuführung vom Start/PoP zum ersten Verteiler zählt NICHT als "NVT-zu-NVT"
+// und bekommt daher kein Backbone-Material — falls das nicht stimmt, muss
+// hier nachgebessert werden.
+export function ermittleBackboneSegmente(
+  trassePfade: LatLng[][],
+  startpunkt: LatLng,
+  nvtStandorte: NvtStandort[],
+  schachtStandorte: SchachtStandort[]
+): boolean[] {
+  const leer = trassePfade.map(() => false)
+  if (trassePfade.length === 0) return leer
+
+  const graph = baueGraph(trassePfade)
+  const startKnoten = naechsterKnoten(graph, startpunkt)
+  if (!startKnoten) return leer
+
+  const { dist: distVomStart, prev } = dijkstraVon(graph, startKnoten)
+
+  const verteilerKnoten = new Set<string>()
+  for (const nvt of nvtStandorte) {
+    const k = naechsterKnoten(graph, nvt.position)
+    if (k) verteilerKnoten.add(k)
+  }
+  for (const schacht of schachtStandorte) {
+    const k = naechsterKnoten(graph, schacht.position)
+    if (k) verteilerKnoten.add(k)
+  }
+
+  // Bottom-up: welche Kanten haben mindestens einen Verteiler in ihrem
+  // Teilbaum (= "danach kommt noch ein NVT/Schacht")?
+  const kanteHatVerteilerDahinter = new Set<string>()
+  for (const verteiler of verteilerKnoten) {
+    if (!distVomStart.has(verteiler)) continue
+    let cur = verteiler
+    while (prev.has(cur)) {
+      const vor = prev.get(cur)!
+      kanteHatVerteilerDahinter.add(cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`)
+      cur = vor
+    }
+  }
+
+  // Top-down: liegt vor einem Knoten (Richtung Start) bereits ein Verteiler?
+  const vorgelagerterVerteiler = new Map<string, boolean>([[startKnoten, false]])
+  const knotenNachDistanzSortiert = [...distVomStart.keys()].sort(
+    (a, b) => (distVomStart.get(a) ?? 0) - (distVomStart.get(b) ?? 0)
+  )
+  for (const knoten of knotenNachDistanzSortiert) {
+    if (knoten === startKnoten) continue
+    const vor = prev.get(knoten)
+    if (vor === undefined) continue
+    vorgelagerterVerteiler.set(knoten, (vorgelagerterVerteiler.get(vor) ?? false) || verteilerKnoten.has(vor))
+  }
+
+  const r = (v: number) => Math.round(v * 100000) / 100000
+  const knotenKeyVon = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+
+  return trassePfade.map((pfad) => {
+    if (pfad.length < 2) return false
+    for (let i = 0; i < pfad.length - 1; i++) {
+      const a = knotenKeyVon(pfad[i])
+      const b = knotenKeyVon(pfad[i + 1])
+      const distA = distVomStart.get(a) ?? 0
+      const distB = distVomStart.get(b) ?? 0
+      const vorKnoten = distA <= distB ? a : b
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`
+      const nvtVor = (vorgelagerterVerteiler.get(vorKnoten) ?? false) || verteilerKnoten.has(vorKnoten)
+      const nvtNach = kanteHatVerteilerDahinter.has(key)
+      if (nvtVor && nvtNach) return true
+    }
+    return false
+  })
+}

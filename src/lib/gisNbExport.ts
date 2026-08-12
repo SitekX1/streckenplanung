@@ -2,7 +2,12 @@ import JSZip from 'jszip'
 import { Projekt } from './types'
 import { ermittleZuordnungen } from './nvt'
 import { aktivesMaterialProfil, waehleKundenanschlussStufe, MaterialEintrag } from './materialkatalog'
-import { berechneFaserbedarfProSegment, berechneHausanschlussAnzahlProSegment, passendesKabel } from './faserdimensionierung'
+import {
+  berechneFaserbedarfProSegment,
+  berechneHausanschlussAnzahlProSegment,
+  ermittleBackboneSegmente,
+  passendesKabel,
+} from './faserdimensionierung'
 import { layerHinzufuegen, layerHinzufuegenLinien, GEMEINSAMER_ORDNER, segmentLaenge } from './shapefileExport'
 import { baueRohrbelegungCsv } from './rohrbelegung'
 
@@ -122,14 +127,15 @@ function materialEigenschaften(m: MaterialEintrag) {
   }
 }
 
-// Leerrohre: PRO Trasse-Segment ZWEI Linien übereinander (Doppelbelegung,
-// von Alex bestätigt 2026-08-12: NVT-zu-NVT-Segmente führen sowohl einen
-// festen Backbone-Verband als auch einen Kundenanschluss-Sammelverband) —
-// der feste "trasse"-Verband aus dem Profil (7x14 bzw. 4x20/2x20) PLUS ein
-// dynamisch dimensionierter Kundenanschluss-Sammelverband, dessen Größe sich
-// nach der Anzahl der über dieses Segment versorgten Hausanschlüsse richtet
-// (kleiner werdend Richtung Stichenden/hinter Gabelungen — siehe
-// berechneHausanschlussAnzahlProSegment). Dazu je eine Linie pro
+// Leerrohre: NUR auf echten NVT-zu-NVT-/Schacht-Verbindungssegmenten läuft
+// der feste Backbone-Verband (7x14 bzw. 4x20/2x20, siehe
+// ermittleBackboneSegmente) — auf reinen Zuführungen/Stichen ohne
+// dahinterliegenden zweiten Verteiler NICHT (von Alex korrigiert
+// 2026-08-12: "nicht jede Trasse braucht zwei Leerrohrsegmente"). Zusätzlich
+// (Doppelbelegung, wo beides zutrifft) läuft auf jedem Segment mit
+// Hausanschlüssen dahinter ein dynamisch dimensionierter Kundenanschluss-
+// Sammelverband — kleiner werdend Richtung Stichenden/hinter Gabelungen
+// (siehe berechneHausanschlussAnzahlProSegment). Dazu je eine Linie pro
 // Hausanschluss-Stich (Ebene "hausanschluss", Hauszuführung zum Haus).
 function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
   const profil = aktivesMaterialProfil(projekt.bundesfoerderung)
@@ -137,31 +143,34 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
   let id = 1
   const features: GeoJSON.Feature[] = []
 
+  const nvtStandorte = projekt.nvtStandorte ?? []
+  const schachtStandorte = projekt.schachtStandorte ?? []
   const hausanschlussAnzahlProSegment =
     projekt.startpunkt != null
-      ? berechneHausanschlussAnzahlProSegment(
-          trassePfade,
-          projekt.startpunkt,
-          projekt.nvtStandorte ?? [],
-          projekt.schachtStandorte ?? []
-        )
+      ? berechneHausanschlussAnzahlProSegment(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
       : trassePfade.map(() => 0)
+  const backboneProSegment =
+    projekt.startpunkt != null
+      ? ermittleBackboneSegmente(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
+      : trassePfade.map(() => false)
 
   trassePfade.forEach((pfad, i) => {
     if (pfad.length < 2) return
     const laenge = Math.round(segmentLaenge(pfad) * 10) / 10
     const coords = pfad.map((p) => [p.lng, p.lat])
 
-    features.push({
-      type: 'Feature',
-      geometry: { type: 'LineString', coordinates: coords },
-      properties: {
-        id: id++,
-        ...materialEigenschaften(profil.trasse),
-        lae_lr: laenge,
-        zustand: 2, // Leerrohre: 2 = Neubau (Codes hier ANDERS als bei Verbindungen/Bauten!)
-      },
-    })
+    if (backboneProSegment[i]) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: coords },
+        properties: {
+          id: id++,
+          ...materialEigenschaften(profil.trasse),
+          lae_lr: laenge,
+          zustand: 2, // Leerrohre: 2 = Neubau (Codes hier ANDERS als bei Verbindungen/Bauten!)
+        },
+      })
+    }
 
     const anzahlDahinter = hausanschlussAnzahlProSegment[i] ?? 0
     if (anzahlDahinter > 0) {
