@@ -2,6 +2,13 @@
 
 import { useRef, useState } from 'react'
 import { Firmendaten, ladeFirmendaten, speichereFirmendaten } from '../lib/firmendaten'
+import {
+  LR_ART_KATALOG,
+  MaterialEintrag,
+  MaterialProfilName,
+  ladeMaterialkatalog,
+  speichereMaterialkatalog,
+} from '../lib/materialkatalog'
 
 interface EinstellungenModalProps {
   adressFarbe: string
@@ -63,6 +70,79 @@ export default function EinstellungenModal({
     speichereFirmendaten(firmendaten)
     setGespeichert(true)
     setTimeout(() => setGespeichert(false), 1800)
+  }
+
+  // Materialkatalog: zwei Profile (Firmenstandard / Bundesförderung), je mit
+  // Trasse- und Hausanschluss-Material — geräteweit gespeichert, live bei
+  // jeder Änderung (wie die Kalkulations-Preise), kein separater Speichern-
+  // Klick nötig, da hier nur Zahlen/Auswahl ohne Tipp-Risiko wie bei Freitext.
+  const [katalog, setKatalog] = useState(ladeMaterialkatalog)
+  const aktualisiereMaterial = (
+    profil: MaterialProfilName,
+    ebene: 'trasse' | 'hausanschluss',
+    aenderung: Partial<MaterialEintrag>
+  ) => {
+    setKatalog((k) => {
+      const naechster = {
+        ...k,
+        [profil]: { ...k[profil], [ebene]: { ...k[profil][ebene], ...aenderung } },
+      }
+      speichereMaterialkatalog(naechster)
+      return naechster
+    })
+  }
+
+  const materialZeile = (profil: MaterialProfilName, ebene: 'trasse' | 'hausanschluss', label: string) => {
+    const eintrag = katalog[profil][ebene]
+    return (
+      <div className="flex flex-col gap-1.5 rounded-lg p-2.5" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
+        <span className="text-xs text-gray-400">{label}</span>
+        <input
+          type="text"
+          value={eintrag.bezeichnungFirma}
+          onChange={(e) => aktualisiereMaterial(profil, ebene, { bezeichnungFirma: e.target.value })}
+          placeholder="Bezeichnung (z.B. 24x7)"
+          className="px-2.5 py-1.5 rounded text-sm outline-none"
+          style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
+        />
+        <select
+          value={eintrag.lrArt}
+          onChange={(e) => aktualisiereMaterial(profil, ebene, { lrArt: Number(e.target.value) })}
+          className="px-2.5 py-1.5 rounded text-xs outline-none"
+          style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
+        >
+          {LR_ART_KATALOG.map((e) => (
+            <option key={e.code} value={e.code}>{e.code} — {e.label}</option>
+          ))}
+        </select>
+        <div className="grid grid-cols-3 gap-1.5">
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-gray-500">Röhrchen/Verb.</span>
+            <input type="number" min={0} value={eintrag.lrAnzahl}
+              onChange={(e) => aktualisiereMaterial(profil, ebene, { lrAnzahl: Number(e.target.value) || 0 })}
+              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+          </label>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-gray-500">Verbände</span>
+            <input type="number" min={0} value={eintrag.anzahl}
+              onChange={(e) => aktualisiereMaterial(profil, ebene, { anzahl: Number(e.target.value) || 0 })}
+              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+          </label>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-gray-500">Reserve</span>
+            <input type="number" min={0} value={eintrag.reserve}
+              onChange={(e) => aktualisiereMaterial(profil, ebene, { reserve: Number(e.target.value) || 0 })}
+              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+          </label>
+        </div>
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] text-gray-500">Materialpreis €/m</span>
+          <input type="number" min={0} value={eintrag.preisProMeter}
+            onChange={(e) => aktualisiereMaterial(profil, ebene, { preisProMeter: Number(e.target.value) || 0 })}
+            className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+        </label>
+      </div>
+    )
   }
 
   const handleLogoDatei = async (file: File) => {
@@ -206,6 +286,30 @@ export default function EinstellungenModal({
               </div>
             ))}
           </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Materialkatalog</p>
+          <p className="text-xs text-gray-600 mb-2.5">
+            Wird pro Projekt automatisch angewendet — je nachdem, ob unten in der Sidebar &bdquo;Bundesförderung&ldquo; aktiviert ist.
+          </p>
+          <div className="flex flex-col gap-3">
+            <div>
+              <span className="text-[11px] text-blue-400 font-medium block mb-1.5">Firmenstandard</span>
+              <div className="flex flex-col gap-2">
+                {materialZeile('firma', 'trasse', 'Trasse')}
+                {materialZeile('firma', 'hausanschluss', 'Hausanschluss')}
+              </div>
+            </div>
+            <div>
+              <span className="text-[11px] text-amber-400 font-medium block mb-1.5">Bundesförderung (GIS-NB-Minimum)</span>
+              <div className="flex flex-col gap-2">
+                {materialZeile('foerderung', 'trasse', 'Trasse')}
+                {materialZeile('foerderung', 'hausanschluss', 'Hausanschluss')}
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-gray-600 mt-2">Änderungen werden sofort geräteweit gespeichert.</p>
         </div>
       </div>
     </div>

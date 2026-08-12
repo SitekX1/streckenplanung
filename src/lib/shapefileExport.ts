@@ -3,14 +3,16 @@ import JSZip from 'jszip'
 import { Projekt } from './types'
 import { ermittleZuordnungen } from './nvt'
 
-// Identischer WKT-String, den @mapbox/shp-write intern per Default für .prj
-// verwendet (src/prj.js) — hier dupliziert, damit layerHinzufuegenLinien()
-// (die den High-Level-Weg umgeht) exakt dieselbe Projektion schreibt wie
-// layerHinzufuegen() für die Punkt-Layer.
-const WGS84_PRJ =
-  'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]'
+// ETRS89 (EPSG:4258) statt WGS84 — von den GIS-Nebenbestimmungen des Bundes
+// (Version 5.1, §1.2 "Georeferenzierung: Koordinatenreferenzsystem ETRS89
+// (EPSG:4258)") explizit vorgeschrieben, verifiziert gegen eine echte
+// Planer-Abgabe (identischer WKT-String in deren .prj-Dateien). Die
+// Koordinatenwerte selbst ändern sich praktisch nicht (ETRS89/WGS84 driften
+// nur um wenige Zentimeter), aber die deklarierte Projektion muss stimmen.
+const ETRS89_PRJ =
+  'GEOGCS["ETRS89",DATUM["D_ETRS_1989",SPHEROID["GRS_1980",6378137,298.257222101]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]'
 
-function segmentLaenge(pts: { lat: number; lng: number }[]): number {
+export function segmentLaenge(pts: { lat: number; lng: number }[]): number {
   let total = 0
   for (let i = 0; i < pts.length - 1; i++) {
     const dLat = (pts[i + 1].lat - pts[i].lat) * 111_000
@@ -24,7 +26,7 @@ function segmentLaenge(pts: { lat: number; lng: number }[]): number {
 // nebeneinander liegen (kein Unterordner pro Layer) — einfacher für den
 // Import in QGIS/Tanis: einmal entpacken/reinziehen, alle .shp direkt sichtbar,
 // unterscheidbar allein am Dateinamen (Adressen.shp, Trasse.shp, ...).
-const GEMEINSAMER_ORDNER = 'Shapefile'
+export const GEMEINSAMER_ORDNER = 'Shapefile'
 
 // Baut aus einem Punkt-FeatureCollection einen eigenen Shapefile-Layer
 // (shp/shx/dbf/prj) und hängt ihn in den gemeinsamen Ordner im übergebenen
@@ -32,7 +34,7 @@ const GEMEINSAMER_ORDNER = 'Shapefile'
 // das wird hier per JSZip.loadAsync() wieder "ausgepackt" und umgehängt,
 // damit am Ende EIN Download mit allen Layern entsteht statt vier einzelnen
 // Zip-Dateien.
-async function layerHinzufuegen(
+export async function layerHinzufuegen(
   outerZip: JSZip,
   ordner: string,
   geojson: GeoJSON.FeatureCollection
@@ -42,6 +44,7 @@ async function layerHinzufuegen(
     folder: ordner,
     outputType: 'arraybuffer',
     compression: 'DEFLATE',
+    prj: ETRS89_PRJ,
   })
   const innerZip = await JSZip.loadAsync(buffer)
   for (const [pfad, datei] of Object.entries(innerZip.files)) {
@@ -66,7 +69,7 @@ async function layerHinzufuegen(
 // (Anzahl SHP-Records vor/nach Fix). Die Low-Level-write()-Funktion umgeht
 // genau diesen einen fehlerhaften Vorverarbeitungsschritt und erzeugt korrekt
 // ein Record pro Feature.
-async function layerHinzufuegenLinien(
+export async function layerHinzufuegenLinien(
   outerZip: JSZip,
   ordner: string,
   geojson: GeoJSON.FeatureCollection
@@ -87,10 +90,17 @@ async function layerHinzufuegenLinien(
   outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.shp`, dateien.shp.buffer)
   outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.shx`, dateien.shx.buffer)
   outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.dbf`, dateien.dbf.buffer)
-  outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.prj`, WGS84_PRJ)
+  outerZip.file(`${GEMEINSAMER_ORDNER}/${ordner}.prj`, ETRS89_PRJ)
 }
 
 export async function exportShapefile(projekt: Projekt): Promise<void> {
+  // Bundesförderung: eigenes, gesetzlich vorgegebenes Schema (GIS-NB) statt
+  // des freien Firmen-Layouts — siehe gisNbExport.ts.
+  if (projekt.bundesfoerderung) {
+    const { exportShapefileGisNb } = await import('./gisNbExport')
+    return exportShapefileGisNb(projekt)
+  }
+
   const outerZip = new JSZip()
 
   const adressenFc: GeoJSON.FeatureCollection = {

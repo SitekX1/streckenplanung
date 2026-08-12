@@ -16,12 +16,12 @@ function haversine(a: LatLng, b: LatLng): number {
 const rundung = (v: number) => Math.round(v * 100000) / 100000
 const knotenKey = (p: LatLng) => `${rundung(p.lat)},${rundung(p.lng)}`
 
-interface Knoten {
+export interface Knoten {
   coord: LatLng
   nachbarn: Array<{ zu: string; dist: number }>
 }
 
-function baueGraph(trassePfade: LatLng[][]): Map<string, Knoten> {
+export function baueGraph(trassePfade: LatLng[][]): Map<string, Knoten> {
   const graph = new Map<string, Knoten>()
   function knoten(p: LatLng): string {
     const k = knotenKey(p)
@@ -42,7 +42,7 @@ function baueGraph(trassePfade: LatLng[][]): Map<string, Knoten> {
 
 // Lineare Suche reicht — läuft nur einmalig pro Nutzer-Klick auf "NVT
 // generieren", nicht in einer heißen Schleife wie beim OSM-Routing.
-function naechsterKnoten(graph: Map<string, Knoten>, coord: LatLng): string | null {
+export function naechsterKnoten(graph: Map<string, Knoten>, coord: LatLng): string | null {
   let bestKey: string | null = null
   let bestDist = Infinity
   for (const [key, k] of graph) {
@@ -56,7 +56,7 @@ function naechsterKnoten(graph: Map<string, Knoten>, coord: LatLng): string | nu
 // (für Pfad-Rekonstruktion). Einfache lineare Prioritätssuche: pro Dorf sind
 // das üblicherweise einige hundert Knoten, nicht die zehntausende eines
 // OSM-Straßennetzes — ein Min-Heap lohnt den Zusatzaufwand hier nicht.
-function dijkstraVon(graph: Map<string, Knoten>, start: string): { dist: Map<string, number>; prev: Map<string, string> } {
+export function dijkstraVon(graph: Map<string, Knoten>, start: string): { dist: Map<string, number>; prev: Map<string, string> } {
   const dist = new Map<string, number>([[start, 0]])
   const prev = new Map<string, string>()
   const visited = new Set<string>()

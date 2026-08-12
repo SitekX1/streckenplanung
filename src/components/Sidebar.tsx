@@ -8,6 +8,8 @@ import EinstellungenModal from './EinstellungenModal'
 interface SidebarProps {
   projektName: string
   onProjektNameAendern: (name: string) => void
+  bundesfoerderung: boolean
+  onBundesfoerderungAendern: (aktiv: boolean) => void
   adressenCount: number
   gefilterteAdressenAnzahl: number
   neueAdressenOhneHsAnzahl: number
@@ -115,6 +117,8 @@ function Abschnitt({
 export default function Sidebar({
   projektName,
   onProjektNameAendern,
+  bundesfoerderung,
+  onBundesfoerderungAendern,
   adressenCount,
   gefilterteAdressenAnzahl,
   neueAdressenOhneHsAnzahl,
@@ -236,6 +240,22 @@ export default function Sidebar({
               className="w-full px-3 py-2 rounded-lg text-sm outline-none"
               style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
             />
+            <label
+              className="flex items-center justify-between px-3 py-2 rounded-lg text-sm cursor-pointer"
+              style={{
+                backgroundColor: bundesfoerderung ? '#3f2d0a' : '#1a1a1a',
+                border: `1px solid ${bundesfoerderung ? '#d97706' : '#262b36'}`,
+              }}
+              title="Steuert GIS-NB-Export-Schema (statt freiem Layout) und welches Materialkatalog-Profil angewendet wird"
+            >
+              <span style={{ color: bundesfoerderung ? '#fbbf24' : '#9ca3af' }}>🏛️ Bundesförderung</span>
+              <input
+                type="checkbox"
+                checked={bundesfoerderung}
+                onChange={(e) => onBundesfoerderungAendern(e.target.checked)}
+                className="accent-amber-500 w-4 h-4"
+              />
+            </label>
             <button
               onClick={() => projektLadenRef.current?.click()}
               className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
@@ -672,8 +692,10 @@ export default function Sidebar({
           strasseLaenge={strasseLaenge}
           feldwegLaenge={feldwegLaenge}
           hausanschluesseCount={hausanschluesseCount}
+          hausanschlussLaenge={hausanschlussLaenge}
           nvtAnzahl={nvtStandorteAnzahl}
           schachtAnzahl={schachtStandorteAnzahl}
+          bundesfoerderung={bundesfoerderung}
           onClose={() => setKalkulationOffen(false)}
         />
       )}

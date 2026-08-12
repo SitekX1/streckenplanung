@@ -203,6 +203,10 @@ export default function Home() {
   const [editierbarAktiv, setEditierbarAktiv] = useState(false)
   const [trasseMethode, setTrasseMethode] = useState('')
   const [projektName, setProjektName] = useState('Neues Projekt')
+  // Bundesförderung: steuert GIS-NB-Export-Schema + Materialkatalog-Profil
+  // (siehe gisNbExport.ts/materialkatalog.ts) — Projekt-Eigenschaft, nicht
+  // geräteweit, da eine Firma parallel geförderte und private Projekte plant.
+  const [bundesfoerderung, setBundesfoerderung] = useState(false)
   const [adressFarbe, setAdressFarbe] = useState('#22c55e')
   const [trasseFarbe, setTrasseFarbe] = useState('#3b82f6')
   const [hausanschlussfarbe, setHausanschlussfarbe] = useState('#ef4444')
@@ -630,6 +634,7 @@ export default function Home() {
     setSchachtStandorte([])
     setSchachtSetzenAktiv(false)
     setProjektName('Neues Projekt')
+    setBundesfoerderung(false)
   }, [])
 
   const handleAussiedlerhofToggle = useCallback((uuid: string) => {
@@ -900,8 +905,9 @@ export default function Home() {
       trassePfadeKinds: trassePfadeKinds.length > 0 ? trassePfadeKinds : undefined,
       nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
       schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
+      bundesfoerderung,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, schachtStandorte])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, schachtStandorte, bundesfoerderung])
 
   const handleProjektSpeichern = useCallback(() => {
     exportProjekt({
@@ -919,12 +925,14 @@ export default function Home() {
       aussiedlerhofUuids: aussiedlerhofUuids.size > 0 ? [...aussiedlerhofUuids] : undefined,
       schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
       aktiveOrteKeys,
+      bundesfoerderung,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, aktiveOrteKeys])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, aktiveOrteKeys, bundesfoerderung])
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
     setProjektName(projekt.name)
+    setBundesfoerderung(projekt.bundesfoerderung ?? false)
     setAdressen(projekt.adressen)
     setStartpunkt(projekt.startpunkt)
     setTrasse(projekt.trasse)
@@ -988,6 +996,8 @@ export default function Home() {
       <Sidebar
         projektName={projektName}
         onProjektNameAendern={setProjektName}
+        bundesfoerderung={bundesfoerderung}
+        onBundesfoerderungAendern={setBundesfoerderung}
         adressenCount={adressen.length}
         gefilterteAdressenAnzahl={gefilterteAdressenAnzahl}
         neueAdressenOhneHsAnzahl={neueAdressenOhneHsAnzahl}

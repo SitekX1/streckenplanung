@@ -3,14 +3,17 @@
 import { useEffect, useState } from 'react'
 import { exportKalkulationPdf } from '../lib/kalkulationPdfExport'
 import { ladeFirmendaten } from '../lib/firmendaten'
+import { aktivesMaterialProfil, lrArtLabel } from '../lib/materialkatalog'
 
 interface KalkulationModalProps {
   projektName: string
   strasseLaenge: number
   feldwegLaenge: number
   hausanschluesseCount: number
+  hausanschlussLaenge: number
   nvtAnzahl: number
   schachtAnzahl: number
+  bundesfoerderung: boolean
   onClose: () => void
 }
 
@@ -51,8 +54,13 @@ function formatEuro(betrag: number): string {
 }
 
 export default function KalkulationModal({
-  projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, nvtAnzahl, schachtAnzahl, onClose,
+  projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, hausanschlussLaenge, nvtAnzahl, schachtAnzahl, bundesfoerderung, onClose,
 }: KalkulationModalProps) {
+  // Material-Leerrohrpreise (nicht Verlegekosten — die stehen separat oben)
+  // kommen aus dem geräteweiten Materialkatalog, je nach Projekt-Schalter
+  // "Bundesförderung" das passende Profil (siehe EinstellungenModal.tsx).
+  const materialProfil = aktivesMaterialProfil(bundesfoerderung)
+  const trassenLaengeGesamt = strasseLaenge + feldwegLaenge
   // Preise sind geräteweit gespeichert (nicht Teil des Projekts) — die
   // Sätze eurer Firma ändern sich kaum von Projekt zu Projekt, im
   // Gegensatz zu den Streckenlängen/Stückzahlen selbst. Lazy-Initializer
@@ -101,7 +109,11 @@ export default function KalkulationModal({
   const sonderpositionSumme = preise.sonderpositionAnzahl * preise.sonderpositionPreis
   const nvtSumme = nvtAnzahl * preise.nvtPreis
   const schachtSumme = schachtAnzahl * preise.schachtPreis
-  const gesamt = strasseSumme + feldwegSumme + hausanschlussSumme + sonderpositionSumme + nvtSumme + schachtSumme
+  const materialTrasseSumme = trassenLaengeGesamt * materialProfil.trasse.preisProMeter
+  const materialHausanschlussSumme = hausanschlussLaenge * materialProfil.hausanschluss.preisProMeter
+  const gesamt =
+    strasseSumme + feldwegSumme + hausanschlussSumme + sonderpositionSumme + nvtSumme + schachtSumme +
+    materialTrasseSumme + materialHausanschlussSumme
 
   const handlePdfExport = () => {
     const zeilen = [
@@ -116,6 +128,12 @@ export default function KalkulationModal({
         : []),
       ...(schachtAnzahl > 0
         ? [{ label: 'Schacht', menge: `${schachtAnzahl} Stk.`, einzelpreis: `${preise.schachtPreis} €/Stk.`, summe: schachtSumme }]
+        : []),
+      ...(materialProfil.trasse.preisProMeter > 0
+        ? [{ label: `Material Trasse (${materialProfil.trasse.bezeichnungFirma})`, menge: `${Math.round(trassenLaengeGesamt)} m`, einzelpreis: `${materialProfil.trasse.preisProMeter} €/m`, summe: materialTrasseSumme }]
+        : []),
+      ...(materialProfil.hausanschluss.preisProMeter > 0
+        ? [{ label: `Material Hausanschluss (${materialProfil.hausanschluss.bezeichnungFirma})`, menge: `${Math.round(hausanschlussLaenge)} m`, einzelpreis: `${materialProfil.hausanschluss.preisProMeter} €/m`, summe: materialHausanschlussSumme }]
         : []),
     ]
     const firmendaten = ladeFirmendaten()
@@ -208,6 +226,22 @@ export default function KalkulationModal({
             </>
           ))}
 
+          {sektion(`🧵 Material${bundesfoerderung ? ' (Bundesförderung)' : ''}`, (
+            <>
+              <div className="col-span-2 flex flex-col gap-1">
+                <span className="text-xs text-gray-400">
+                  Trasse: {materialProfil.trasse.bezeichnungFirma} · {lrArtLabel(materialProfil.trasse.lrArt)}
+                </span>
+                <span className="text-xs text-gray-400">
+                  Hausanschluss: {materialProfil.hausanschluss.bezeichnungFirma} · {lrArtLabel(materialProfil.hausanschluss.lrArt)}
+                </span>
+                <span className="text-xs text-gray-600">
+                  Preise (€/m) unter ⚙️ Einstellungen → Materialkatalog hinterlegen.
+                </span>
+              </div>
+            </>
+          ))}
+
           <div className="rounded-xl p-4 flex flex-col mt-1" style={{ backgroundColor: '#0f1216', border: '1px solid #262b36' }}>
             {zeile('Befestigte Oberfläche', `${Math.round(strasseLaenge)} m`, strasseSumme)}
             {zeile('Unbefestigte Oberfläche', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
@@ -215,6 +249,8 @@ export default function KalkulationModal({
             {preise.sonderpositionAnzahl > 0 && zeile('Sonderposition', `${preise.sonderpositionAnzahl} Stk.`, sonderpositionSumme)}
             {nvtAnzahl > 0 && zeile('NVT', `${nvtAnzahl} Stk.`, nvtSumme)}
             {schachtAnzahl > 0 && zeile('Schacht', `${schachtAnzahl} Stk.`, schachtSumme)}
+            {materialTrasseSumme > 0 && zeile(`Material Trasse`, `${Math.round(trassenLaengeGesamt)} m`, materialTrasseSumme)}
+            {materialHausanschlussSumme > 0 && zeile(`Material Hausanschluss`, `${Math.round(hausanschlussLaenge)} m`, materialHausanschlussSumme)}
             <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid #262b36' }}>
               <span className="text-sm font-medium text-gray-300">Gesamt</span>
               <span className="text-lg font-semibold text-blue-400">{formatEuro(gesamt)}</span>

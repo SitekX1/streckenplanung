@@ -76,4 +76,10 @@ export interface Projekt {
   // Welche Orte-Filter beim Speichern aktiv waren (Sidebar-Auswahl) — fehlt
   // bei älteren Projekten, dann sind beim Laden wie bisher alle Orte aktiv.
   aktiveOrteKeys?: string[]
+  // Bundesförderung (Breitbandförderung des Bundes): bestimmt, ob Export
+  // (KML/Shapefile) und Materialzuweisung nach dem gesetzlich verbindlichen
+  // GIS-NB-Schema + Materialkonzept-Mindestvorgaben laufen, oder nach dem
+  // freien Firmenstandard. Fehlt bei älteren Projekten → false (bisheriges
+  // Verhalten/Export bleibt unverändert).
+  bundesfoerderung?: boolean
 }
