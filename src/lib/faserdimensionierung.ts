@@ -37,18 +37,77 @@ export function passendesKabel(benoetigteFasern: number): { fasern: number; code
   )
 }
 
+// Generische Bottom-up-Lastenverteilung über die Baumtopologie der Trasse:
+// jedes NVT/Schacht bündelt ein Gewicht (Summe über alle ihm zugeordneten
+// Hausanschlüsse, z.B. Faserzahl oder einfach Stückzahl), das entlang des
+// kürzesten Pfads zum Startpunkt über alle Segmente "fließt", die auf diesem
+// Weg liegen — ein Segment nah am Start trägt entsprechend mehr Last als
+// eins nah an einem einzelnen NVT. Wird sowohl für die Faserzahl- als auch
+// die Hausanschluss-Sammelverband-Dimensionierung genutzt (siehe unten).
+function berechneLastProSegment(
+  trassePfade: LatLng[][],
+  startpunkt: LatLng,
+  nvtStandorte: NvtStandort[],
+  schachtStandorte: SchachtStandort[],
+  gewichtProHausIds: (hausIds: string[]) => number
+): number[] {
+  const leer = trassePfade.map(() => 0)
+  if (trassePfade.length === 0) return leer
+
+  const graph = baueGraph(trassePfade)
+  const startKnoten = naechsterKnoten(graph, startpunkt)
+  if (!startKnoten) return leer
+
+  const { dist: distVomStart, prev } = dijkstraVon(graph, startKnoten)
+
+  const kantenLast = new Map<string, number>()
+  function addiereEntlangPfad(zielKnoten: string, last: number) {
+    if (last <= 0 || !distVomStart.has(zielKnoten)) return
+    let cur = zielKnoten
+    while (prev.has(cur)) {
+      const vor = prev.get(cur)!
+      const key = cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`
+      kantenLast.set(key, (kantenLast.get(key) ?? 0) + last)
+      cur = vor
+    }
+  }
+
+  for (const nvt of nvtStandorte) {
+    const knoten = naechsterKnoten(graph, nvt.position)
+    if (knoten) addiereEntlangPfad(knoten, gewichtProHausIds(nvt.hausanschlussIds))
+  }
+  for (const schacht of schachtStandorte) {
+    const knoten = naechsterKnoten(graph, schacht.position)
+    if (knoten) addiereEntlangPfad(knoten, gewichtProHausIds(schacht.hausanschlussIds))
+  }
+
+  const r = (v: number) => Math.round(v * 100000) / 100000
+  const knotenKeyVon = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+
+  return trassePfade.map((pfad) => {
+    if (pfad.length < 2) return 0
+    // Alle Segmente sind dank segmentiereAnKreuzungen() an jedem Abzweig
+    // getrennt — innerhalb eines Segments ist die Last auf jeder Teilkante
+    // identisch, ein Sample (max über alle Teilkanten als Sicherheitsnetz
+    // gegen Rundungs-/Snapping-Abweichungen) reicht.
+    let last = 0
+    for (let i = 0; i < pfad.length - 1; i++) {
+      const a = knotenKeyVon(pfad[i])
+      const b = knotenKeyVon(pfad[i + 1])
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`
+      last = Math.max(last, kantenLast.get(key) ?? 0)
+    }
+    return last
+  })
+}
+
 export interface SegmentFaserbedarf {
   fasernBasis: number
   fasernReserve: number
   fasernGesamt: number
 }
 
-// Berechnet pro Trasse-Pfad-Segment die kumulierte Faserzahl, die dieses
-// Segment tragen muss — Bottom-up über die Baumtopologie: jedes NVT/Schacht
-// bündelt die Fasern aller ihm zugeordneten Hausanschlüsse, diese Summe
-// "fließt" entlang des kürzesten Pfads zum Startpunkt über alle Segmente,
-// die auf diesem Weg liegen. Ein Segment nah am Start trägt entsprechend
-// mehr als eins nah an einem einzelnen NVT.
+// Faserzahl pro Trasse-Segment — siehe berechneLastProSegment().
 export function berechneFaserbedarfProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
@@ -57,68 +116,35 @@ export function berechneFaserbedarfProSegment(
   hausanschluesse: Hausstich[],
   adressen: Address[]
 ): SegmentFaserbedarf[] {
-  const leer = trassePfade.map(() => ({ fasernBasis: 0, fasernReserve: 0, fasernGesamt: 0 }))
-  if (trassePfade.length === 0) return leer
-
-  const graph = baueGraph(trassePfade)
-  const startKnoten = naechsterKnoten(graph, startpunkt)
-  if (!startKnoten) return leer
-
   const hausById = new Map(hausanschluesse.map((h) => [h.id, h]))
   const adresseByUuid = new Map(adressen.map((a) => [a.uuid, a]))
 
-  function fasernFuerHausIds(hausIds: string[]): number {
-    let summe = 0
-    for (const id of hausIds) {
+  const gewicht = (hausIds: string[]) =>
+    hausIds.reduce((summe, id) => {
       const haus = hausById.get(id)
       const adresse = haus ? adresseByUuid.get(haus.addressUuid) : undefined
-      summe += fasernFuerAdresse(adresse)
-    }
-    return summe
-  }
+      return summe + fasernFuerAdresse(adresse)
+    }, 0)
 
-  const { dist: distVomStart, prev } = dijkstraVon(graph, startKnoten)
-
-  // Pro Kante (Knoten-Paar, normiert) die Summe aller Fasern, die über sie
-  // Richtung Start fließen.
-  const kantenLast = new Map<string, number>()
-  function addiereEntlangPfad(zielKnoten: string, fasern: number) {
-    if (fasern <= 0 || !distVomStart.has(zielKnoten)) return
-    let cur = zielKnoten
-    while (prev.has(cur)) {
-      const vor = prev.get(cur)!
-      const key = cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`
-      kantenLast.set(key, (kantenLast.get(key) ?? 0) + fasern)
-      cur = vor
-    }
-  }
-
-  for (const nvt of nvtStandorte) {
-    const knoten = naechsterKnoten(graph, nvt.position)
-    if (knoten) addiereEntlangPfad(knoten, fasernFuerHausIds(nvt.hausanschlussIds))
-  }
-  for (const schacht of schachtStandorte) {
-    const knoten = naechsterKnoten(graph, schacht.position)
-    if (knoten) addiereEntlangPfad(knoten, fasernFuerHausIds(schacht.hausanschlussIds))
-  }
-
-  const r = (v: number) => Math.round(v * 100000) / 100000
-  const knotenKeyVon = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
-
-  return trassePfade.map((pfad) => {
-    if (pfad.length < 2) return { fasernBasis: 0, fasernReserve: 0, fasernGesamt: 0 }
-    // Alle Segmente sind dank segmentiereAnKreuzungen() an jedem Abzweig
-    // getrennt — innerhalb eines Segments ist die Last auf jeder Teilkante
-    // identisch, ein Sample (max über alle Teilkanten als Sicherheitsnetz
-    // gegen Rundungs-/Snapping-Abweichungen) reicht.
-    let basis = 0
-    for (let i = 0; i < pfad.length - 1; i++) {
-      const a = knotenKeyVon(pfad[i])
-      const b = knotenKeyVon(pfad[i + 1])
-      const key = a < b ? `${a}|${b}` : `${b}|${a}`
-      basis = Math.max(basis, kantenLast.get(key) ?? 0)
-    }
+  const basisProSegment = berechneLastProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, gewicht)
+  return basisProSegment.map((basis) => {
     const reserve = Math.ceil(basis * RESERVE_ANTEIL)
     return { fasernBasis: basis, fasernReserve: reserve, fasernGesamt: basis + reserve }
   })
+}
+
+// Anzahl der Hausanschlüsse, die kumulativ über jedes Trasse-Segment
+// Richtung Startpunkt versorgt werden — Grundlage für die dynamische
+// Kundenanschluss-Sammelverband-Dimensionierung (siehe materialkatalog.ts
+// "kundenanschlussStufen" + gisNbExport.ts Doppelbelegung): nah an einer
+// Gabelung trägt ein Segment die Summe aller Hausanschlüsse dahinter (z.B.
+// 24), auf dem Stich hinter der Gabelung nur noch die des jeweiligen Astes
+// (z.B. 5 oder 8) — ergibt automatisch kleinere Verbände Richtung Stichende.
+export function berechneHausanschlussAnzahlProSegment(
+  trassePfade: LatLng[][],
+  startpunkt: LatLng,
+  nvtStandorte: NvtStandort[],
+  schachtStandorte: SchachtStandort[]
+): number[] {
+  return berechneLastProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, (hausIds) => hausIds.length)
 }

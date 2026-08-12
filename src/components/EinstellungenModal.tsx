@@ -145,6 +145,47 @@ export default function EinstellungenModal({
     )
   }
 
+  const aktualisiereStufe = (profil: MaterialProfilName, index: number, aenderung: Partial<MaterialEintrag>) => {
+    setKatalog((k) => {
+      const naechsteStufen = k[profil].kundenanschlussStufen.map((s, i) => (i === index ? { ...s, ...aenderung } : s))
+      const naechster = { ...k, [profil]: { ...k[profil], kundenanschlussStufen: naechsteStufen } }
+      speichereMaterialkatalog(naechster)
+      return naechster
+    })
+  }
+
+  const stufenZeilen = (profil: MaterialProfilName) => (
+    <div className="flex flex-col gap-1.5 rounded-lg p-2.5" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
+      <span className="text-xs text-gray-400">Kundenanschluss-Sammelverband (Doppelbelegung auf Trasse-Segmenten)</span>
+      <span className="text-[10px] text-gray-600 -mt-1">Kleinste ausreichende Stufe wird je Segment automatisch gewählt, je nach Anzahl versorgter Hausanschlüsse dahinter.</span>
+      {katalog[profil].kundenanschlussStufen.map((stufe, i) => (
+        <div key={i} className="grid grid-cols-4 gap-1.5 items-end">
+          <input type="text" value={stufe.bezeichnungFirma}
+            onChange={(e) => aktualisiereStufe(profil, i, { bezeichnungFirma: e.target.value })}
+            placeholder="z.B. 7x7"
+            className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+          <select value={stufe.lrArt}
+            onChange={(e) => aktualisiereStufe(profil, i, { lrArt: Number(e.target.value) })}
+            className="px-1.5 py-1 rounded text-[10px] outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}>
+            {LR_ART_KATALOG.map((e) => (<option key={e.code} value={e.code}>{e.code}</option>))}
+          </select>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[9px] text-gray-500">Röhrchen</span>
+            <input type="number" min={0} value={stufe.lrAnzahl}
+              onChange={(e) => aktualisiereStufe(profil, i, { lrAnzahl: Number(e.target.value) || 0 })}
+              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+          </label>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[9px] text-gray-500">€/m</span>
+            <input type="number" min={0} value={stufe.preisProMeter}
+              onChange={(e) => aktualisiereStufe(profil, i, { preisProMeter: Number(e.target.value) || 0 })}
+              className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+          </label>
+        </div>
+      ))}
+    </div>
+  )
+
   const handleLogoDatei = async (file: File) => {
     try {
       const { dataUrl, breite, hoehe } = await verkleinereLogo(file)
@@ -297,15 +338,17 @@ export default function EinstellungenModal({
             <div>
               <span className="text-[11px] text-blue-400 font-medium block mb-1.5">Firmenstandard</span>
               <div className="flex flex-col gap-2">
-                {materialZeile('firma', 'trasse', 'Trasse')}
-                {materialZeile('firma', 'hausanschluss', 'Hausanschluss')}
+                {materialZeile('firma', 'trasse', 'Trasse (NVT-zu-NVT-Backbone)')}
+                {materialZeile('firma', 'hausanschluss', 'Hausanschluss (Hauszuführung)')}
+                {stufenZeilen('firma')}
               </div>
             </div>
             <div>
-              <span className="text-[11px] text-amber-400 font-medium block mb-1.5">Bundesförderung (GIS-NB-Minimum)</span>
+              <span className="text-[11px] text-amber-400 font-medium block mb-1.5">Bundesförderung</span>
               <div className="flex flex-col gap-2">
-                {materialZeile('foerderung', 'trasse', 'Trasse')}
-                {materialZeile('foerderung', 'hausanschluss', 'Hausanschluss')}
+                {materialZeile('foerderung', 'trasse', 'Trasse (NVT-zu-NVT-Backbone)')}
+                {materialZeile('foerderung', 'hausanschluss', 'Hausanschluss (Hauszuführung)')}
+                {stufenZeilen('foerderung')}
               </div>
             </div>
           </div>

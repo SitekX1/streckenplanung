@@ -1,8 +1,8 @@
 import JSZip from 'jszip'
 import { Projekt } from './types'
 import { ermittleZuordnungen } from './nvt'
-import { aktivesMaterialProfil, MaterialEintrag } from './materialkatalog'
-import { berechneFaserbedarfProSegment, passendesKabel } from './faserdimensionierung'
+import { aktivesMaterialProfil, waehleKundenanschlussStufe, MaterialEintrag } from './materialkatalog'
+import { berechneFaserbedarfProSegment, berechneHausanschlussAnzahlProSegment, passendesKabel } from './faserdimensionierung'
 import { layerHinzufuegen, layerHinzufuegenLinien, GEMEINSAMER_ORDNER, segmentLaenge } from './shapefileExport'
 import { baueRohrbelegungCsv } from './rohrbelegung'
 
@@ -122,30 +122,62 @@ function materialEigenschaften(m: MaterialEintrag) {
   }
 }
 
-// Leerrohre: eine Linie pro Trasse-Segment (Ebene "trasse") + eine Linie pro
-// Hausanschluss-Stich (Ebene "hausanschluss"), Material aus dem aktiven
-// Katalog-Profil (Firmenstandard oder Bundesförderungs-Minimum, je nach
-// projekt.bundesfoerderung — hier immer foerderung, da diese Funktion nur im
-// Förderfall aufgerufen wird).
+// Leerrohre: PRO Trasse-Segment ZWEI Linien übereinander (Doppelbelegung,
+// von Alex bestätigt 2026-08-12: NVT-zu-NVT-Segmente führen sowohl einen
+// festen Backbone-Verband als auch einen Kundenanschluss-Sammelverband) —
+// der feste "trasse"-Verband aus dem Profil (7x14 bzw. 4x20/2x20) PLUS ein
+// dynamisch dimensionierter Kundenanschluss-Sammelverband, dessen Größe sich
+// nach der Anzahl der über dieses Segment versorgten Hausanschlüsse richtet
+// (kleiner werdend Richtung Stichenden/hinter Gabelungen — siehe
+// berechneHausanschlussAnzahlProSegment). Dazu je eine Linie pro
+// Hausanschluss-Stich (Ebene "hausanschluss", Hauszuführung zum Haus).
 function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
-  const profil = aktivesMaterialProfil(true)
+  const profil = aktivesMaterialProfil(projekt.bundesfoerderung)
   const trassePfade = projekt.trassePfade && projekt.trassePfade.length > 0 ? projekt.trassePfade : [projekt.trasse]
   let id = 1
   const features: GeoJSON.Feature[] = []
 
-  for (const pfad of trassePfade) {
-    if (pfad.length < 2) continue
+  const hausanschlussAnzahlProSegment =
+    projekt.startpunkt != null
+      ? berechneHausanschlussAnzahlProSegment(
+          trassePfade,
+          projekt.startpunkt,
+          projekt.nvtStandorte ?? [],
+          projekt.schachtStandorte ?? []
+        )
+      : trassePfade.map(() => 0)
+
+  trassePfade.forEach((pfad, i) => {
+    if (pfad.length < 2) return
+    const laenge = Math.round(segmentLaenge(pfad) * 10) / 10
+    const coords = pfad.map((p) => [p.lng, p.lat])
+
     features.push({
       type: 'Feature',
-      geometry: { type: 'LineString', coordinates: pfad.map((p) => [p.lng, p.lat]) },
+      geometry: { type: 'LineString', coordinates: coords },
       properties: {
         id: id++,
         ...materialEigenschaften(profil.trasse),
-        lae_lr: Math.round(segmentLaenge(pfad) * 10) / 10,
+        lae_lr: laenge,
         zustand: 2, // Leerrohre: 2 = Neubau (Codes hier ANDERS als bei Verbindungen/Bauten!)
       },
     })
-  }
+
+    const anzahlDahinter = hausanschlussAnzahlProSegment[i] ?? 0
+    if (anzahlDahinter > 0) {
+      const stufe = waehleKundenanschlussStufe(profil, anzahlDahinter)
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: coords },
+        properties: {
+          id: id++,
+          ...materialEigenschaften(stufe),
+          lae_lr: laenge,
+          zustand: 2,
+        },
+      })
+    }
+  })
 
   for (const h of projekt.hausanschluesse) {
     const linePts = h.wegpunkte && h.wegpunkte.length >= 2 ? h.wegpunkte : [h.trassenPunkt, h.hausKoordinate]
