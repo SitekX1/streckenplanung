@@ -11,10 +11,11 @@ import 'leaflet/dist/leaflet.css'
 import { Address, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
 import {
   ermittleBackboneSegmente,
+  ermittleHausanschluesseProSegment,
   berechneHausanschlussAnzahlProSegment,
   berechneNvtKapazitaetsbedarfProSegment,
 } from '../lib/faserdimensionierung'
-import { aktivesMaterialProfil, waehleVerbandMitReserve } from '../lib/materialkatalog'
+import { aktivesMaterialProfil, waehleVerbandMitReserve, lrArtLabel, MaterialEintrag } from '../lib/materialkatalog'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -79,6 +80,11 @@ const GELB = '#facc15'
 // mitmarkiert ist, wenn mehrere NVT gleichzeitig zum Vergleichen markiert werden.
 const NVT_MARKIER_FARBEN = ['#22d3ee', '#f472b6', '#a3e635', '#fb923c', '#c084fc', '#facc15', '#38bdf8', '#fb7185']
 const SCHACHT_MARKIER_FARBE = '#22d3ee'
+// Hervorhebung der Hausanschlüsse, die zum gerade angeklickten Trasse-
+// Segment gehören (siehe hausanschluesseProSegment) — bewusst weiß, um sich
+// klar von den NVT-Markier-Farben und dem gelben Segment-Highlight (GELB)
+// abzusetzen.
+const SEGMENT_HERVORHEBUNG_FARBE = '#ffffff'
 const MAX_HANDLES = 80
 // Schwellenwert: ≤ 1000 Punkte → Klein-Projekt (alle Handles sofort sichtbar)
 const KLEIN_PROJEKT_SCHWELLE = 1000
@@ -382,6 +388,19 @@ const MapView = memo(function MapView({
   // entfernen, weil sich sonst alle Indizes danach verschieben.
   const [ausgewaehlteNvtIdxs, setAusgewaehlteNvtIdxs] = useState<Set<number>>(new Set())
   const [ausgewaehltesSchachtIdx, setAusgewaehltesSchachtIdx] = useState<number | null>(null)
+
+  // Welche Hausanschlüsse hängen an welchem Trasse-Segment (2026-08-13, Alex:
+  // "ich möchte sehen, auf welchem Segment welche Kunden hängen") — dieselbe
+  // Baum-Aggregation wie im GIS-NB-Export, hier für die Klick-Info + optische
+  // Hervorhebung der betroffenen Hausanschluss-Stiche genutzt.
+  const hausanschluesseProSegment = useMemo(
+    () =>
+      startpunkt && trassePfade.length > 0
+        ? ermittleHausanschluesseProSegment(trassePfade, startpunkt, hausanschluesse)
+        : trassePfade.map(() => [] as string[]),
+    [trassePfade, startpunkt, hausanschluesse]
+  )
+
   const hausIdZuFarbe = useMemo(() => {
     const map = new Map<string, string>()
     for (const nvtIdx of ausgewaehlteNvtIdxs) {
@@ -391,8 +410,11 @@ const MapView = memo(function MapView({
     if (ausgewaehltesSchachtIdx !== null) {
       for (const hausId of schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? []) map.set(hausId, SCHACHT_MARKIER_FARBE)
     }
+    if (ausgewaehltesSegmentNormal !== null) {
+      for (const hausId of hausanschluesseProSegment[ausgewaehltesSegmentNormal] ?? []) map.set(hausId, SEGMENT_HERVORHEBUNG_FARBE)
+    }
     return map
-  }, [ausgewaehlteNvtIdxs, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte])
+  }, [ausgewaehlteNvtIdxs, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte, ausgewaehltesSegmentNormal, hausanschluesseProSegment])
   // "Hausanschlüsse zuweisen" braucht genau EIN Ziel-NVT — der Zuweisen-Modus
   // setzt die Auswahl beim Aktivieren bewusst auf ein Einzelelement (siehe
   // Kontextmenü-Aktion der NVT-Marker), daher reicht hier size === 1.
@@ -415,19 +437,27 @@ const MapView = memo(function MapView({
   // bei Straße/Feldweg, um das ohnehin fragile Drag-Verhalten dort nicht
   // anzufassen.
   const materialProfil = useMemo(() => aktivesMaterialProfil(bundesfoerderung), [bundesfoerderung])
-  const farbeProSegment = useMemo(() => {
-    if (!startpunkt || trassePfade.length === 0) return trassePfade.map(() => trasseFarbe)
+  // Volles Material (nicht nur die Farbe) pro Segment — Grundlage für die
+  // Kartenfarbe UND die Klick-Info-Box (2026-08-13, Alex: "ich möchte sehen,
+  // welcher Verbund wo langläuft"). null = kein Material zugewiesen (weder
+  // Backbone noch Hausanschlüsse dahinter, sollte bei einer echten Trasse
+  // praktisch nicht vorkommen).
+  const materialProSegment = useMemo((): (MaterialEintrag | null)[] => {
+    if (!startpunkt || trassePfade.length === 0) return trassePfade.map(() => null)
     const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
     const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse)
     const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
     return trassePfade.map((_, i) => {
-      if (backbone[i]) return materialProfil.trasse.farbe
       const bedarf = bedarfProSegment[i] ?? 0
-      if (bedarf <= 0) return trasseFarbe
-      const stufe = waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined)
-      return stufe.farbe
+      if (bedarf > 0) return waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined)
+      if (backbone[i]) return materialProfil.trasse
+      return null
     })
-  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, trasseFarbe])
+  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil])
+  const farbeProSegment = useMemo(
+    () => materialProSegment.map((m) => m?.farbe ?? trasseFarbe),
+    [materialProSegment, trasseFarbe]
+  )
 
   const trassePfadeNachFarbeOhneFeldweg = useMemo(() => {
     const gruppen = new Map<string, LatLng[][]>()
@@ -1087,6 +1117,72 @@ const MapView = memo(function MapView({
           <span style={{ width: 10, height: 10, borderRadius: 3, background: '#f97316', display: 'inline-block', flexShrink: 0 }} />Schacht
         </button>
       </div>
+
+      {/* Material-Legende (2026-08-13, Alex: "ich seh lauter verschiedene
+          Farben, aber ich weiß nicht was was ist") — zeigt Farbe ↔ Material
+          aus dem gerade aktiven Katalog-Profil (Firmenstandard/Förderung). */}
+      {trasseSichtbar && !editierbarAktiv && trassePfade.length > 0 && (
+        <div className="absolute bottom-3 left-3 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-56"
+          style={{ backgroundColor: '#1a1a1a', border: '1px solid #374151' }}>
+          <span className="text-[10px] text-gray-500 uppercase tracking-wider">Legende — Material</span>
+          {[materialProfil.trasse, ...materialProfil.kundenanschlussStufen].map((m, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+              <span className="text-[10px] text-gray-300 truncate">
+                {m.bezeichnungFirma || lrArtLabel(m.lrArt)}{i === 0 ? ' (Backbone)' : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Klick-Info fürs angeklickte Trasse-Segment (2026-08-13, Alex: "ich
+          möchte sehen, welcher Verbund wo langläuft und welche Adresse an
+          welchem Verbund hängt") — Hausanschlüsse werden zusätzlich weiß auf
+          der Karte hervorgehoben (siehe hausIdZuFarbe). */}
+      {trasseSichtbar && !editierbarAktiv && ausgewaehltesSegmentNormal !== null && (() => {
+        const material = materialProSegment[ausgewaehltesSegmentNormal]
+        const hausIds = hausanschluesseProSegment[ausgewaehltesSegmentNormal] ?? []
+        const adressenHier = hausIds
+          .map((id) => hausanschluesse.find((h) => h.id === id))
+          .filter((h): h is Hausstich => !!h)
+          .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
+          .filter((a): a is Address => !!a)
+        const ANZEIGE_LIMIT = 8
+        return (
+          <div className="absolute bottom-3 left-64 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: '#1a1a1a', border: `1px solid ${GELB}` }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Segment {ausgewaehltesSegmentNormal + 1}</span>
+              <button onClick={() => setAusgewaehltesSegmentNormal(null)} className="text-xs" style={{ color: '#9ca3af' }}>✕</button>
+            </div>
+            {material ? (
+              <div className="flex items-center gap-1.5">
+                <span style={{ width: 12, height: 3, borderRadius: 2, background: material.farbe, display: 'inline-block', flexShrink: 0 }} />
+                <span className="text-xs text-gray-200">{material.bezeichnungFirma || lrArtLabel(material.lrArt)}</span>
+              </div>
+            ) : (
+              <span className="text-xs text-gray-500">Kein Material zugewiesen</span>
+            )}
+            {material && (
+              <span className="text-[10px] text-gray-500">
+                {material.anzahl}× {lrArtLabel(material.lrArt)}, Reserve {material.reserve} Röhrchen
+              </span>
+            )}
+            <span className="text-[10px] text-gray-500">{hausIds.length} Hausanschluss(e) auf diesem Verbund:</span>
+            <div className="flex flex-col gap-0.5">
+              {adressenHier.slice(0, ANZEIGE_LIMIT).map((a) => (
+                <span key={a.uuid} className="text-[10px] text-gray-300 truncate">
+                  {a.strasse} {a.nr}{a.nr_zusatz}
+                </span>
+              ))}
+              {adressenHier.length > ANZEIGE_LIMIT && (
+                <span className="text-[10px] text-gray-600">… und {adressenHier.length - ANZEIGE_LIMIT} weitere</span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
 
       <MapContainer center={[51.1657, 10.4515]} zoom={6} style={{ height: '100%', width: '100%' }}
         className={startpunktSetzenAktiv || imZeichenModus ? 'cursor-crosshair' : ''}>

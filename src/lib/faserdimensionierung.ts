@@ -172,6 +172,59 @@ export function berechneNvtKapazitaetsbedarfProSegment(
   return berechneLastProSegment(trassePfade, startpunkt, quellen)
 }
 
+// Liefert pro Trasse-Segment die IDs genau der Hausanschlüsse, deren
+// tatsächlicher Abzweigpunkt (trassenPunkt) über dieses Segment Richtung
+// Start läuft — Grundlage für die Karten-Klickinfo (2026-08-13, Alex: "ich
+// möchte sehen, auf welchem Segment welche Kunden hängen"). Analog zu
+// berechneLastProSegment(), aber mit ID-Mengen statt Zahlen, damit man nicht
+// nur die Anzahl, sondern die konkreten Adressen anzeigen/hervorheben kann.
+export function ermittleHausanschluesseProSegment(
+  trassePfade: LatLng[][],
+  startpunkt: LatLng,
+  hausanschluesse: Hausstich[]
+): string[][] {
+  const leer = trassePfade.map(() => [] as string[])
+  if (trassePfade.length === 0) return leer
+
+  const graph = baueGraph(trassePfade)
+  const startKnoten = naechsterKnoten(graph, startpunkt)
+  if (!startKnoten) return leer
+
+  const { dist: distVomStart, prev } = dijkstraVon(graph, startKnoten)
+
+  const kantenHausIds = new Map<string, Set<string>>()
+  for (const h of hausanschluesse) {
+    const knoten = naechsterKnoten(graph, h.trassenPunkt)
+    if (!knoten || !distVomStart.has(knoten)) continue
+    let cur = knoten
+    while (prev.has(cur)) {
+      const vor = prev.get(cur)!
+      const key = cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`
+      if (!kantenHausIds.has(key)) kantenHausIds.set(key, new Set())
+      kantenHausIds.get(key)!.add(h.id)
+      cur = vor
+    }
+  }
+
+  const r = (v: number) => Math.round(v * 100000) / 100000
+  const knotenKeyVon = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+
+  return trassePfade.map((pfad) => {
+    if (pfad.length < 2) return []
+    // Vereinigung über alle Teilkanten des Segments (statt nur eine Kante zu
+    // nehmen) als Sicherheitsnetz gegen Rundungs-/Snapping-Abweichungen —
+    // im Normalfall ist die Menge auf jeder Teilkante ohnehin identisch.
+    const ids = new Set<string>()
+    for (let i = 0; i < pfad.length - 1; i++) {
+      const a = knotenKeyVon(pfad[i])
+      const b = knotenKeyVon(pfad[i + 1])
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`
+      for (const id of kantenHausIds.get(key) ?? []) ids.add(id)
+    }
+    return [...ids]
+  })
+}
+
 // Bestimmt pro Trasse-Segment, ob es eine echte Backbone-Verbindung
 // darstellt (Startpunkt-zu-Verteiler oder Verteiler-zu-Verteiler) — nur dort
 // gehört das feste Backbone-Material hin (2026-08-12, Alex: "nicht jede
