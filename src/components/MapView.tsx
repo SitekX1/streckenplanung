@@ -9,6 +9,7 @@ import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
 import { Address, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
+import { ermittleBackboneSegmente } from '../lib/faserdimensionierung'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -139,6 +140,7 @@ interface MapViewProps {
   trasseFarbe: string
   hausanschlussfarbe: string
   feldwegFarbe: string
+  backboneFarbe: string
   trassePfadeKinds: WegKind[]
   trasseMethode?: string
   nichtAngebundeneAdressen?: Address[]
@@ -328,7 +330,7 @@ type TileVariante = 'satellit' | 'osm'
 const MapView = memo(function MapView({
   adressen, startpunkt, startpunktSetzenAktiv, trasse, trassePfade, hausanschluesse,
   editierbarAktiv, aktiveOrteKeys, adressFarbe, trasseFarbe, hausanschlussfarbe, trasseMethode,
-  feldwegFarbe, trassePfadeKinds,
+  feldwegFarbe, backboneFarbe, trassePfadeKinds,
   nichtAngebundeneAdressen = [],
   aussiedlerhofUuids = new Set(), aussiedlerhofMarkierenAktiv = false, nvtStandorte = [],
   nvtManuellSetzenAktiv = false, schachtStandorte = [], schachtSetzenAktiv = false,
@@ -397,9 +399,28 @@ const MapView = memo(function MapView({
   // dessen useEffect (in TrasseNetzwerk/TrasseKlickbar) daraufhin sämtliche
   // Leaflet-Layer der kompletten Trasse abbaut und neu aufbaut — bei
   // größeren Projekten spürbar langsamer mit jeder Interaktion.
+  // Welche Segmente sind echte Backbone-Verbindungen (NVT-zu-NVT/Schacht,
+  // inkl. Startpunkt-zum-nächsten-Verteiler) — farblich abgesetzt von der
+  // normalen Kundenverband-Zuführung, siehe ermittleBackboneSegmente() in
+  // faserdimensionierung.ts (gleiche Logik wie im GIS-NB-Export). Nur für die
+  // normale Ansicht (außerhalb des Bearbeitungsmodus) berücksichtigt — die
+  // Edit-Modus-Einfärbung (localPfade weiter unten) bleibt unverändert bei
+  // Straße/Feldweg, um das ohnehin fragile Drag-Verhalten dort nicht
+  // anzufassen.
+  const backboneProSegment = useMemo(
+    () =>
+      startpunkt && trassePfade.length > 0
+        ? ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
+        : trassePfade.map(() => false),
+    [trassePfade, startpunkt, nvtStandorte, schachtStandorte]
+  )
   const trassePfadeOhneFeldweg = useMemo(
-    () => trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track'),
-    [trassePfade, trassePfadeKinds]
+    () => trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track' && !backboneProSegment[i]),
+    [trassePfade, trassePfadeKinds, backboneProSegment]
+  )
+  const trassePfadeBackbone = useMemo(
+    () => trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track' && backboneProSegment[i]),
+    [trassePfade, trassePfadeKinds, backboneProSegment]
   )
   const trassePfadeNurFeldweg = useMemo(
     () => trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track'),
@@ -1082,6 +1103,7 @@ const MapView = memo(function MapView({
             ? (
               <>
                 <TrasseNetzwerk pfade={trassePfadeOhneFeldweg} farbe={trasseFarbe} opacity={0.9} />
+                <TrasseNetzwerk pfade={trassePfadeBackbone} farbe={backboneFarbe} opacity={0.9} />
                 <TrasseNetzwerk pfade={trassePfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.9} />
                 <TrasseKlickbar pfade={trassePfade} ausgewaehlterIdx={ausgewaehltesSegmentNormal}
                   onKlick={handleSegmentNormalKlick} />

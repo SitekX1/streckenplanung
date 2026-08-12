@@ -15,10 +15,12 @@ interface EinstellungenModalProps {
   trasseFarbe: string
   hausanschlussfarbe: string
   feldwegFarbe: string
+  backboneFarbe: string
   onAdressFarbeAendern: (farbe: string) => void
   onTrasseFarbeAendern: (farbe: string) => void
   onHausanschlussFarbeAendern: (farbe: string) => void
   onFeldwegFarbeAendern: (farbe: string) => void
+  onBackboneFarbeAendern: (farbe: string) => void
   onClose: () => void
 }
 
@@ -52,8 +54,8 @@ function verkleinereLogo(file: File): Promise<{ dataUrl: string; breite: number;
 }
 
 export default function EinstellungenModal({
-  adressFarbe, trasseFarbe, hausanschlussfarbe, feldwegFarbe,
-  onAdressFarbeAendern, onTrasseFarbeAendern, onHausanschlussFarbeAendern, onFeldwegFarbeAendern,
+  adressFarbe, trasseFarbe, hausanschlussfarbe, feldwegFarbe, backboneFarbe,
+  onAdressFarbeAendern, onTrasseFarbeAendern, onHausanschlussFarbeAendern, onFeldwegFarbeAendern, onBackboneFarbeAendern,
   onClose,
 }: EinstellungenModalProps) {
   // Geräteweit persistent per localStorage, unabhängig vom einzelnen Projekt
@@ -87,6 +89,14 @@ export default function EinstellungenModal({
         ...k,
         [profil]: { ...k[profil], [ebene]: { ...k[profil][ebene], ...aenderung } },
       }
+      speichereMaterialkatalog(naechster)
+      return naechster
+    })
+  }
+
+  const toggleNachKapazitaet = (aktiv: boolean) => {
+    setKatalog((k) => {
+      const naechster = { ...k, kundenanschlussNachKapazitaet: aktiv }
       speichereMaterialkatalog(naechster)
       return naechster
     })
@@ -311,7 +321,8 @@ export default function EinstellungenModal({
           <div className="flex flex-col gap-2.5">
             {[
               { label: 'Adressen', value: adressFarbe, onChange: onAdressFarbeAendern },
-              { label: 'Trasse', value: trasseFarbe, onChange: onTrasseFarbeAendern },
+              { label: 'Trasse (Kundenverband)', value: trasseFarbe, onChange: onTrasseFarbeAendern },
+              { label: 'Trasse (Backbone)', value: backboneFarbe, onChange: onBackboneFarbeAendern },
               { label: 'Feldweg-Anteil', value: feldwegFarbe, onChange: onFeldwegFarbeAendern },
               { label: 'Hausanschlüsse', value: hausanschlussfarbe, onChange: onHausanschlussFarbeAendern },
             ].map(({ label, value, onChange }) => (
@@ -334,6 +345,23 @@ export default function EinstellungenModal({
           <p className="text-xs text-gray-600 mb-2.5">
             Wird pro Projekt automatisch angewendet — je nachdem, ob unten in der Sidebar &bdquo;Bundesförderung&ldquo; aktiviert ist.
           </p>
+          <label
+            className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg mb-3 cursor-pointer"
+            style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}
+          >
+            <input
+              type="checkbox"
+              checked={katalog.kundenanschlussNachKapazitaet}
+              onChange={(e) => toggleNachKapazitaet(e.target.checked)}
+              className="accent-blue-500 w-4 h-4 mt-0.5 shrink-0"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-xs text-gray-300">Kundenanschluss-Verband auf volle NVT-Kapazität planen</span>
+              <span className="text-[10px] text-gray-600">
+                An (Standard): 120er-NVT → 5x 24x7 (= 120 Röhrchen), unabhängig vom aktuellen Bedarf. Aus: nur so viele Röhrchen wie tatsächlich Hausanschlüsse dahinterliegen.
+              </span>
+            </span>
+          </label>
           <div className="flex flex-col gap-3">
             <div>
               <span className="text-[11px] text-blue-400 font-medium block mb-1.5">Firmenstandard</span>

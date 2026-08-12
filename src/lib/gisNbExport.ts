@@ -1,10 +1,17 @@
 import JSZip from 'jszip'
 import { Projekt } from './types'
 import { ermittleZuordnungen } from './nvt'
-import { aktivesMaterialProfil, waehleKundenanschlussStufe, MaterialEintrag } from './materialkatalog'
+import {
+  aktivesMaterialProfil,
+  berechneKundenanschlussVerbaende,
+  ladeMaterialkatalog,
+  waehleKundenanschlussStufe,
+  MaterialEintrag,
+} from './materialkatalog'
 import {
   berechneFaserbedarfProSegment,
   berechneHausanschlussAnzahlProSegment,
+  berechneNvtKapazitaetsbedarfProSegment,
   ermittleBackboneSegmente,
   passendesKabel,
 } from './faserdimensionierung'
@@ -145,9 +152,14 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
 
   const nvtStandorte = projekt.nvtStandorte ?? []
   const schachtStandorte = projekt.schachtStandorte ?? []
-  const hausanschlussAnzahlProSegment =
+  const nachKapazitaet = ladeMaterialkatalog().kundenanschlussNachKapazitaet
+  // "Volle Box"-Praxis (Default, siehe berechneKundenanschlussVerbaende):
+  // nominale NVT-Kapazität statt tatsächlicher Belegung als Bemessungsgrundlage.
+  const bedarfProSegment =
     projekt.startpunkt != null
-      ? berechneHausanschlussAnzahlProSegment(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
+      ? nachKapazitaet
+        ? berechneNvtKapazitaetsbedarfProSegment(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
+        : berechneHausanschlussAnzahlProSegment(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
       : trassePfade.map(() => 0)
   const backboneProSegment =
     projekt.startpunkt != null
@@ -172,9 +184,11 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
       })
     }
 
-    const anzahlDahinter = hausanschlussAnzahlProSegment[i] ?? 0
-    if (anzahlDahinter > 0) {
-      const stufe = waehleKundenanschlussStufe(profil, anzahlDahinter)
+    const bedarf = bedarfProSegment[i] ?? 0
+    if (bedarf > 0) {
+      const stufe = nachKapazitaet
+        ? berechneKundenanschlussVerbaende(profil, bedarf)
+        : waehleKundenanschlussStufe(profil, bedarf)
       features.push({
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: coords },

@@ -38,18 +38,20 @@ export function passendesKabel(benoetigteFasern: number): { fasern: number; code
 }
 
 // Generische Bottom-up-Lastenverteilung über die Baumtopologie der Trasse:
-// jedes NVT/Schacht bündelt ein Gewicht (Summe über alle ihm zugeordneten
-// Hausanschlüsse, z.B. Faserzahl oder einfach Stückzahl), das entlang des
-// kürzesten Pfads zum Startpunkt über alle Segmente "fließt", die auf diesem
-// Weg liegen — ein Segment nah am Start trägt entsprechend mehr Last als
-// eins nah an einem einzelnen NVT. Wird sowohl für die Faserzahl- als auch
-// die Hausanschluss-Sammelverband-Dimensionierung genutzt (siehe unten).
+// jedes NVT/Schacht bündelt ein Gewicht, das entlang des kürzesten Pfads zum
+// Startpunkt über alle Segmente "fließt", die auf diesem Weg liegen — ein
+// Segment nah am Start trägt entsprechend mehr Last als eins nah an einem
+// einzelnen NVT. Wird für die Faserzahl-, die Hausanschluss-Sammelverband-
+// UND die Kapazitäts-Dimensionierung genutzt (siehe unten) — je mit eigener
+// Gewichtsfunktion (Faserzahl/Stückzahl der Hausanschlüsse vs. nominale
+// NVT-Kapazität).
 function berechneLastProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
   nvtStandorte: NvtStandort[],
   schachtStandorte: SchachtStandort[],
-  gewichtProHausIds: (hausIds: string[]) => number
+  gewichtProNvt: (nvt: NvtStandort) => number,
+  gewichtProSchacht: (schacht: SchachtStandort) => number
 ): number[] {
   const leer = trassePfade.map(() => 0)
   if (trassePfade.length === 0) return leer
@@ -74,11 +76,11 @@ function berechneLastProSegment(
 
   for (const nvt of nvtStandorte) {
     const knoten = naechsterKnoten(graph, nvt.position)
-    if (knoten) addiereEntlangPfad(knoten, gewichtProHausIds(nvt.hausanschlussIds))
+    if (knoten) addiereEntlangPfad(knoten, gewichtProNvt(nvt))
   }
   for (const schacht of schachtStandorte) {
     const knoten = naechsterKnoten(graph, schacht.position)
-    if (knoten) addiereEntlangPfad(knoten, gewichtProHausIds(schacht.hausanschlussIds))
+    if (knoten) addiereEntlangPfad(knoten, gewichtProSchacht(schacht))
   }
 
   const r = (v: number) => Math.round(v * 100000) / 100000
@@ -126,7 +128,10 @@ export function berechneFaserbedarfProSegment(
       return summe + fasernFuerAdresse(adresse)
     }, 0)
 
-  const basisProSegment = berechneLastProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, gewicht)
+  const basisProSegment = berechneLastProSegment(
+    trassePfade, startpunkt, nvtStandorte, schachtStandorte,
+    (nvt) => gewicht(nvt.hausanschlussIds), (schacht) => gewicht(schacht.hausanschlussIds)
+  )
   return basisProSegment.map((basis) => {
     const reserve = Math.ceil(basis * RESERVE_ANTEIL)
     return { fasernBasis: basis, fasernReserve: reserve, fasernGesamt: basis + reserve }
@@ -146,7 +151,29 @@ export function berechneHausanschlussAnzahlProSegment(
   nvtStandorte: NvtStandort[],
   schachtStandorte: SchachtStandort[]
 ): number[] {
-  return berechneLastProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, (hausIds) => hausIds.length)
+  return berechneLastProSegment(
+    trassePfade, startpunkt, nvtStandorte, schachtStandorte,
+    (nvt) => nvt.hausanschlussIds.length, (schacht) => schacht.hausanschlussIds.length
+  )
+}
+
+// Wie berechneHausanschlussAnzahlProSegment(), aber mit der NOMINALEN
+// NVT-Kapazität statt der tatsächlichen Belegung als Gewicht — Grundlage für
+// die "volle Box verplanen"-Praxis (2026-08-12, Alex: "wir planen meistens
+// so, dass man den 120er zum Beispiel vollplant, also dass 120 Rohre da drin
+// sind am Schluss, umgerechnet 5x 24x7 Rohre verbunden"), statt nur den
+// tatsächlichen Bedarf zu decken. Schacht hat keine Kapazitätsgrenze (siehe
+// types.ts), daher dort weiterhin die tatsächliche Belegung.
+export function berechneNvtKapazitaetsbedarfProSegment(
+  trassePfade: LatLng[][],
+  startpunkt: LatLng,
+  nvtStandorte: NvtStandort[],
+  schachtStandorte: SchachtStandort[]
+): number[] {
+  return berechneLastProSegment(
+    trassePfade, startpunkt, nvtStandorte, schachtStandorte,
+    (nvt) => nvt.kapazitaet, (schacht) => schacht.hausanschlussIds.length
+  )
 }
 
 // Bestimmt pro Trasse-Segment, ob es eine echte Backbone-Verbindung

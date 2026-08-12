@@ -104,6 +104,18 @@ const STORAGE_KEY = 'streckenplanung-materialkatalog'
 interface GespeicherterKatalog {
   firma: MaterialProfil
   foerderung: MaterialProfil
+  // Wenn true (Default — "meistens" laut Alex, 2026-08-12): der
+  // Kundenanschluss-Sammelverband wird auf die volle nominale NVT-Kapazität
+  // geplant (z.B. 120er-Box → 5x 24x7 = 120 Röhrchen), nicht nur auf den
+  // tatsächlich aktuell benötigten Bedarf. Wenn false: kleinste ausreichende
+  // Einzelstufe nach tatsächlichem Bedarf (frühere Logik).
+  kundenanschlussNachKapazitaet: boolean
+}
+
+const KATALOG_DEFAULT: GespeicherterKatalog = {
+  firma: FIRMA_DEFAULT,
+  foerderung: FOERDERUNG_DEFAULT,
+  kundenanschlussNachKapazitaet: true,
 }
 
 // Geräteweit persistent, gleiches Muster wie Kalkulations-Preise/Firmendaten
@@ -112,7 +124,7 @@ interface GespeicherterKatalog {
 export function ladeMaterialkatalog(): GespeicherterKatalog {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { firma: FIRMA_DEFAULT, foerderung: FOERDERUNG_DEFAULT }
+    if (!raw) return KATALOG_DEFAULT
     const parsed = JSON.parse(raw)
     const stufen = (gespeichert: unknown, fallback: MaterialEintrag[]) =>
       Array.isArray(gespeichert) && gespeichert.length > 0 ? gespeichert : fallback
@@ -127,9 +139,13 @@ export function ladeMaterialkatalog(): GespeicherterKatalog {
         hausanschluss: { ...FOERDERUNG_DEFAULT.hausanschluss, ...parsed.foerderung?.hausanschluss },
         kundenanschlussStufen: stufen(parsed.foerderung?.kundenanschlussStufen, FOERDERUNG_DEFAULT.kundenanschlussStufen),
       },
+      kundenanschlussNachKapazitaet:
+        typeof parsed.kundenanschlussNachKapazitaet === 'boolean'
+          ? parsed.kundenanschlussNachKapazitaet
+          : KATALOG_DEFAULT.kundenanschlussNachKapazitaet,
     }
   } catch {
-    return { firma: FIRMA_DEFAULT, foerderung: FOERDERUNG_DEFAULT }
+    return KATALOG_DEFAULT
   }
 }
 
@@ -159,4 +175,16 @@ export function profilName(bundesfoerderung: boolean | undefined): MaterialProfi
 export function waehleKundenanschlussStufe(profil: MaterialProfil, hausanschlussAnzahl: number): MaterialEintrag {
   const stufen = [...profil.kundenanschlussStufen].sort((a, b) => a.lrAnzahl - b.lrAnzahl)
   return stufen.find((s) => s.lrAnzahl >= hausanschlussAnzahl) ?? stufen[stufen.length - 1]
+}
+
+// "Volle Box"-Variante: deckt den Bedarf (typischerweise die nominale
+// NVT-Kapazität, siehe berechneNvtKapazitaetsbedarfProSegment) mit mehreren
+// Bündeln der GRÖSSTEN verfügbaren Stufe ab (z.B. 120 → 5x 24x7), statt eine
+// einzelne passende Stufe zu wählen — das entspricht "Box vollplanen" als
+// bewusst großzügigerer Praxis gegenüber dem tatsächlichen Bedarf.
+export function berechneKundenanschlussVerbaende(profil: MaterialProfil, bedarf: number): MaterialEintrag {
+  const stufen = [...profil.kundenanschlussStufen].sort((a, b) => b.lrAnzahl - a.lrAnzahl)
+  const groesste = stufen[0]
+  if (!groesste || bedarf <= 0) return { ...groesste, anzahl: 0 }
+  return { ...groesste, anzahl: Math.max(1, Math.ceil(bedarf / groesste.lrAnzahl)) }
 }
