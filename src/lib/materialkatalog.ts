@@ -1,3 +1,5 @@
+import { RESERVE_ANTEIL } from './faserdimensionierung'
+
 // Material-/Rohrverband-Katalog nach "Einheitliches Materialkonzept und
 // Vorgaben für die Dimensionierung passiver Infrastruktur" (Version 5.0.2,
 // 02.08.2024) und den GIS-Nebenbestimmungen (Version 5.1, 03.04.2023),
@@ -51,6 +53,11 @@ export interface MaterialEintrag {
   reserve: number // lr_reserv — Anzahl der Mikrorohre im Verband, die als Reserve vorgesehen sind
   bezeichnungFirma: string // eure interne Kurzbezeichnung, z.B. "24x7"
   preisProMeter: number // Materialkosten (nicht Verlegekosten — die stehen separat in der Kalkulation)
+  // Eigene Kartenfarbe je Material-Typ (2026-08-12, Alex: "7x7, 12x7, 24x7,
+  // 4x20, 2x20, 7x14 jeweils eine andere Farbe") — MapView.tsx färbt jedes
+  // Trasse-Segment nach dem Material ein, das dort laut derselben Logik wie
+  // im GIS-NB-Export tatsächlich zugewiesen wird.
+  farbe: string
 }
 
 export interface MaterialProfil {
@@ -73,14 +80,14 @@ export interface MaterialProfil {
 // (20/15-Rohrverband). lr_reserv hier bewusst 0, da euer Standardmaterial
 // nicht nach der 15%-Förderregel bemessen ist, sondern nach eigener Praxis.
 const KUNDENANSCHLUSS_STUFEN_DEFAULT: MaterialEintrag[] = [
-  { lrArt: 15, lrAnzahl: 7, anzahl: 1, reserve: 0, bezeichnungFirma: '7x7', preisProMeter: 0 },
-  { lrArt: 15, lrAnzahl: 12, anzahl: 1, reserve: 0, bezeichnungFirma: '12x7', preisProMeter: 0 },
-  { lrArt: 15, lrAnzahl: 24, anzahl: 1, reserve: 0, bezeichnungFirma: '24x7', preisProMeter: 0 },
+  { lrArt: 15, lrAnzahl: 7, anzahl: 1, reserve: 0, bezeichnungFirma: '7x7', preisProMeter: 0, farbe: '#22d3ee' },
+  { lrArt: 15, lrAnzahl: 12, anzahl: 1, reserve: 0, bezeichnungFirma: '12x7', preisProMeter: 0, farbe: '#eab308' },
+  { lrArt: 15, lrAnzahl: 24, anzahl: 1, reserve: 0, bezeichnungFirma: '24x7', preisProMeter: 0, farbe: '#84cc16' },
 ]
 
 const FIRMA_DEFAULT: MaterialProfil = {
-  trasse: { lrArt: 16, lrAnzahl: 4, anzahl: 1, reserve: 0, bezeichnungFirma: '4x20', preisProMeter: 0 },
-  hausanschluss: { lrArt: 15, lrAnzahl: 12, anzahl: 1, reserve: 0, bezeichnungFirma: '12x7', preisProMeter: 0 },
+  trasse: { lrArt: 16, lrAnzahl: 4, anzahl: 1, reserve: 0, bezeichnungFirma: '4x20', preisProMeter: 0, farbe: '#ec4899' },
+  hausanschluss: { lrArt: 15, lrAnzahl: 12, anzahl: 1, reserve: 0, bezeichnungFirma: '12x7', preisProMeter: 0, farbe: '#eab308' },
   kundenanschlussStufen: KUNDENANSCHLUSS_STUFEN_DEFAULT,
 }
 
@@ -94,8 +101,8 @@ const FIRMA_DEFAULT: MaterialProfil = {
 // werden hier vereinfacht als lr_reserv auf den Hauptverband gelegt statt
 // als eigene zweite Linie.
 const FOERDERUNG_DEFAULT: MaterialProfil = {
-  trasse: { lrArt: 13, lrAnzahl: 7, anzahl: 1, reserve: 1, bezeichnungFirma: '7x14 (Förderung-Standard)', preisProMeter: 0 },
-  hausanschluss: { lrArt: 6, lrAnzahl: 1, anzahl: 1, reserve: 0, bezeichnungFirma: 'GIS-NB Hauszuführung ≥1x10/6', preisProMeter: 0 },
+  trasse: { lrArt: 13, lrAnzahl: 7, anzahl: 1, reserve: 1, bezeichnungFirma: '7x14 (Förderung-Standard)', preisProMeter: 0, farbe: '#be123c' },
+  hausanschluss: { lrArt: 6, lrAnzahl: 1, anzahl: 1, reserve: 0, bezeichnungFirma: 'GIS-NB Hauszuführung ≥1x10/6', preisProMeter: 0, farbe: '#eab308' },
   kundenanschlussStufen: KUNDENANSCHLUSS_STUFEN_DEFAULT,
 }
 
@@ -172,19 +179,30 @@ export function profilName(bundesfoerderung: boolean | undefined): MaterialProfi
 // berechneHausanschlussAnzahlProSegment) die kleinste ausreichende Stufe des
 // Kundenanschluss-Sammelverbands — reicht keine Stufe aus, wird die größte
 // genommen (Grenzfall: sehr große Zone vor einem großen NVT).
+//
+// Reserve eingerechnet (2026-08-12, Alex: "ein 24x7 darf nie zu 100 % voll
+// sein, falls noch ein Grundstück dazukommt") — der Bedarf wird VOR der
+// Stufenwahl um denselben 15%-Reserve-Anteil erhöht wie beim GIS-NB-
+// Faserzahl-Reservepolster (RN 4), damit eine Stufe nicht zufällig exakt bis
+// zum letzten Röhrchen ausgereizt wird.
 export function waehleKundenanschlussStufe(profil: MaterialProfil, hausanschlussAnzahl: number): MaterialEintrag {
+  const bedarfMitReserve = Math.ceil(hausanschlussAnzahl * (1 + RESERVE_ANTEIL))
   const stufen = [...profil.kundenanschlussStufen].sort((a, b) => a.lrAnzahl - b.lrAnzahl)
-  return stufen.find((s) => s.lrAnzahl >= hausanschlussAnzahl) ?? stufen[stufen.length - 1]
+  return stufen.find((s) => s.lrAnzahl >= bedarfMitReserve) ?? stufen[stufen.length - 1]
 }
 
-// "Volle Box"-Variante: deckt den Bedarf (typischerweise die nominale
-// NVT-Kapazität, siehe berechneNvtKapazitaetsbedarfProSegment) mit mehreren
-// Bündeln der GRÖSSTEN verfügbaren Stufe ab (z.B. 120 → 5x 24x7), statt eine
-// einzelne passende Stufe zu wählen — das entspricht "Box vollplanen" als
-// bewusst großzügigerer Praxis gegenüber dem tatsächlichen Bedarf.
+// "Box mit Reserve"-Variante: deckt den Bedarf (typischerweise die nominale
+// NVT-Kapazität, siehe berechneNvtKapazitaetsbedarfProSegment) PLUS densel­ben
+// 15%-Reserve-Anteil mit mehreren Bündeln der GRÖSSTEN verfügbaren Stufe ab
+// (z.B. 120 + 15% → 138 → 6x 24x7 = 144, nicht exakt 5x 24x7 = 120) — die Box
+// soll wenn möglich NICHT zu 100 % ausgereizt sein, außer es geht rechnerisch
+// nicht anders (2026-08-12, Alex-Korrektur: "der NVT soll nicht
+// standardmäßig vollgeplant sein, sondern Reserven haben, wie's die GIS-NB
+// ja auch vorschreiben").
 export function berechneKundenanschlussVerbaende(profil: MaterialProfil, bedarf: number): MaterialEintrag {
   const stufen = [...profil.kundenanschlussStufen].sort((a, b) => b.lrAnzahl - a.lrAnzahl)
   const groesste = stufen[0]
   if (!groesste || bedarf <= 0) return { ...groesste, anzahl: 0 }
-  return { ...groesste, anzahl: Math.max(1, Math.ceil(bedarf / groesste.lrAnzahl)) }
+  const bedarfMitReserve = Math.ceil(bedarf * (1 + RESERVE_ANTEIL))
+  return { ...groesste, anzahl: Math.max(1, Math.ceil(bedarfMitReserve / groesste.lrAnzahl)) }
 }

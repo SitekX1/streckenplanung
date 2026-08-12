@@ -9,7 +9,17 @@ import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
 import { Address, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
-import { ermittleBackboneSegmente } from '../lib/faserdimensionierung'
+import {
+  ermittleBackboneSegmente,
+  berechneHausanschlussAnzahlProSegment,
+  berechneNvtKapazitaetsbedarfProSegment,
+} from '../lib/faserdimensionierung'
+import {
+  aktivesMaterialProfil,
+  berechneKundenanschlussVerbaende,
+  ladeMaterialkatalog,
+  waehleKundenanschlussStufe,
+} from '../lib/materialkatalog'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -140,7 +150,7 @@ interface MapViewProps {
   trasseFarbe: string
   hausanschlussfarbe: string
   feldwegFarbe: string
-  backboneFarbe: string
+  bundesfoerderung: boolean
   trassePfadeKinds: WegKind[]
   trasseMethode?: string
   nichtAngebundeneAdressen?: Address[]
@@ -330,7 +340,7 @@ type TileVariante = 'satellit' | 'osm'
 const MapView = memo(function MapView({
   adressen, startpunkt, startpunktSetzenAktiv, trasse, trassePfade, hausanschluesse,
   editierbarAktiv, aktiveOrteKeys, adressFarbe, trasseFarbe, hausanschlussfarbe, trasseMethode,
-  feldwegFarbe, backboneFarbe, trassePfadeKinds,
+  feldwegFarbe, bundesfoerderung, trassePfadeKinds,
   nichtAngebundeneAdressen = [],
   aussiedlerhofUuids = new Set(), aussiedlerhofMarkierenAktiv = false, nvtStandorte = [],
   nvtManuellSetzenAktiv = false, schachtStandorte = [], schachtSetzenAktiv = false,
@@ -399,29 +409,45 @@ const MapView = memo(function MapView({
   // dessen useEffect (in TrasseNetzwerk/TrasseKlickbar) daraufhin sämtliche
   // Leaflet-Layer der kompletten Trasse abbaut und neu aufbaut — bei
   // größeren Projekten spürbar langsamer mit jeder Interaktion.
-  // Welche Segmente sind echte Backbone-Verbindungen (NVT-zu-NVT/Schacht,
-  // inkl. Startpunkt-zum-nächsten-Verteiler) — farblich abgesetzt von der
-  // normalen Kundenverband-Zuführung, siehe ermittleBackboneSegmente() in
-  // faserdimensionierung.ts (gleiche Logik wie im GIS-NB-Export). Nur für die
-  // normale Ansicht (außerhalb des Bearbeitungsmodus) berücksichtigt — die
-  // Edit-Modus-Einfärbung (localPfade weiter unten) bleibt unverändert bei
-  // Straße/Feldweg, um das ohnehin fragile Drag-Verhalten dort nicht
+  // Kartenfarbe je Trasse-Segment nach zugewiesenem Material (2026-08-12,
+  // Alex: "7x7, 12x7, 24x7, 4x20, 2x20, 7x14 jeweils eine andere Farbe") —
+  // dieselbe Zuordnungslogik wie im GIS-NB-Export (gisNbExport.ts):
+  // Backbone-Segmente (siehe ermittleBackboneSegmente) bekommen die Farbe
+  // des Trasse-Materials, alle anderen (mit Hausanschlüssen dahinter) die
+  // Farbe der jeweils gewählten Kundenanschluss-Sammelverband-Stufe. Nur für
+  // die normale Ansicht (außerhalb des Bearbeitungsmodus) berücksichtigt —
+  // die Edit-Modus-Einfärbung (localPfade weiter unten) bleibt unverändert
+  // bei Straße/Feldweg, um das ohnehin fragile Drag-Verhalten dort nicht
   // anzufassen.
-  const backboneProSegment = useMemo(
-    () =>
-      startpunkt && trassePfade.length > 0
-        ? ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
-        : trassePfade.map(() => false),
-    [trassePfade, startpunkt, nvtStandorte, schachtStandorte]
-  )
-  const trassePfadeOhneFeldweg = useMemo(
-    () => trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track' && !backboneProSegment[i]),
-    [trassePfade, trassePfadeKinds, backboneProSegment]
-  )
-  const trassePfadeBackbone = useMemo(
-    () => trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track' && backboneProSegment[i]),
-    [trassePfade, trassePfadeKinds, backboneProSegment]
-  )
+  const materialProfil = useMemo(() => aktivesMaterialProfil(bundesfoerderung), [bundesfoerderung])
+  const materialKatalog = useMemo(() => ladeMaterialkatalog(), [])
+  const farbeProSegment = useMemo(() => {
+    if (!startpunkt || trassePfade.length === 0) return trassePfade.map(() => trasseFarbe)
+    const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
+    const bedarfProSegment = materialKatalog.kundenanschlussNachKapazitaet
+      ? berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
+      : berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
+    return trassePfade.map((_, i) => {
+      if (backbone[i]) return materialProfil.trasse.farbe
+      const bedarf = bedarfProSegment[i] ?? 0
+      if (bedarf <= 0) return trasseFarbe
+      const stufe = materialKatalog.kundenanschlussNachKapazitaet
+        ? berechneKundenanschlussVerbaende(materialProfil, bedarf)
+        : waehleKundenanschlussStufe(materialProfil, bedarf)
+      return stufe.farbe
+    })
+  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, materialProfil, materialKatalog, trasseFarbe])
+
+  const trassePfadeNachFarbeOhneFeldweg = useMemo(() => {
+    const gruppen = new Map<string, LatLng[][]>()
+    trassePfade.forEach((pfad, i) => {
+      if (trassePfadeKinds[i] === 'track') return
+      const farbe = farbeProSegment[i] ?? trasseFarbe
+      if (!gruppen.has(farbe)) gruppen.set(farbe, [])
+      gruppen.get(farbe)!.push(pfad)
+    })
+    return [...gruppen.entries()]
+  }, [trassePfade, trassePfadeKinds, farbeProSegment, trasseFarbe])
   const trassePfadeNurFeldweg = useMemo(
     () => trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track'),
     [trassePfade, trassePfadeKinds]
@@ -1102,8 +1128,9 @@ const MapView = memo(function MapView({
           trassePfade.length > 0
             ? (
               <>
-                <TrasseNetzwerk pfade={trassePfadeOhneFeldweg} farbe={trasseFarbe} opacity={0.9} />
-                <TrasseNetzwerk pfade={trassePfadeBackbone} farbe={backboneFarbe} opacity={0.9} />
+                {trassePfadeNachFarbeOhneFeldweg.map(([farbe, pfade]) => (
+                  <TrasseNetzwerk key={farbe} pfade={pfade} farbe={farbe} opacity={0.9} />
+                ))}
                 <TrasseNetzwerk pfade={trassePfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.9} />
                 <TrasseKlickbar pfade={trassePfade} ausgewaehlterIdx={ausgewaehltesSegmentNormal}
                   onKlick={handleSegmentNormalKlick} />

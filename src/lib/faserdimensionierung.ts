@@ -7,7 +7,10 @@ import { baueGraph, naechsterKnoten, dijkstraVon } from './nvt'
 // von mindestens 15 %". 4 Fasern/Wohneinheit deckt die 2-pro-Gebäude-Grenze
 // automatisch ab, sobald ein Gebäude mindestens 1 Wohneinheit hat.
 const FASERN_PRO_WOHNEINHEIT = 4
-const RESERVE_ANTEIL = 0.15
+// GIS-NB RN 4: "Kapazitätsreserve von mindestens 15 % der kalkulierten
+// Anzahl von Leerrohren" — exportiert, da materialkatalog.ts denselben
+// Reserve-Anteil für die Kundenanschluss-Verband-Dimensionierung nutzt.
+export const RESERVE_ANTEIL = 0.15
 
 function fasernFuerAdresse(adresse: Address | undefined): number {
   const wohneinheiten = Math.max(1, adresse?.hh ?? 1)

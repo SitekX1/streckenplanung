@@ -33,7 +33,6 @@ interface SidebarProps {
   trasseFarbe: string
   hausanschlussfarbe: string
   feldwegFarbe: string
-  backboneFarbe: string
   canUndo: boolean
   undoCount: number
   historyLabels: string[]
@@ -46,7 +45,6 @@ interface SidebarProps {
   onTrasseFarbeAendern: (farbe: string) => void
   onHausanschlussFarbeAendern: (farbe: string) => void
   onFeldwegFarbeAendern: (farbe: string) => void
-  onBackboneFarbeAendern: (farbe: string) => void
   onOrtToggle: (key: string) => void
   onAlleOrteToggle: (alleAktiv: boolean) => void
   onExcelImport: (file: File) => void
@@ -146,7 +144,6 @@ export default function Sidebar({
   trasseFarbe,
   hausanschlussfarbe,
   feldwegFarbe,
-  backboneFarbe,
   canUndo,
   undoCount,
   historyLabels,
@@ -159,7 +156,6 @@ export default function Sidebar({
   onTrasseFarbeAendern,
   onHausanschlussFarbeAendern,
   onFeldwegFarbeAendern,
-  onBackboneFarbeAendern,
   onExcelImport,
   onStartpunktSetzen,
   onStartpunktZuruecksetzen,
@@ -710,12 +706,10 @@ export default function Sidebar({
           trasseFarbe={trasseFarbe}
           hausanschlussfarbe={hausanschlussfarbe}
           feldwegFarbe={feldwegFarbe}
-          backboneFarbe={backboneFarbe}
           onAdressFarbeAendern={onAdressFarbeAendern}
           onTrasseFarbeAendern={onTrasseFarbeAendern}
           onHausanschlussFarbeAendern={onHausanschlussFarbeAendern}
           onFeldwegFarbeAendern={onFeldwegFarbeAendern}
-          onBackboneFarbeAendern={onBackboneFarbeAendern}
           onClose={() => setEinstellungenOffen(false)}
         />
       )}

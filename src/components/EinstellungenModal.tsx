@@ -15,12 +15,10 @@ interface EinstellungenModalProps {
   trasseFarbe: string
   hausanschlussfarbe: string
   feldwegFarbe: string
-  backboneFarbe: string
   onAdressFarbeAendern: (farbe: string) => void
   onTrasseFarbeAendern: (farbe: string) => void
   onHausanschlussFarbeAendern: (farbe: string) => void
   onFeldwegFarbeAendern: (farbe: string) => void
-  onBackboneFarbeAendern: (farbe: string) => void
   onClose: () => void
 }
 
@@ -54,8 +52,8 @@ function verkleinereLogo(file: File): Promise<{ dataUrl: string; breite: number;
 }
 
 export default function EinstellungenModal({
-  adressFarbe, trasseFarbe, hausanschlussfarbe, feldwegFarbe, backboneFarbe,
-  onAdressFarbeAendern, onTrasseFarbeAendern, onHausanschlussFarbeAendern, onFeldwegFarbeAendern, onBackboneFarbeAendern,
+  adressFarbe, trasseFarbe, hausanschlussfarbe, feldwegFarbe,
+  onAdressFarbeAendern, onTrasseFarbeAendern, onHausanschlussFarbeAendern, onFeldwegFarbeAendern,
   onClose,
 }: EinstellungenModalProps) {
   // Geräteweit persistent per localStorage, unabhängig vom einzelnen Projekt
@@ -107,14 +105,24 @@ export default function EinstellungenModal({
     return (
       <div className="flex flex-col gap-1.5 rounded-lg p-2.5" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
         <span className="text-xs text-gray-400">{label}</span>
-        <input
-          type="text"
-          value={eintrag.bezeichnungFirma}
-          onChange={(e) => aktualisiereMaterial(profil, ebene, { bezeichnungFirma: e.target.value })}
-          placeholder="Bezeichnung (z.B. 24x7)"
-          className="px-2.5 py-1.5 rounded text-sm outline-none"
-          style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
-        />
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            value={eintrag.bezeichnungFirma}
+            onChange={(e) => aktualisiereMaterial(profil, ebene, { bezeichnungFirma: e.target.value })}
+            placeholder="Bezeichnung (z.B. 24x7)"
+            className="flex-1 min-w-0 px-2.5 py-1.5 rounded text-sm outline-none"
+            style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}
+          />
+          <input
+            type="color"
+            title="Kartenfarbe für dieses Material"
+            value={eintrag.farbe}
+            onChange={(e) => aktualisiereMaterial(profil, ebene, { farbe: e.target.value })}
+            className="w-9 h-8 rounded cursor-pointer border-0 p-0 shrink-0"
+            style={{ background: 'transparent' }}
+          />
+        </div>
         <select
           value={eintrag.lrArt}
           onChange={(e) => aktualisiereMaterial(profil, ebene, { lrArt: Number(e.target.value) })}
@@ -169,11 +177,14 @@ export default function EinstellungenModal({
       <span className="text-xs text-gray-400">Kundenanschluss-Sammelverband (Doppelbelegung auf Trasse-Segmenten)</span>
       <span className="text-[10px] text-gray-600 -mt-1">Kleinste ausreichende Stufe wird je Segment automatisch gewählt, je nach Anzahl versorgter Hausanschlüsse dahinter.</span>
       {katalog[profil].kundenanschlussStufen.map((stufe, i) => (
-        <div key={i} className="grid grid-cols-4 gap-1.5 items-end">
+        <div key={i} className="grid grid-cols-5 gap-1.5 items-end">
           <input type="text" value={stufe.bezeichnungFirma}
             onChange={(e) => aktualisiereStufe(profil, i, { bezeichnungFirma: e.target.value })}
             placeholder="z.B. 7x7"
             className="px-2 py-1 rounded text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
+          <input type="color" title="Kartenfarbe für diese Stufe" value={stufe.farbe}
+            onChange={(e) => aktualisiereStufe(profil, i, { farbe: e.target.value })}
+            className="w-full h-7 rounded cursor-pointer border-0 p-0" style={{ background: 'transparent' }} />
           <select value={stufe.lrArt}
             onChange={(e) => aktualisiereStufe(profil, i, { lrArt: Number(e.target.value) })}
             className="px-1.5 py-1 rounded text-[10px] outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }}>
@@ -321,8 +332,7 @@ export default function EinstellungenModal({
           <div className="flex flex-col gap-2.5">
             {[
               { label: 'Adressen', value: adressFarbe, onChange: onAdressFarbeAendern },
-              { label: 'Trasse (Kundenverband)', value: trasseFarbe, onChange: onTrasseFarbeAendern },
-              { label: 'Trasse (Backbone)', value: backboneFarbe, onChange: onBackboneFarbeAendern },
+              { label: 'Trasse (Fallback, ohne Materialzuordnung)', value: trasseFarbe, onChange: onTrasseFarbeAendern },
               { label: 'Feldweg-Anteil', value: feldwegFarbe, onChange: onFeldwegFarbeAendern },
               { label: 'Hausanschlüsse', value: hausanschlussfarbe, onChange: onHausanschlussFarbeAendern },
             ].map(({ label, value, onChange }) => (
@@ -343,7 +353,7 @@ export default function EinstellungenModal({
         <div>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Materialkatalog</p>
           <p className="text-xs text-gray-600 mb-2.5">
-            Wird pro Projekt automatisch angewendet — je nachdem, ob unten in der Sidebar &bdquo;Bundesförderung&ldquo; aktiviert ist.
+            Wird pro Projekt automatisch angewendet — je nachdem, ob unten in der Sidebar &bdquo;Bundesförderung&ldquo; aktiviert ist. Die Farbe je Material-Typ (rechts neben der Bezeichnung) bestimmt auch die Einfärbung der Trasse auf der Karte.
           </p>
           <label
             className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg mb-3 cursor-pointer"

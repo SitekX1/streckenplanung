@@ -211,11 +211,6 @@ export default function Home() {
   const [trasseFarbe, setTrasseFarbe] = useState('#3b82f6')
   const [hausanschlussfarbe, setHausanschlussfarbe] = useState('#ef4444')
   const [feldwegFarbe, setFeldwegFarbe] = useState('#d97706')
-  // Backbone-Trasse (NVT-zu-NVT-/Schacht-Verbindungen, siehe
-  // ermittleBackboneSegmente) farblich abgesetzt von der normalen
-  // Kundenverband-Zuführung (trasseFarbe) — auf Wunsch von Alex 2026-08-12,
-  // statt einer Punkt-Strich-Symbolik machen sie das über Farben.
-  const [backboneFarbe, setBackboneFarbe] = useState('#ec4899')
   const [history, setHistory] = useState<HistorySnapshot[]>([])
   // Adress-UUIDs, die bereits Teil einer generierten/erweiterten Trasse sind —
   // getrennt von "hat Hausanschluss", da das zwei verschiedene Arbeitsschritte
@@ -1026,7 +1021,6 @@ export default function Home() {
         trasseFarbe={trasseFarbe}
         hausanschlussfarbe={hausanschlussfarbe}
         feldwegFarbe={feldwegFarbe}
-        backboneFarbe={backboneFarbe}
         canUndo={history.length > 0}
         undoCount={history.length}
         historyLabels={history.map((h) => h.label)}
@@ -1039,7 +1033,6 @@ export default function Home() {
         onTrasseFarbeAendern={setTrasseFarbe}
         onHausanschlussFarbeAendern={setHausanschlussfarbe}
         onFeldwegFarbeAendern={setFeldwegFarbe}
-        onBackboneFarbeAendern={setBackboneFarbe}
         onExcelImport={handleExcelImport}
         onOrtToggle={handleOrtToggle}
         onAlleOrteToggle={handleAlleOrteToggle}
@@ -1071,7 +1064,7 @@ export default function Home() {
           trasseFarbe={trasseFarbe}
           hausanschlussfarbe={hausanschlussfarbe}
           feldwegFarbe={feldwegFarbe}
-          backboneFarbe={backboneFarbe}
+          bundesfoerderung={bundesfoerderung}
           trassePfadeKinds={trassePfadeKinds}
           trasseMethode={trasseMethode}
           nichtAngebundeneAdressen={nichtAngebundeneAdressen}
