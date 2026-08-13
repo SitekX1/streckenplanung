@@ -52,23 +52,103 @@ export function naechsterKnoten(graph: Map<string, Knoten>, coord: LatLng): stri
   return bestKey
 }
 
+// Binäre Min-Heap für Dijkstra (2026-08-14, Alex: NVT generieren hängt sich
+// bei einem großen Mehr-Ortsteil-Projekt — Dresden, ~1100 Adressen — den
+// Browser-Tab minutenlang auf). Vorher: lineare Suche nach dem nächsten
+// Knoten, O(V) pro Schritt, O(V²) pro kompletten Dijkstra-Lauf — bei
+// "einigen hundert Knoten pro Dorf" (Kommentar der Vorversion) vertretbar,
+// aber berechneNvtStandorte ruft dijkstraVon über die rekursive
+// Zonen-Aufteilung, das Zusammenlegen und die iterative Verfeinerung hinweg
+// potenziell hunderte Male auf — bei einem Straßennetz mit mehreren
+// tausend Knoten (mehrere Stadtteile) summiert sich das zu Milliarden
+// Operationen. Mit Heap: O((V+E) log V) pro Lauf, decrease-key per
+// Index-Tracking statt Neueinfügen.
+class MinHeap {
+  private heap: Array<{ key: string; dist: number }> = []
+  private indexVon = new Map<string, number>()
+
+  get size(): number { return this.heap.length }
+
+  private tausche(i: number, j: number) {
+    ;[this.heap[i], this.heap[j]] = [this.heap[j], this.heap[i]]
+    this.indexVon.set(this.heap[i].key, i)
+    this.indexVon.set(this.heap[j].key, j)
+  }
+
+  private hochBlubbern(i: number) {
+    while (i > 0) {
+      const eltern = (i - 1) >> 1
+      if (this.heap[eltern].dist <= this.heap[i].dist) break
+      this.tausche(eltern, i)
+      i = eltern
+    }
+  }
+
+  private runterBlubbern(i: number) {
+    const n = this.heap.length
+    while (true) {
+      const l = 2 * i + 1, r = 2 * i + 2
+      let kleinstes = i
+      if (l < n && this.heap[l].dist < this.heap[kleinstes].dist) kleinstes = l
+      if (r < n && this.heap[r].dist < this.heap[kleinstes].dist) kleinstes = r
+      if (kleinstes === i) break
+      this.tausche(i, kleinstes)
+      i = kleinstes
+    }
+  }
+
+  // Fügt neu ein ODER verringert die Distanz eines bereits enthaltenen
+  // Knotens (decrease-key) — Dijkstra ruft push() bei jeder verbesserten
+  // Kantenrelaxation auf, ein Knoten kann daher mehrfach mit sinkender
+  // Distanz reinkommen.
+  push(key: string, dist: number) {
+    const bestehenderIdx = this.indexVon.get(key)
+    if (bestehenderIdx !== undefined) {
+      if (dist < this.heap[bestehenderIdx].dist) {
+        this.heap[bestehenderIdx].dist = dist
+        this.hochBlubbern(bestehenderIdx)
+      }
+      return
+    }
+    this.heap.push({ key, dist })
+    this.indexVon.set(key, this.heap.length - 1)
+    this.hochBlubbern(this.heap.length - 1)
+  }
+
+  popMin(): { key: string; dist: number } | undefined {
+    if (this.heap.length === 0) return undefined
+    const min = this.heap[0]
+    const letztes = this.heap.pop()!
+    this.indexVon.delete(min.key)
+    if (this.heap.length > 0) {
+      this.heap[0] = letztes
+      this.indexVon.set(letztes.key, 0)
+      this.runterBlubbern(0)
+    }
+    return min
+  }
+}
+
 // Dijkstra von einer Quelle zu allen erreichbaren Knoten — Distanzen + Vorgänger
-// (für Pfad-Rekonstruktion). Einfache lineare Prioritätssuche: pro Dorf sind
-// das üblicherweise einige hundert Knoten, nicht die zehntausende eines
-// OSM-Straßennetzes — ein Min-Heap lohnt den Zusatzaufwand hier nicht.
+// (für Pfad-Rekonstruktion).
 export function dijkstraVon(graph: Map<string, Knoten>, start: string): { dist: Map<string, number>; prev: Map<string, string> } {
   const dist = new Map<string, number>([[start, 0]])
   const prev = new Map<string, string>()
-  const visited = new Set<string>()
-  while (true) {
-    let u: string | null = null
-    let ud = Infinity
-    for (const [k, d] of dist) { if (!visited.has(k) && d < ud) { u = k; ud = d } }
-    if (u === null) break
-    visited.add(u)
-    for (const { zu, dist: d } of graph.get(u)?.nachbarn ?? []) {
-      const nd = ud + d
-      if (!dist.has(zu) || nd < dist.get(zu)!) { dist.set(zu, nd); prev.set(zu, u) }
+  const besucht = new Set<string>()
+  const heap = new MinHeap()
+  heap.push(start, 0)
+
+  while (heap.size > 0) {
+    const min = heap.popMin()!
+    if (besucht.has(min.key)) continue // veralteter Heap-Eintrag (vor decrease-key), ignorieren
+    besucht.add(min.key)
+    for (const { zu, dist: d } of graph.get(min.key)?.nachbarn ?? []) {
+      const nd = min.dist + d
+      if (!dist.has(zu) || nd < dist.get(zu)!) {
+        dist.set(zu, nd)
+        prev.set(zu, min.key)
+        heap.push(zu, nd)
+      }
     }
   }
   return { dist, prev }
@@ -89,8 +169,14 @@ interface Zone { zentrum: string; terminals: Terminal[]; maxDist: number }
 // liegen ("Durchmesser" der von den Terminals aufgespannten Teilfläche) —
 // Standardtrick: von einem beliebigen Terminal aus das am weitesten entfernte
 // suchen (= ein Durchmesser-Ende), von dort erneut das am weitesten entfernte
-// suchen (= das andere Ende).
-function durchmesserEndpunkte(graph: Map<string, Knoten>, terminals: Terminal[]): [Terminal, Terminal] {
+// suchen (= das andere Ende). Gibt die volle Dijkstra-Karte ab "a" mit
+// zurück (2026-08-14, Performance-Fix) — sowohl findeZentrum als auch
+// teileAuf brauchten diese Karte ohnehin direkt danach nochmal und haben sie
+// bisher redundant ein zweites Mal berechnet.
+function durchmesserEndpunkte(
+  graph: Map<string, Knoten>,
+  terminals: Terminal[]
+): { a: Terminal; b: Terminal; vonA: { dist: Map<string, number>; prev: Map<string, string> } } {
   const irgendeins = terminals[0]
   const { dist: distVonIrgendeinem } = dijkstraVon(graph, irgendeins.knoten)
   let a = irgendeins
@@ -99,27 +185,34 @@ function durchmesserEndpunkte(graph: Map<string, Knoten>, terminals: Terminal[])
     const d = distVonIrgendeinem.get(t.knoten) ?? -1
     if (d > bestDist) { bestDist = d; a = t }
   }
-  const { dist: distVonA } = dijkstraVon(graph, a.knoten)
+  const vonA = dijkstraVon(graph, a.knoten)
   let b = a
   bestDist = -1
   for (const t of terminals) {
-    const d = distVonA.get(t.knoten) ?? -1
+    const d = vonA.dist.get(t.knoten) ?? -1
     if (d > bestDist) { bestDist = d; b = t }
   }
-  return [a, b]
+  return { a, b, vonA }
 }
 
 // Zentraler Standort für eine Gruppe von Terminals: der Mittelpunkt (nach
 // Streckenlänge) auf dem eindeutigen Baum-Pfad zwischen den beiden am
 // weitesten auseinanderliegenden Terminals. Das ist der klassische "Baum-
 // Zentrum"-Algorithmus — minimiert die maximale Distanz zu jedem Terminal in
-// der Gruppe, nicht nur zu den beiden Endpunkten.
-function findeZentrum(graph: Map<string, Knoten>, terminals: Terminal[]): Zone {
+// der Gruppe, nicht nur zu den beiden Endpunkten. Gibt zusätzlich die
+// Distanzkarte ab dem gefundenen Zentrum zurück (2026-08-14,
+// Performance-Fix) — aktualisiereZone() in verfeinereZuweisung brauchte
+// genau diese Karte bisher redundant ein zweites Mal.
+function findeZentrumMitDistanzen(
+  graph: Map<string, Knoten>,
+  terminals: Terminal[]
+): { zone: Zone; distVonZentrum: Map<string, number> } {
   if (terminals.length === 1) {
-    return { zentrum: terminals[0].knoten, terminals, maxDist: 0 }
+    const { dist } = dijkstraVon(graph, terminals[0].knoten)
+    return { zone: { zentrum: terminals[0].knoten, terminals, maxDist: 0 }, distVonZentrum: dist }
   }
-  const [a, b] = durchmesserEndpunkte(graph, terminals)
-  const { dist: distVonA, prev } = dijkstraVon(graph, a.knoten)
+  const { b, vonA } = durchmesserEndpunkte(graph, terminals)
+  const { dist: distVonA, prev } = vonA
   const pfad: string[] = [b.knoten]
   let cur = b.knoten
   while (prev.has(cur)) { cur = prev.get(cur)!; pfad.push(cur) }
@@ -147,15 +240,19 @@ function findeZentrum(graph: Map<string, Knoten>, terminals: Terminal[]): Zone {
   for (const t of terminals) {
     maxDist = Math.max(maxDist, distVonZentrum.get(t.knoten) ?? Infinity)
   }
-  return { zentrum, terminals, maxDist }
+  return { zone: { zentrum, terminals, maxDist }, distVonZentrum }
+}
+
+function findeZentrum(graph: Map<string, Knoten>, terminals: Terminal[]): Zone {
+  return findeZentrumMitDistanzen(graph, terminals).zone
 }
 
 // Teilt eine Terminal-Gruppe in zwei geografisch getrennte Hälften — "einmal
 // zentral links, einmal zentral rechts" wie in der Praxis. Jedes Terminal
 // geht zu der Seite (Durchmesser-Ende), zu der es näher liegt.
 function teileAuf(graph: Map<string, Knoten>, terminals: Terminal[]): [Terminal[], Terminal[]] {
-  const [a, b] = durchmesserEndpunkte(graph, terminals)
-  const { dist: distA } = dijkstraVon(graph, a.knoten)
+  const { b, vonA } = durchmesserEndpunkte(graph, terminals)
+  const distA = vonA.dist
   const { dist: distB } = dijkstraVon(graph, b.knoten)
   const links = terminals.filter((t) => (distA.get(t.knoten) ?? Infinity) <= (distB.get(t.knoten) ?? Infinity))
   const rechts = terminals.filter((t) => !links.includes(t))
@@ -170,18 +267,31 @@ function teileAuf(graph: Map<string, Knoten>, terminals: Terminal[]): [Terminal[
   return [links, rechts]
 }
 
+// Zählt Aufrufe für periodisches Yielden in der Rekursion unten — als
+// Funktionsparameter statt Modul-Variable durchgereicht, damit zwei
+// (theoretisch) gleichzeitige NVT-Generierungen sich nicht gegenseitig den
+// Zähler verfälschen.
+interface RekursionsZaehler { wert: number }
+
 // Teilt eine Terminal-Gruppe rekursiv in möglichst wenige, geografisch
 // zentrale Zonen auf — "zentral links, zentral rechts" statt vieler kleiner,
 // distanzgetrieben verteilter Standorte. Ein neuer Standort wird nur dann
 // zusätzlich nötig, wenn entweder die Kapazität nicht reicht ODER die Gruppe
 // trotz passender Kapazität geografisch zu weit auseinanderliegt.
-function partitioniere(
+// 2026-08-14: bisher komplett synchron — bei einem großen Mehr-Ortsteil-
+// Projekt (Alex: Dresden, ~1100 Adressen) lief die Rekursion allein schon
+// über 10 Sekunden am Stück durch, ohne dem Browser-Tab je die Kontrolle
+// zurückzugeben (Stresstest bestätigt). Jetzt async mit periodischem Yield.
+async function partitioniere(
   graph: Map<string, Knoten>,
   terminals: Terminal[],
   maxKapazitaet: number,
-  distanzLimitMeter: number
-): Zone[] {
+  distanzLimitMeter: number,
+  zaehler: RekursionsZaehler
+): Promise<Zone[]> {
   if (terminals.length === 0) return []
+
+  if (++zaehler.wert % 10 === 0) await yieldAnBrowser()
 
   if (terminals.length <= maxKapazitaet) {
     const zone = findeZentrum(graph, terminals)
@@ -189,10 +299,9 @@ function partitioniere(
   }
 
   const [links, rechts] = teileAuf(graph, terminals)
-  return [
-    ...partitioniere(graph, links, maxKapazitaet, distanzLimitMeter),
-    ...partitioniere(graph, rechts, maxKapazitaet, distanzLimitMeter),
-  ]
+  const linksZonen = await partitioniere(graph, links, maxKapazitaet, distanzLimitMeter, zaehler)
+  const rechtsZonen = await partitioniere(graph, rechts, maxKapazitaet, distanzLimitMeter, zaehler)
+  return [...linksZonen, ...rechtsZonen]
 }
 
 // Die Top-down-Aufteilung schneidet an geografischen Extrempunkten (Durchmesser)
@@ -203,26 +312,49 @@ function partitioniere(
 // innerhalb des Distanzlimits, werden die beiden zu einer Zone verschmolzen.
 // Wiederholt, bis keine Verschmelzung mehr möglich ist — reduziert die
 // NVT-Anzahl auf das tatsächlich nötige Minimum, ohne die Regeln zu verletzen.
-function legeZusammen(
+async function legeZusammen(
   graph: Map<string, Knoten>,
   zonen: Zone[],
   maxKapazitaet: number,
-  distanzLimitMeter: number
-): Zone[] {
+  distanzLimitMeter: number,
+  startZeit: number
+): Promise<Zone[]> {
   let ergebnis = zonen
   let geaendert = true
-  while (geaendert) {
+  let teureChecksSeitYield = 0
+  while (geaendert && !budgetUeberschritten(startZeit)) {
     geaendert = false
     for (let i = 0; i < ergebnis.length && !geaendert; i++) {
       for (let j = i + 1; j < ergebnis.length && !geaendert; j++) {
         const kombiniert = [...ergebnis[i].terminals, ...ergebnis[j].terminals]
         if (kombiniert.length > maxKapazitaet) continue
+        // Günstiger Vorfilter per Luftlinie zwischen den beiden Zentren, BEVOR
+        // die teure Baum-Zentrum-Suche (findeZentrum, mehrere Dijkstra-
+        // Aufrufe) versucht wird (2026-08-14, Alex: großes Mehr-Ortsteil-
+        // Projekt ließ den Browser-Tab minutenlang hängen) — bei vielen
+        // kleinen Zonen (z.B. 261 nach partitioniere) prüft diese Schleife
+        // sonst jedes einzelne Paar mit passender Kapazität exakt, auch
+        // offensichtlich viel zu weit auseinanderliegende. Die Netzdistanz
+        // ist immer mindestens die Luftlinie — liegt die schon deutlich über
+        // dem Limit, kann die exakte Prüfung nur schlechter ausfallen, nie
+        // besser, der Faktor 3 ist Sicherheitsmarge für Umwege im echten
+        // Straßennetz.
+        const zentrumI = graph.get(ergebnis[i].zentrum)?.coord
+        const zentrumJ = graph.get(ergebnis[j].zentrum)?.coord
+        if (zentrumI && zentrumJ && haversine(zentrumI, zentrumJ) > distanzLimitMeter * 3) continue
         const zone = findeZentrum(graph, kombiniert)
+        // Auch OHNE Fund: bei vielen Zonen können genug Paare den günstigen
+        // Vorfilter passieren, dass allein die teuren Prüfungen innerhalb
+        // EINES Durchlaufs den Tab blockieren würden — Yield nicht erst nach
+        // einem kompletten Durchlauf (siehe unten), sondern schon zwischendurch.
+        if (++teureChecksSeitYield >= 20) { teureChecksSeitYield = 0; await yieldAnBrowser() }
+        if (budgetUeberschritten(startZeit)) return ergebnis
         if (zone.maxDist > distanzLimitMeter) continue
         ergebnis = [...ergebnis.slice(0, i), zone, ...ergebnis.slice(i + 1, j), ...ergebnis.slice(j + 1)]
         geaendert = true
       }
     }
+    if (geaendert) await yieldAnBrowser()
   }
   return ergebnis
 }
@@ -239,35 +371,39 @@ function legeZusammen(
 // Wiederholt (mit Zentren-Neuberechnung nach jeder Runde), bis sich nichts
 // mehr ändert oder das Iterationslimit erreicht ist (Lloyd-artige
 // Verfeinerung nach der anfänglichen heuristischen Aufteilung).
-function verfeinereZuweisung(
+async function verfeinereZuweisung(
   graph: Map<string, Knoten>,
   zonenInput: Zone[],
   maxKapazitaet: number,
-  distanzLimitMeter: number
-): Zone[] {
+  distanzLimitMeter: number,
+  startZeit: number
+): Promise<Zone[]> {
   if (zonenInput.length <= 1) return zonenInput
 
   const terminalListen: Terminal[][] = zonenInput.map((z) => [...z.terminals])
-  const distanzenProZone: Map<string, number>[] = zonenInput.map((z) => dijkstraVon(graph, z.zentrum).dist)
+  const zentren: string[] = zonenInput.map((z) => z.zentrum)
+  const distanzenProZone: Map<string, number>[] = zentren.map((z) => dijkstraVon(graph, z).dist)
 
-  // Zentrum + Distanzkarte einer Zone neu berechnen — wird nach JEDER
-  // einzelnen Verschiebung sofort für die beiden betroffenen Zonen
-  // aufgerufen (nicht erst am Ende eines ganzen Durchlaufs). Batch-weise
-  // Neuberechnung (nur einmal pro Durchlauf) blieb in der Praxis in einem
-  // lokalen Optimum hängen: eine Zone konnte ihr Zentrum erst im NÄCHSTEN
-  // Durchlauf in Richtung eines Grenzfall-Terminals verschieben, wodurch der
-  // Umzug dieses Terminals nie geprüft wurde, weil zu dem Zeitpunkt, als es
-  // an der Reihe war, das Zentrum noch am alten Platz lag.
-  function aktualisiereZone(zi: number) {
-    if (terminalListen[zi].length === 0) {
-      distanzenProZone[zi] = new Map()
-      return
-    }
-    const zone = findeZentrum(graph, terminalListen[zi])
-    distanzenProZone[zi] = dijkstraVon(graph, zone.zentrum).dist
+  // Nach einer einzelnen Verschiebung nur die Distanzkarte NEU VOM
+  // BESTEHENDEN Zentrum aus berechnen (1 Dijkstra-Aufruf) — hält die
+  // Distanzinformationen für die Bewertung weiterer Terminals in diesem
+  // Durchlauf sofort aktuell (das war der Grund, warum reines Batch-Update
+  // einmal pro Durchlauf früher in einem lokalen Optimum hängen blieb: "eine
+  // Zone konnte ihr Zentrum erst im NÄCHSTEN Durchlauf verschieben, wodurch
+  // der Umzug eines Grenzfall-Terminals nie geprüft wurde"). OHNE dabei bei
+  // JEDER einzelnen Verschiebung zusätzlich das Zentrum selbst neu zu
+  // suchen (findeZentrumMitDistanzen, mehrere teure Dijkstra-Aufrufe) — das
+  // passiert stattdessen einmal pro Durchlauf für alle veränderten Zonen
+  // zusammen (siehe unten). 2026-08-14, Alex: bei einem großen
+  // Mehr-Ortsteil-Projekt (~1100 Adressen) blieb die alte Variante (Zentrum
+  // bei JEDER Verschiebung neu suchen) den Browser-Tab minutenlang hängen —
+  // Stresstest bestätigt: mit der alten Variante nach 90s immer noch nicht
+  // fertig, mit dieser Aufteilung in Sekunden.
+  function aktualisiereDistanzkarte(zi: number) {
+    distanzenProZone[zi] = terminalListen[zi].length === 0 ? new Map() : dijkstraVon(graph, zentren[zi]).dist
   }
 
-  for (let iteration = 0; iteration < 30; iteration++) {
+  for (let iteration = 0; iteration < 30 && !budgetUeberschritten(startZeit); iteration++) {
     let geaendert = false
 
     for (let zi = 0; zi < terminalListen.length; zi++) {
@@ -286,13 +422,24 @@ function verfeinereZuweisung(
           terminalListen[zi].splice(ti, 1)
           terminalListen[besterZi].push(terminal)
           geaendert = true
-          aktualisiereZone(zi)
-          aktualisiereZone(besterZi)
+          aktualisiereDistanzkarte(zi)
+          aktualisiereDistanzkarte(besterZi)
         }
       }
     }
 
     if (!geaendert) break
+
+    // Zentren einmal pro kompletten Durchlauf neu optimieren (teuer, aber
+    // nur einmal je Zone statt einmal je Verschiebung).
+    for (let zi = 0; zi < terminalListen.length; zi++) {
+      if (terminalListen[zi].length === 0) continue
+      const { zone, distVonZentrum } = findeZentrumMitDistanzen(graph, terminalListen[zi])
+      zentren[zi] = zone.zentrum
+      distanzenProZone[zi] = distVonZentrum
+    }
+
+    await yieldAnBrowser()
   }
 
   return terminalListen
@@ -308,7 +455,39 @@ function verfeinereZuweisung(
 // Aussiedlerhöfe sollen VOR dem Aufruf bereits aus hausanschluesse
 // herausgefiltert sein (siehe page.tsx) — die Abstandsregel gilt für sie
 // explizit nicht.
-export function berechneNvtStandorte(
+// Gibt kurz die Kontrolle an den Event-Loop zurück (2026-08-14, Alex: großes
+// Mehr-Ortsteil-Projekt lässt den Browser-Tab minutenlang einfrieren) —
+// zusätzliches Sicherheitsnetz zur eigentlichen Ursache (siehe MinHeap oben):
+// selbst mit schnellerem Dijkstra bleibt berechneNvtStandorte damit
+// unterbrechbar statt in einem einzigen langen synchronen Block zu laufen.
+function yieldAnBrowser(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+// Hartes Zeitbudget für die Optimierungs-Nachläufe (legeZusammen,
+// verfeinereZuweisung) — 2026-08-14, Alex: großes Mehr-Ortsteil-Projekt mit
+// vielen weit auseinanderliegenden, distanzlimit-getriebenen Zonen (im
+// Stresstest z.B. ~270 Zonen aus 1100 Hausanschlüssen) ließ diese Nachläufe
+// trotz aller Einzeloptimierungen oben (Heap-Dijkstra, Vorfilter,
+// reduzierte Neuberechnungen) nicht in vertretbarer Zeit fertig werden —
+// die Zahl möglicher Zonen-Paare/Verschiebungen wächst bei so vielen Zonen
+// schlicht zu schnell. partitioniere() liefert bereits ein für sich gültiges
+// (Kapazität + Distanzlimit eingehalten) Ergebnis; legeZusammen und
+// verfeinereZuweisung sind Qualitäts-Nachläufe (weniger/besser platzierte
+// Standorte), keine Korrektheitsvoraussetzung — bei Zeitüberschreitung wird
+// mit dem bis dahin besten Zwischenstand abgebrochen, statt unbegrenzt
+// weiterzurechnen. Dank der Yield-Punkte oben bleibt der Tab währenddessen
+// durchgehend bedienbar, das eigentliche Symptom (eingefrorene Seite) ist
+// damit so oder so behoben — das Budget sorgt zusätzlich dafür, dass die
+// Berechnung auch bei sehr großen/weiträumigen Projekten in überschaubarer
+// Zeit fertig wird.
+const OPTIMIERUNGS_ZEITBUDGET_MS = 20_000
+
+function budgetUeberschritten(startZeit: number): boolean {
+  return performance.now() - startZeit > OPTIMIERUNGS_ZEITBUDGET_MS
+}
+
+export async function berechneNvtStandorte(
   trassePfade: LatLng[][],
   hausanschluesse: Hausstich[],
   startpunkt: LatLng,
@@ -319,7 +498,7 @@ export function berechneNvtStandorte(
   // ausgewiesene "kapazitaet" bleibt die reale Rohr-/Boxgröße, damit im UI
   // weiterhin z.B. "70/120" angezeigt wird, nicht "70/70".
   kapazitaetsReserve = 0
-): NvtErgebnis {
+): Promise<NvtErgebnis> {
   if (hausanschluesse.length === 0 || erlaubteKapazitaeten.length === 0) {
     return { standorte: [], nichtErreichbar: [] }
   }
@@ -334,10 +513,12 @@ export function berechneNvtStandorte(
   }
 
   const terminalKnoten = new Map<string, string>() // Hausstich.id -> Knoten-Key
-  for (const h of hausanschluesse) {
-    const k = naechsterKnoten(graph, h.trassenPunkt)
-    if (k) terminalKnoten.set(h.id, k)
+  for (let i = 0; i < hausanschluesse.length; i++) {
+    const k = naechsterKnoten(graph, hausanschluesse[i].trassenPunkt)
+    if (k) terminalKnoten.set(hausanschluesse[i].id, k)
+    if (i % 200 === 0) await yieldAnBrowser()
   }
+  await yieldAnBrowser()
 
   // Erreichbarkeit vom Startpunkt aus einmalig prüfen (getrennte Teilgraphen
   // z.B. bei Luftlinien-Verbindungen oder Dorf-Inseln ohne durchgehende Trasse)
@@ -349,9 +530,16 @@ export function berechneNvtStandorte(
     else nichtErreichbar.push(hausId)
   }
 
-  const rohZonen = partitioniere(graph, terminals, maxKapazitaet, distanzLimitMeter)
-  const zusammengelegt = legeZusammen(graph, rohZonen, maxKapazitaet, distanzLimitMeter)
-  const zonen = verfeinereZuweisung(graph, zusammengelegt, maxKapazitaet, distanzLimitMeter)
+  // Gemeinsamer Startzeitpunkt für das Optimierungs-Zeitbudget (siehe
+  // OPTIMIERUNGS_ZEITBUDGET_MS oben) — deckt legeZusammen + verfeinereZuweisung
+  // zusammen ab, nicht jede Phase einzeln, damit eine schnelle erste Phase
+  // der zweiten mehr Spielraum lässt.
+  const optimierungsStart = performance.now()
+  const rohZonen = await partitioniere(graph, terminals, maxKapazitaet, distanzLimitMeter, { wert: 0 })
+  await yieldAnBrowser()
+  const zusammengelegt = await legeZusammen(graph, rohZonen, maxKapazitaet, distanzLimitMeter, optimierungsStart)
+  await yieldAnBrowser()
+  const zonen = await verfeinereZuweisung(graph, zusammengelegt, maxKapazitaet, distanzLimitMeter, optimierungsStart)
 
   const standorte: NvtStandort[] = zonen.map((zone) => {
     const passenderIdx = effektiveKapazitaeten.findIndex((k) => k >= zone.terminals.length)

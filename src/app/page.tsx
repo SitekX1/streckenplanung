@@ -234,6 +234,7 @@ export default function Home() {
   const [aussiedlerhofUuids, setAussiedlerhofUuids] = useState<Set<string>>(new Set())
   const [aussiedlerhofMarkierenAktiv, setAussiedlerhofMarkierenAktiv] = useState(false)
   const [nvtModalOffen, setNvtModalOffen] = useState(false)
+  const [nvtBerechnungLaeuft, setNvtBerechnungLaeuft] = useState(false)
   const [nvtStandorte, setNvtStandorte] = useState<NvtStandort[]>([])
   // Manuelles Setzen: Klick auf die Karte fragt danach nach der Kapazität
   // (siehe MapView) — für Einzelfälle wie 2-3 benachbarte Aussiedlerhöfe mit
@@ -906,31 +907,42 @@ export default function Home() {
         .map((a) => a.uuid)
     )
 
-    const fuehreAus = () => {
+    // async statt vorher synchron — berechneNvtStandorte kann bei großen
+    // Mehr-Ortsteil-Projekten (Alex, 2026-08-14: Dresden, ~1100 Adressen)
+    // spürbar dauern; ohne await würde React hier trotzdem sofort
+    // weiterlaufen, während der eigentliche Rechenblock synchron den
+    // Browser-Tab blockiert (siehe yieldAnBrowser in nvt.ts für die
+    // Unterbrechbarkeit selbst).
+    const fuehreAus = async () => {
       pushHistory('NVT generiert')
+      setNvtBerechnungLaeuft(true)
 
-      const relevanteHausanschluesse = hausanschluesse.filter(
-        (h) => adressUuidsImDorf.has(h.addressUuid) && !aussiedlerhofUuids.has(h.addressUuid)
-      )
+      try {
+        const relevanteHausanschluesse = hausanschluesse.filter(
+          (h) => adressUuidsImDorf.has(h.addressUuid) && !aussiedlerhofUuids.has(h.addressUuid)
+        )
 
-      const ergebnis = berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter, erlaubteKapazitaeten, kapazitaetsReserve)
-      setNvtStandorte((prev) => [...prev, ...ergebnis.standorte])
-      if (ergebnis.nichtErreichbar.length > 0) {
-        console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
+        const ergebnis = await berechneNvtStandorte(pfade, relevanteHausanschluesse, startpunkt, distanzMeter, erlaubteKapazitaeten, kapazitaetsReserve)
+        setNvtStandorte((prev) => [...prev, ...ergebnis.standorte])
+        if (ergebnis.nichtErreichbar.length > 0) {
+          console.warn(`NVT-Generierung: ${ergebnis.nichtErreichbar.length} Hausanschluss(e) ohne Netzanbindung zum Startpunkt — nicht berücksichtigt.`)
+        }
+
+        // Trasse an ALLEN NVT-Standorten (bestehende + neu generierte) segmentieren
+        // — sonst laufen die Segmente unstrukturiert quer durchs Dorf, unabhängig
+        // davon, welcher NVT welchen Abschnitt tatsächlich versorgt.
+        const alleNvtPositionen = [...nvtStandorte, ...ergebnis.standorte].map((n) => n.position)
+        const kindsFuerPfade = passendeKinds(pfade, trassePfadeKinds)
+        const segmentiert = segmentiereAnPunkten(pfade, kindsFuerPfade, alleNvtPositionen)
+        setTrassePfade(segmentiert.pfade)
+        setTrassePfadeKinds(segmentiert.kinds)
+        setTrasse(segmentiert.pfade.flat())
+        setLaengen(berechneLaengen(segmentiert.pfade, hausanschluesse, segmentiert.kinds))
+
+        setNvtModalOffen(false)
+      } finally {
+        setNvtBerechnungLaeuft(false)
       }
-
-      // Trasse an ALLEN NVT-Standorten (bestehende + neu generierte) segmentieren
-      // — sonst laufen die Segmente unstrukturiert quer durchs Dorf, unabhängig
-      // davon, welcher NVT welchen Abschnitt tatsächlich versorgt.
-      const alleNvtPositionen = [...nvtStandorte, ...ergebnis.standorte].map((n) => n.position)
-      const kindsFuerPfade = passendeKinds(pfade, trassePfadeKinds)
-      const segmentiert = segmentiereAnPunkten(pfade, kindsFuerPfade, alleNvtPositionen)
-      setTrassePfade(segmentiert.pfade)
-      setTrassePfadeKinds(segmentiert.kinds)
-      setTrasse(segmentiert.pfade.flat())
-      setLaengen(berechneLaengen(segmentiert.pfade, hausanschluesse, segmentiert.kinds))
-
-      setNvtModalOffen(false)
     }
 
     // Schutz gegen versehentliches doppeltes Generieren fuers selbe Dorf —
@@ -943,12 +955,12 @@ export default function Home() {
       setBestaetigungsModal({
         text: `${ueberschneidungAnzahl} Hausanschluss(e) in der Auswahl haben bereits einen NVT. ` +
           `Trotzdem neu generieren? (bestehende NVT bleiben erhalten, es kommen weitere hinzu)`,
-        onBestaetigen: () => { setBestaetigungsModal(null); fuehreAus() },
+        onBestaetigen: () => { setBestaetigungsModal(null); void fuehreAus() },
         onAbbrechen: () => setBestaetigungsModal(null),
       })
       return
     }
-    fuehreAus()
+    void fuehreAus()
   }, [startpunkt, trassePfade, trasse, trassePfadeKinds, adressen, hausanschluesse, aussiedlerhofUuids, pushHistory, nvtStandorte])
 
   const handleKMLExport = useCallback(() => {
@@ -1192,6 +1204,7 @@ export default function Home() {
             onManuellSetzen={handleNvtManuellSetzenStart}
             onSchachtSetzen={handleSchachtSetzenStart}
             onGenerieren={handleNvtGenerieren}
+            berechnungLaeuft={nvtBerechnungLaeuft}
             onClose={() => setNvtModalOffen(false)}
           />
         )}

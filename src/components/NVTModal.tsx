@@ -12,12 +12,17 @@ interface NVTModalProps {
   onManuellSetzen: () => void
   onSchachtSetzen: () => void
   onGenerieren: (ausgewaehlteOrteKeys: string[], distanzMeter: number, erlaubteKapazitaeten: number[], kapazitaetsReserve: number) => void
+  // 2026-08-14, Alex: bei einem großen Mehr-Ortsteil-Projekt (Dresden,
+  // ~1100 Adressen) konnte NVT generieren spürbar dauern, ohne dass sich
+  // irgendwas rührte — Button zeigt jetzt einen Lade-Zustand statt so
+  // auszusehen, als würde nichts passieren.
+  berechnungLaeuft?: boolean
   onClose: () => void
 }
 
 export default function NVTModal({
   orte, aussiedlerhofAnzahl, nvtVorhandenAnzahl, schachtVorhandenAnzahl,
-  onAussiedlerhoefeMarkieren, onManuellSetzen, onSchachtSetzen, onGenerieren, onClose,
+  onAussiedlerhoefeMarkieren, onManuellSetzen, onSchachtSetzen, onGenerieren, berechnungLaeuft = false, onClose,
 }: NVTModalProps) {
   const [ausgewaehlt, setAusgewaehlt] = useState<Set<string>>(new Set())
   // Als Text statt Number gehalten, damit das Feld beim Löschen wirklich leer
@@ -191,12 +196,17 @@ export default function NVTModal({
 
               <button
                 onClick={() => onGenerieren([...ausgewaehlt], distanz, [...kapazitaeten], reserve)}
-                disabled={ausgewaehlt.size === 0 || kapazitaeten.size === 0}
+                disabled={ausgewaehlt.size === 0 || kapazitaeten.size === 0 || berechnungLaeuft}
                 className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
                 style={{ backgroundColor: 'var(--accent-blue)', borderRadius: 'var(--radius-md)' }}
               >
-                📡 NVT generieren
+                {berechnungLaeuft ? '⏳ Wird berechnet …' : '📡 NVT generieren'}
               </button>
+              {berechnungLaeuft && (
+                <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                  Bei größeren Projekten kann das einen Moment dauern.
+                </p>
+              )}
             </div>
           ))}
         </div>
