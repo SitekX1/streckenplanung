@@ -304,11 +304,20 @@ export default function Home() {
   }, [wendeSnapshotAn])
 
   const handleExcelImport = useCallback(async (file: File) => {
-    const ergebnis = await parseExcelFile(file)
-    setAdressen(ergebnis)
-    const orteListe = extractOrte(ergebnis)
-    setOrte(orteListe)
-    setAktiveOrteKeys(orteListe.map((o) => o.key))
+    // War bisher unbehandelt — ein Parse-Fehler (z.B. keine erkennbaren
+    // Koordinaten) verschwand ohne jede Rückmeldung, der Import wirkte
+    // einfach wie "macht nichts" (Alex-Meldung 2026-08-14, Chef-Import mit
+    // anderem Spaltenlayout).
+    try {
+      const ergebnis = await parseExcelFile(file)
+      setAdressen(ergebnis)
+      const orteListe = extractOrte(ergebnis)
+      setOrte(orteListe)
+      setAktiveOrteKeys(orteListe.map((o) => o.key))
+    } catch (err) {
+      const meldung = err instanceof Error ? err.message : String(err)
+      setBestaetigungsModal({ text: `Import fehlgeschlagen:\n${meldung}`, onBestaetigen: () => setBestaetigungsModal(null) })
+    }
   }, [])
 
   const handleOrtToggle = useCallback((key: string) => {
