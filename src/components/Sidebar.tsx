@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { OrtInfo } from '../lib/types'
+import { BackboneVerbindung, Hausstich, LatLng, NvtStandort, OrtInfo, SchachtStandort } from '../lib/types'
 import KalkulationModal from './KalkulationModal'
 import EinstellungenModal from './EinstellungenModal'
 
@@ -10,6 +10,14 @@ interface SidebarProps {
   onProjektNameAendern: (name: string) => void
   bundesfoerderung: boolean
   onBundesfoerderungAendern: (aktiv: boolean) => void
+  // Rohdaten für die segmentgenaue Material-Kalkulation in KalkulationModal —
+  // zusätzlich zu den unten schon vorhandenen aggregierten Längen/Anzahlen.
+  trassePfade: LatLng[][]
+  startpunkt: LatLng | null
+  nvtStandorte: NvtStandort[]
+  schachtStandorte: SchachtStandort[]
+  hausanschluesse: Hausstich[]
+  backboneVerbindungen: BackboneVerbindung[]
   adressenCount: number
   gefilterteAdressenAnzahl: number
   neueAdressenOhneHsAnzahl: number
@@ -167,6 +175,12 @@ export default function Sidebar({
   onProjektNameAendern,
   bundesfoerderung,
   onBundesfoerderungAendern,
+  trassePfade,
+  startpunkt,
+  nvtStandorte,
+  schachtStandorte,
+  hausanschluesse,
+  backboneVerbindungen,
   adressenCount,
   gefilterteAdressenAnzahl,
   neueAdressenOhneHsAnzahl,
@@ -775,6 +789,12 @@ export default function Sidebar({
           nvtAnzahl={nvtStandorteAnzahl}
           schachtAnzahl={schachtStandorteAnzahl}
           bundesfoerderung={bundesfoerderung}
+          trassePfade={trassePfade}
+          startpunkt={startpunkt}
+          nvtStandorte={nvtStandorte}
+          schachtStandorte={schachtStandorte}
+          hausanschluesse={hausanschluesse}
+          backboneVerbindungen={backboneVerbindungen}
           onClose={() => setKalkulationOffen(false)}
         />
       )}

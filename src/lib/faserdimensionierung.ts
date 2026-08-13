@@ -1,5 +1,5 @@
 import { Address, BackboneVerbindung, Hausstich, LatLng, NvtStandort, SchachtStandort } from './types'
-import { MaterialEintrag } from './materialkatalog'
+import { MaterialEintrag, MaterialProfil, waehleVerbandMitReserve } from './materialkatalog'
 import { baueGraph, naechsterKnoten, dijkstraVon } from './nvt'
 
 // Faseranzahl-Berechnung nach Materialkonzept Abschnitt 1 (RN 4): "vier Fasern
@@ -361,4 +361,46 @@ export function ermittleUeberschriebenesMaterialProSegment(
   }
 
   return ergebnis
+}
+
+export interface SegmentMaterial {
+  haupt: MaterialEintrag // Kundenanschluss-Sammelverband, sonst Backbone
+  zusatz: MaterialEintrag | null // NUR bei Doppelbelegung gesetzt (beides läuft aufs Segment)
+}
+
+// Einzige Quelle für "welches Material läuft auf welchem Trasse-Segment" —
+// von MapView.tsx (Kartenfarbe + Klick-Info) UND KalkulationModal.tsx
+// (Material-Kosten nach tatsächlich verlegter Länge je Typ) genutzt, damit
+// beide garantiert dieselbe Zuordnung zeigen statt zweier Implementierungen,
+// die mit der Zeit auseinanderlaufen könnten. Ohne mindestens einen
+// Verteiler (NVT/Schacht) liefert sie überall null zurück — vor dem ersten
+// NVT/Schacht ist noch kein Verbund sinnvoll bestimmbar (siehe
+// ermittleBackboneSegmente/berechneNvtKapazitaetsbedarfProSegment, die beide
+// von dessen Position abhängen).
+export function ermittleMaterialProSegment(
+  trassePfade: LatLng[][],
+  startpunkt: LatLng | null,
+  nvtStandorte: NvtStandort[],
+  schachtStandorte: SchachtStandort[],
+  hausanschluesse: Hausstich[],
+  materialProfil: MaterialProfil,
+  backboneVerbindungen: BackboneVerbindung[]
+): Array<SegmentMaterial | null> {
+  if (!startpunkt || trassePfade.length === 0 || (nvtStandorte.length === 0 && schachtStandorte.length === 0)) {
+    return trassePfade.map(() => null)
+  }
+  const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
+  const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse)
+  const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
+  const ueberschriebenProSegment = ermittleUeberschriebenesMaterialProSegment(trassePfade, backboneVerbindungen)
+
+  return trassePfade.map((_, i): SegmentMaterial | null => {
+    const bedarf = bedarfProSegment[i] ?? 0
+    const kunde = bedarf > 0 ? waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined) : null
+    const back = ueberschriebenProSegment[i] ?? (backbone[i] ? materialProfil.trasse : null)
+    if (kunde && back) return { haupt: kunde, zusatz: back }
+    if (kunde) return { haupt: kunde, zusatz: null }
+    if (back) return { haupt: back, zusatz: null }
+    return null
+  })
 }

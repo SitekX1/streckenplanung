@@ -1069,6 +1069,12 @@ export default function Home() {
         onProjektNameAendern={setProjektName}
         bundesfoerderung={bundesfoerderung}
         onBundesfoerderungAendern={setBundesfoerderung}
+        trassePfade={trassePfade}
+        startpunkt={startpunkt}
+        nvtStandorte={nvtStandorte}
+        schachtStandorte={schachtStandorte}
+        hausanschluesse={hausanschluesse}
+        backboneVerbindungen={backboneVerbindungen}
         adressenCount={adressen.length}
         gefilterteAdressenAnzahl={gefilterteAdressenAnzahl}
         neueAdressenOhneHsAnzahl={neueAdressenOhneHsAnzahl}

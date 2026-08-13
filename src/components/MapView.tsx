@@ -9,14 +9,8 @@ import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
 import { Address, BackboneVerbindung, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
-import {
-  ermittleBackboneSegmente,
-  ermittleHausanschluesseProSegment,
-  ermittleUeberschriebenesMaterialProSegment,
-  berechneHausanschlussAnzahlProSegment,
-  berechneNvtKapazitaetsbedarfProSegment,
-} from '../lib/faserdimensionierung'
-import { aktivesMaterialProfil, waehleVerbandMitReserve, lrArtLabel, MaterialEintrag } from '../lib/materialkatalog'
+import { ermittleHausanschluesseProSegment, ermittleMaterialProSegment } from '../lib/faserdimensionierung'
+import { aktivesMaterialProfil, lrArtLabel, MaterialEintrag } from '../lib/materialkatalog'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -461,36 +455,19 @@ const MapView = memo(function MapView({
   // Doppelbelegungs-Rendering unten (zwei Linien übereinander statt einer
   // einzelnen Farbe, sonst wäre auf der Karte gar nicht sichtbar, dass dort
   // zwei Verbände liegen — Alex-Feedback 2026-08-13).
-  const materialProSegment = useMemo((): Array<{ haupt: MaterialEintrag; zusatz: MaterialEintrag | null } | null> => {
-    // Ohne mindestens einen Verteiler (NVT/Schacht) lässt sich noch gar kein
-    // Verbund sinnvoll bestimmen — die Kapazitätsobergrenze UND die
-    // Backbone-Klassifizierung hängen direkt an dessen Standort. Vorher wird
-    // rein aus der Hausanschluss-Anzahl schon eine Kundenanschluss-Stufe
-    // gewählt, obwohl das Programm noch gar nicht weiß, wo der NVT sitzt
-    // (Alex, 2026-08-13: "Verbünde sollen erst gesetzt sein, wenn die NVTs
-    // stehen") — bis dahin bleibt die Trasse in der Fallback-Farbe.
-    if (!startpunkt || trassePfade.length === 0 || (nvtStandorte.length === 0 && schachtStandorte.length === 0)) {
-      return trassePfade.map(() => null)
-    }
-    const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
-    const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse)
-    const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
-    // Manuell erstellte Backbone-Verbindungen (siehe BackboneVerbindung)
-    // überschreiben nur das gewählte Material auf ihren Segmenten — die
-    // automatische Backbone-Klassifizierung selbst bleibt unverändert (die
-    // neuen Segmente liegen ohnehin zwischen zwei Verteilern, sind also
-    // schon automatisch als Backbone erkannt).
-    const ueberschriebenProSegment = ermittleUeberschriebenesMaterialProSegment(trassePfade, backboneVerbindungen)
-    return trassePfade.map((_, i) => {
-      const bedarf = bedarfProSegment[i] ?? 0
-      const kunde = bedarf > 0 ? waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined) : null
-      const back = ueberschriebenProSegment[i] ?? (backbone[i] ? materialProfil.trasse : null)
-      if (kunde && back) return { haupt: kunde, zusatz: back }
-      if (kunde) return { haupt: kunde, zusatz: null }
-      if (back) return { haupt: back, zusatz: null }
-      return null
-    })
-  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen])
+  // Ohne mindestens einen Verteiler (NVT/Schacht) lässt sich noch gar kein
+  // Verbund sinnvoll bestimmen — die Kapazitätsobergrenze UND die
+  // Backbone-Klassifizierung hängen direkt an dessen Standort. Vorher würde
+  // rein aus der Hausanschluss-Anzahl schon eine Kundenanschluss-Stufe
+  // gewählt, obwohl das Programm noch gar nicht weiß, wo der NVT sitzt
+  // (Alex, 2026-08-13: "Verbünde sollen erst gesetzt sein, wenn die NVTs
+  // stehen") — bis dahin bleibt die Trasse in der Fallback-Farbe (siehe
+  // ermittleMaterialProSegment in faserdimensionierung.ts, die dieselbe
+  // Prüfung macht und leer zurückgibt).
+  const materialProSegment = useMemo(
+    () => ermittleMaterialProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen),
+    [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen]
+  )
   const farbeProSegment = useMemo(
     () => materialProSegment.map((m) => m?.haupt.farbe ?? trasseFarbe),
     [materialProSegment, trasseFarbe]

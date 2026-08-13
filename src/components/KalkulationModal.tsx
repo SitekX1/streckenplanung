@@ -1,9 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { exportKalkulationPdf } from '../lib/kalkulationPdfExport'
 import { ladeFirmendaten } from '../lib/firmendaten'
-import { ladeMaterialkatalog, speichereMaterialkatalog, lrArtLabel, profilName } from '../lib/materialkatalog'
+import { MaterialEintrag, ladeMaterialkatalog, speichereMaterialkatalog, lrArtLabel, profilName } from '../lib/materialkatalog'
+import { ermittleMaterialProSegment } from '../lib/faserdimensionierung'
+import { segmentLaenge } from '../lib/shapefileExport'
+import { BackboneVerbindung, Hausstich, LatLng, NvtStandort, SchachtStandort } from '../lib/types'
 
 interface KalkulationModalProps {
   projektName: string
@@ -14,6 +17,15 @@ interface KalkulationModalProps {
   nvtAnzahl: number
   schachtAnzahl: number
   bundesfoerderung: boolean
+  // Rohdaten für die segmentgenaue Material-Kostenaufteilung (siehe
+  // trasseMaterialLaengen unten) — zusätzlich zu den bereits aggregierten
+  // Längen/Stückzahlen oben, die für die restlichen Positionen reichen.
+  trassePfade: LatLng[][]
+  startpunkt: LatLng | null
+  nvtStandorte: NvtStandort[]
+  schachtStandorte: SchachtStandort[]
+  hausanschluesse: Hausstich[]
+  backboneVerbindungen: BackboneVerbindung[]
   onClose: () => void
 }
 
@@ -54,7 +66,8 @@ function formatEuro(betrag: number): string {
 }
 
 export default function KalkulationModal({
-  projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, hausanschlussLaenge, nvtAnzahl, schachtAnzahl, bundesfoerderung, onClose,
+  projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, hausanschlussLaenge, nvtAnzahl, schachtAnzahl, bundesfoerderung,
+  trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, backboneVerbindungen, onClose,
 }: KalkulationModalProps) {
   // Material-Leerrohrpreise (nicht Verlegekosten — die stehen separat oben)
   // kommen aus dem geräteweiten Materialkatalog, je nach Projekt-Schalter
@@ -83,7 +96,6 @@ export default function KalkulationModal({
       return naechster
     })
   }
-  const trassenLaengeGesamt = strasseLaenge + feldwegLaenge
   // Preise sind geräteweit gespeichert (nicht Teil des Projekts) — die
   // Sätze eurer Firma ändern sich kaum von Projekt zu Projekt, im
   // Gegensatz zu den Streckenlängen/Stückzahlen selbst. Lazy-Initializer
@@ -143,17 +155,48 @@ export default function KalkulationModal({
     </label>
   )
 
+  // Segmentgenaue Material-Kostenaufteilung (2026-08-14, Alex: "wenn NVTs
+  // generiert sind und der Verbände/Backbone plant, ist diese
+  // Längenpreiskalkulation noch nicht integriert") — dieselbe Zuordnung wie
+  // auf der Karte/im GIS-NB-Export (ermittleMaterialProSegment), NICHT
+  // einfach die gesamte Trassenlänge mit dem Backbone-Preis multipliziert
+  // (das war der vorherige, zu grobe Stand: der Backbone-Preis lief bisher
+  // über 100 % der Länge statt nur über die echten Backbone-Segmente, und
+  // die Sammelverband-Stufen fehlten komplett). Bei Doppelbelegung (Backbone
+  // + Sammelverband auf demselben Segment) zählt die Segmentlänge für BEIDE
+  // Materialien, da physisch zwei separate Leitungen verlegt werden.
+  const trasseMaterialLaengen = useMemo(() => {
+    const materialProSegment = ermittleMaterialProSegment(
+      trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen
+    )
+    const map = new Map<string, { material: MaterialEintrag; laenge: number }>()
+    trassePfade.forEach((pfad, i) => {
+      const m = materialProSegment[i]
+      if (!m || pfad.length < 2) return
+      const laenge = segmentLaenge(pfad)
+      const addiere = (mat: MaterialEintrag) => {
+        const key = mat.bezeichnungFirma || String(mat.lrArt)
+        const eintrag = map.get(key)
+        if (eintrag) eintrag.laenge += laenge
+        else map.set(key, { material: mat, laenge })
+      }
+      addiere(m.haupt)
+      if (m.zusatz) addiere(m.zusatz)
+    })
+    return [...map.values()]
+  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen])
+
   const strasseSumme = strasseLaenge * preise.strassePreisProMeter
   const feldwegSumme = feldwegLaenge * preise.feldwegPreisProMeter
   const hausanschlussSumme = hausanschluesseCount * preise.hausanschlussPreis
   const sonderpositionSumme = preise.sonderpositionAnzahl * preise.sonderpositionPreis
   const nvtSumme = nvtAnzahl * preise.nvtPreis
   const schachtSumme = schachtAnzahl * preise.schachtPreis
-  const materialTrasseSumme = trassenLaengeGesamt * materialProfil.trasse.preisProMeter
+  const trasseMaterialSumme = trasseMaterialLaengen.reduce((sum, { material, laenge }) => sum + laenge * material.preisProMeter, 0)
   const materialHausanschlussSumme = hausanschlussLaenge * materialProfil.hausanschluss.preisProMeter
   const gesamt =
     strasseSumme + feldwegSumme + hausanschlussSumme + sonderpositionSumme + nvtSumme + schachtSumme +
-    materialTrasseSumme + materialHausanschlussSumme
+    trasseMaterialSumme + materialHausanschlussSumme
 
   const handlePdfExport = () => {
     const zeilen = [
@@ -169,9 +212,14 @@ export default function KalkulationModal({
       ...(schachtAnzahl > 0
         ? [{ label: 'Schacht', menge: `${schachtAnzahl} Stk.`, einzelpreis: `${preise.schachtPreis} €/Stk.`, summe: schachtSumme }]
         : []),
-      ...(materialProfil.trasse.preisProMeter > 0
-        ? [{ label: `Material Trasse (${materialProfil.trasse.bezeichnungFirma})`, menge: `${Math.round(trassenLaengeGesamt)} m`, einzelpreis: `${materialProfil.trasse.preisProMeter} €/m`, summe: materialTrasseSumme }]
-        : []),
+      ...trasseMaterialLaengen
+        .filter(({ material }) => material.preisProMeter > 0)
+        .map(({ material, laenge }) => ({
+          label: `Material ${material.bezeichnungFirma}`,
+          menge: `${Math.round(laenge)} m`,
+          einzelpreis: `${material.preisProMeter} €/m`,
+          summe: laenge * material.preisProMeter,
+        })),
       ...(materialProfil.hausanschluss.preisProMeter > 0
         ? [{ label: `Material Hausanschluss (${materialProfil.hausanschluss.bezeichnungFirma})`, menge: `${Math.round(hausanschlussLaenge)} m`, einzelpreis: `${materialProfil.hausanschluss.preisProMeter} €/m`, summe: materialHausanschlussSumme }]
         : []),
@@ -284,7 +332,7 @@ export default function KalkulationModal({
                 </div>
               ))}
               <p className="col-span-2 text-xs text-gray-600 -mt-1">
-                Material-Typ/-Größe wird unter ⚙️ Einstellungen → Materialkatalog festgelegt, hier nur der Preis pro Meter. Der Sammelverband-Preis fließt noch nicht in die Summe unten ein (dessen tatsächliche Länge hängt vom jeweiligen Segment ab).
+                Material-Typ/-Größe wird unter ⚙️ Einstellungen → Materialkatalog festgelegt, hier nur der Preis pro Meter. Die Summe unten rechnet mit der tatsächlich je Segment verlegten Länge (Backbone nur zwischen Verteilern, Sammelverband nach echtem Bedarf) — nicht mit der gesamten Trassenlänge.
               </p>
             </>
           ))}
@@ -296,7 +344,13 @@ export default function KalkulationModal({
             {preise.sonderpositionAnzahl > 0 && zeile('Sonderposition', `${preise.sonderpositionAnzahl} Stk.`, sonderpositionSumme)}
             {nvtAnzahl > 0 && zeile('NVT', `${nvtAnzahl} Stk.`, nvtSumme)}
             {schachtAnzahl > 0 && zeile('Schacht', `${schachtAnzahl} Stk.`, schachtSumme)}
-            {materialTrasseSumme > 0 && zeile(`Material Trasse`, `${Math.round(trassenLaengeGesamt)} m`, materialTrasseSumme)}
+            {trasseMaterialLaengen
+              .filter(({ material }) => material.preisProMeter > 0)
+              .map(({ material, laenge }) => (
+                <div key={material.bezeichnungFirma || material.lrArt}>
+                  {zeile(`Material ${material.bezeichnungFirma}`, `${Math.round(laenge)} m`, laenge * material.preisProMeter)}
+                </div>
+              ))}
             {materialHausanschlussSumme > 0 && zeile(`Material Hausanschluss`, `${Math.round(hausanschlussLaenge)} m`, materialHausanschlussSumme)}
             <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid #262b36' }}>
               <span className="text-sm font-medium text-gray-300">Gesamt</span>
