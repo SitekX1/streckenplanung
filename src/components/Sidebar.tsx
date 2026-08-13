@@ -78,6 +78,15 @@ function formatMeter(meter: number): string {
   return `${Math.round(meter).toLocaleString('de-DE')} m`
 }
 
+// Ausschließlich für den Auswertung-Abschnitt (2026-08-14, Alex: "bei einer
+// Ausschreibung brauchen wir die genauen Meterangaben, Kilometer nehmen die
+// nicht an") — immer die exakte Meterzahl, nie auf km gerundet. Andere
+// Stellen (Badges, Status-Zeilen in "Schritte") bleiben bei formatMeter()
+// mit km-Kurzform, da die dort nur der groben Übersicht dienen.
+function formatMeterExakt(meter: number): string {
+  return `${Math.round(meter).toLocaleString('de-DE')} m`
+}
+
 // Wiederverwendete Stil-Bausteine (2026-08-14, komplette Design-Überarbeitung
 // nach Sitenna-Referenz + Apple-Formsprache) — EIN Satz Grund-Styles statt
 // pro Button einzeln Hex-Werte zu wiederholen, damit spätere Anpassungen an
@@ -752,28 +761,28 @@ export default function Sidebar({
           <div className="p-3.5 flex flex-col gap-2" style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-lg)' }}>
             <div className="flex justify-between items-center">
               <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Trasse</span>
-              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{formatMeter(trassenLaenge)}</span>
+              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{formatMeterExakt(trassenLaenge)}</span>
             </div>
             {feldwegLaenge > 0 && (
               <>
                 <div className="flex justify-between items-center pl-3">
                   <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>davon Straße</span>
-                  <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatMeter(strasseLaenge)}</span>
+                  <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatMeterExakt(strasseLaenge)}</span>
                 </div>
                 <div className="flex justify-between items-center pl-3">
                   <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>davon Feldweg</span>
-                  <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatMeter(feldwegLaenge)}</span>
+                  <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatMeterExakt(feldwegLaenge)}</span>
                 </div>
               </>
             )}
             <div className="flex justify-between items-center">
               <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Hausanschlüsse</span>
-              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{formatMeter(hausanschlussLaenge)}</span>
+              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{formatMeterExakt(hausanschlussLaenge)}</span>
             </div>
             <div style={{ borderTop: '1px solid var(--border-subtle)', margin: '2px 0' }} />
             <div className="flex justify-between items-center">
               <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Gesamt</span>
-              <span className="text-sm font-semibold" style={{ color: '#93c5fd' }}>{formatMeter(gesamtLaenge)}</span>
+              <span className="text-sm font-semibold" style={{ color: '#93c5fd' }}>{formatMeterExakt(gesamtLaenge)}</span>
             </div>
           </div>
           <button
