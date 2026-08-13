@@ -985,9 +985,20 @@ const MapView = memo(function MapView({
     setNeuerHsStart(null)
   }
 
+  // Rastet einen frei geklickten/gezogenen Punkt auf die Trasse ein, falls er
+  // nah genug dran liegt (2026-08-13, Alex: "Schacht setzen ist aktuell so,
+  // dass man den nicht auf die Trasse setzen kann, muss ihn danach immer
+  // verschieben") — sonst bleibt die Originalposition (z.B. für einen
+  // Aussiedlerhof-Schacht bewusst abseits jeder Trasse). Dieselbe
+  // Schnapp-Logik wie beim Ziehen von Trasse-Punkten im Bearbeitungsmodus.
+  const snapAufTrasse = useCallback(
+    (pos: LatLng): LatLng => findeSchnappziel(pos, trassePfade, -1, -1) ?? pos,
+    [trassePfade]
+  )
+
   // ── NVT manuell setzen ────────────────────────────────────────────────────
   function handleNvtSetzenZiel(pos: LatLng) {
-    setNeuerNvtPosition(pos)
+    setNeuerNvtPosition(snapAufTrasse(pos))
   }
 
   function handleNeuerNvtBestaetigen() {
@@ -1005,7 +1016,7 @@ const MapView = memo(function MapView({
   // Kein Bestätigungsschritt nötig (keine Kapazität abzufragen) — Klick auf
   // die Karte legt den Standort direkt an, analog zum Startpunkt-Setzen.
   function handleSchachtSetzenZiel(pos: LatLng) {
-    onSchachtGesetzt?.(pos)
+    onSchachtGesetzt?.(snapAufTrasse(pos))
   }
 
   // ── Hausanschlüsse ────────────────────────────────────────────────────────
@@ -1658,7 +1669,7 @@ const MapView = memo(function MapView({
                 },
                 dragend: (e) => {
                   const ll = (e.target as L.Marker).getLatLng()
-                  onNvtVerschoben?.(i, { lat: ll.lat, lng: ll.lng })
+                  onNvtVerschoben?.(i, snapAufTrasse({ lat: ll.lat, lng: ll.lng }))
                 },
                 mouseover: () => setHoverNvtIdx(i),
                 mouseout: () => setHoverNvtIdx((prev) => (prev === i ? null : prev)),
@@ -1690,7 +1701,7 @@ const MapView = memo(function MapView({
               },
               dragend: (e) => {
                 const ll = (e.target as L.Marker).getLatLng()
-                onSchachtVerschoben?.(i, { lat: ll.lat, lng: ll.lng })
+                onSchachtVerschoben?.(i, snapAufTrasse({ lat: ll.lat, lng: ll.lng }))
               },
               mouseover: () => setHoverSchachtIdx(i),
               mouseout: () => setHoverSchachtIdx((prev) => (prev === i ? null : prev)),
