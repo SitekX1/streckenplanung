@@ -127,10 +127,10 @@ function Abschnitt({
     <div>
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between mb-2.5 pl-3 pr-2 py-2 transition-colors group"
+        className="sidebar-abschnitt w-full flex items-center justify-between mb-2.5 pl-3 pr-2 py-2 transition-colors group"
         style={{
           borderRadius: 'var(--radius-md)',
-          backgroundColor: offen ? 'var(--surface-2)' : 'transparent',
+          backgroundColor: offen ? 'var(--surface-2)' : undefined,
           boxShadow: offen ? 'inset 3px 0 0 0 var(--accent-blue)' : 'inset 3px 0 0 0 transparent',
         }}
       >
@@ -747,7 +747,7 @@ export default function Sidebar({
 
         {/* Sektion: Auswertung */}
         <Abschnitt
-          titel="📏 Auswertung"
+          titel="Auswertung"
           badge={trasseVorhanden ? formatMeter(gesamtLaenge) : undefined}
           offen={offeneSektionen.has('auswertung')}
           onToggle={() => toggleSektion('auswertung')}

@@ -52,6 +52,20 @@ body {
   overflow: hidden;
 }
 
+/* Sidebar-Abschnitt-Header (2026-08-14, Alex-Feedback: "wenn's eingeklappt
+   ist, sieht man nicht, dass das ein Button ist") — permanenter dezenter
+   Rahmen macht die Fläche auch im Ruhezustand als eigenständiges,
+   klickbares Element erkennbar, nicht erst beim Hover. Als CSS-Klasse
+   statt Inline-Style, weil Inline-Styles einer :hover-Pseudoklasse aus
+   Tailwind sonst per Spezifität immer gewinnen würden. */
+.sidebar-abschnitt {
+  border: 1px solid var(--border-subtle);
+}
+.sidebar-abschnitt:hover {
+  border-color: var(--border-strong);
+  background-color: var(--surface-2);
+}
+
 .leaflet-container {
   height: 100%;
   width: 100%;

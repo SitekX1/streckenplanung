@@ -1335,13 +1335,10 @@ const MapView = memo(function MapView({
         {tileVariante === 'satellit' ? (
           <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" attribution="© Esri" maxNativeZoom={19} maxZoom={21} />
         ) : (
-          // Dunkel eingefärbte Basiskarte statt der hellen Standard-OSM-Kacheln
-          // (2026-08-14, komplette Design-Überarbeitung nach Sitenna-Referenz:
-          // "Karte ist eingefärbt, kein Kartendienst-Bruch mitten in der UI") —
-          // "nolabels"-Variante, da die Ortsnamen bereits als eigener Layer
-          // (siehe unten) zuschaltbar sind und sich sonst doppeln würden.
-          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
-            attribution='© <a href="https://carto.com/">CARTO</a> © OpenStreetMap' maxNativeZoom={20} maxZoom={21} />
+          // Standard-OSM-Kacheln — bewusst NICHT eingefärbt (Alex, 2026-08-14:
+          // "die Karte an sich selber nicht ändern", Rückbau des dunklen
+          // Kartenversuchs aus derselben Design-Überarbeitung).
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='© OpenStreetMap' maxNativeZoom={19} maxZoom={21} />
         )}
         {ortsnamenSichtbar && (
           <TileLayer url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}" attribution="© Esri" maxNativeZoom={19} maxZoom={21} />
