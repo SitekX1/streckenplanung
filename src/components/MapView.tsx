@@ -1104,14 +1104,21 @@ const MapView = memo(function MapView({
 
   const btnStyle = (farbe: string, border: boolean): React.CSSProperties => ({
     display: 'block', width: '100%', padding: '13px 16px', background: 'none', border: 'none',
-    borderBottom: border ? '1px solid #374151' : 'none',
+    borderBottom: border ? '1px solid var(--border-strong)' : 'none',
     color: farbe, fontSize: '14px', cursor: 'pointer', textAlign: 'left',
   })
 
-  const layerBtnStyle = (aktiv: boolean): React.CSSProperties => ({
-    backgroundColor: aktiv ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb',
-    border: `1px solid ${aktiv ? '#3b82f6' : '#374151'}`, opacity: aktiv ? 1 : 0.55,
-  })
+  // Werkzeug-/Layer-Zeile fürs gebündelte Karten-Panel (2026-08-14, komplette
+  // Design-Überarbeitung nach Sitenna-Referenz: EIN abgerundetes, geschichtetes
+  // Panel mit Trennlinien statt vieler einzelner freischwebender Buttons).
+  const panelZeile = (aktiv: boolean, farbe: string | undefined, label: string, onClick: () => void, key?: string) => (
+    <button key={key ?? label} onClick={onClick}
+      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-left transition-colors hover:brightness-125"
+      style={{ backgroundColor: aktiv && farbe === undefined ? 'var(--accent-blue-dim)' : 'transparent', color: aktiv ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+      {farbe && <span style={{ width: 9, height: 9, borderRadius: '50%', background: farbe, display: 'inline-block', flexShrink: 0, opacity: aktiv ? 1 : 0.4 }} />}
+      {label}
+    </button>
+  )
 
   const imZeichenModus = !!ziehStartId || !!neuerHsStart
 
@@ -1128,67 +1135,41 @@ const MapView = memo(function MapView({
         <input type="text" value={suchQuery}
           onChange={(e) => { setSuchQuery(e.target.value); setSuchFehler(false) }}
           onKeyDown={(e) => e.key === 'Enter' && handleSuche()}
-          placeholder="Ort oder Adresse suchen…"
-          className="w-56 px-3 py-1.5 rounded-lg text-xs outline-none shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: `1px solid ${suchFehler ? '#ef4444' : '#374151'}` }} />
+          placeholder="🔍 Ort oder Adresse suchen…"
+          className="w-60 px-4 py-2 text-xs outline-none shadow-lg"
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: `1px solid ${suchFehler ? 'var(--accent-red)' : 'var(--border-subtle)'}`, borderRadius: 999 }} />
         <button onClick={handleSuche} disabled={suchLaden}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg disabled:opacity-50"
-          style={{ backgroundColor: '#3b82f6', color: '#fff', border: 'none' }}>
-          {suchLaden ? '…' : '🔍'}
+          className="px-4 py-2 text-xs font-medium shadow-lg disabled:opacity-50 text-white transition-colors hover:brightness-110"
+          style={{ backgroundColor: 'var(--accent-blue)', borderRadius: 999 }}>
+          {suchLaden ? '…' : 'Suchen'}
         </button>
-        {suchFehler && <span className="text-xs" style={{ color: '#ef4444' }}>Nicht gefunden</span>}
+        {suchFehler && <span className="text-xs px-2" style={{ color: 'var(--accent-red)' }}>Nicht gefunden</span>}
       </div>
 
-      <div className="absolute top-3 right-3 z-1000 flex flex-col gap-2">
-        <button onClick={() => setTileVariante((v) => v === 'satellit' ? 'osm' : 'satellit')}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #374151' }}>
-          {tileVariante === 'satellit' ? '🗺️ Karte' : '🛰️ Satellit'}
-        </button>
-        <button onClick={() => setTopoSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
-          style={{ backgroundColor: topoSichtbar ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb', border: `1px solid ${topoSichtbar ? '#3b82f6' : '#374151'}` }}>
-          📐 Topokarte
-        </button>
-        <button onClick={() => setOrtsnamenSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
-          style={{ backgroundColor: ortsnamenSichtbar ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb', border: `1px solid ${ortsnamenSichtbar ? '#3b82f6' : '#374151'}` }}>
-          🏷️ Ortsnamen
-        </button>
-        <div style={{ borderTop: '1px solid #374151', margin: '2px 0' }} />
-        <button onClick={() => setTrasseSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(trasseSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: trasseFarbe, display: 'inline-block', flexShrink: 0 }} />Trasse
-        </button>
-        <button onClick={() => setHausanschluesseSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(hausanschluesseSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: hausanschlussfarbe, display: 'inline-block', flexShrink: 0 }} />Hausanschlüsse
-        </button>
-        <button onClick={() => setAdressenSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(adressenSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: adressFarbe, display: 'inline-block', flexShrink: 0 }} />Adressen
-        </button>
-        <button onClick={() => setNvtSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(nvtSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: '#7c3aed', display: 'inline-block', flexShrink: 0 }} />NVT
-        </button>
-        <button onClick={() => setSchachtSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(schachtSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: '#f97316', display: 'inline-block', flexShrink: 0 }} />Schacht
-        </button>
+      {/* Gebündeltes Karten-Werkzeug-Panel — ein abgerundeter, geschichteter
+          Container mit Trennlinien statt vieler einzelner freischwebender
+          Buttons (2026-08-14, komplette Design-Überarbeitung nach
+          Sitenna-Referenz + Apple-Formsprache, Alex: "Farben behalten, aber
+          Struktur modernisieren"). */}
+      <div className="absolute top-3 right-3 z-1000 flex flex-col overflow-hidden shadow-lg"
+        style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', width: 196 }}>
+        {panelZeile(tileVariante === 'satellit', undefined, tileVariante === 'satellit' ? '🗺️ Karte' : '🛰️ Satellit', () => setTileVariante((v) => v === 'satellit' ? 'osm' : 'satellit'))}
+        {panelZeile(topoSichtbar, undefined, '📐 Topokarte', () => setTopoSichtbar((v) => !v))}
+        {panelZeile(ortsnamenSichtbar, undefined, '🏷️ Ortsnamen', () => setOrtsnamenSichtbar((v) => !v))}
+        <div style={{ borderTop: '1px solid var(--border-subtle)' }} />
+        {panelZeile(trasseSichtbar, trasseFarbe, 'Trasse', () => setTrasseSichtbar((v) => !v))}
+        {panelZeile(hausanschluesseSichtbar, hausanschlussfarbe, 'Hausanschlüsse', () => setHausanschluesseSichtbar((v) => !v))}
+        {panelZeile(adressenSichtbar, adressFarbe, 'Adressen', () => setAdressenSichtbar((v) => !v))}
+        {panelZeile(nvtSichtbar, '#7c3aed', 'NVT', () => setNvtSichtbar((v) => !v))}
+        {panelZeile(schachtSichtbar, '#f97316', 'Schacht', () => setSchachtSichtbar((v) => !v))}
       </div>
 
       {/* Material-Legende (2026-08-13, Alex: "ich seh lauter verschiedene
           Farben, aber ich weiß nicht was was ist") — zeigt Farbe ↔ Material
           aus dem gerade aktiven Katalog-Profil (Firmenstandard/Förderung). */}
       {trasseSichtbar && !editierbarAktiv && trassePfade.length > 0 && (nvtStandorte.length > 0 || schachtStandorte.length > 0) && (
-        <div className="absolute bottom-3 left-3 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-56"
-          style={{ backgroundColor: '#1a1a1a', border: '1px solid #374151' }}>
+        <div className="absolute bottom-3 left-3 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-56"
+          style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border-strong)' }}>
           <span className="text-[10px] text-gray-500 uppercase tracking-wider">Legende — Material</span>
           {[materialProfil.trasse, ...materialProfil.kundenanschlussStufen].map((m, i) => (
             <div key={i} className="flex items-center gap-1.5">
@@ -1226,11 +1207,11 @@ const MapView = memo(function MapView({
           </div>
         )
         return (
-          <div className="absolute bottom-3 left-64 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
-            style={{ backgroundColor: '#1a1a1a', border: `1px solid ${GELB}` }}>
+          <div className="absolute bottom-3 left-64 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: 'var(--surface-1)', border: `1px solid ${GELB}` }}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] text-gray-500 uppercase tracking-wider">Segment {ausgewaehltesSegmentNormal + 1}</span>
-              <button onClick={() => setAusgewaehltesSegmentNormal(null)} className="text-xs" style={{ color: '#9ca3af' }}>✕</button>
+              <button onClick={() => setAusgewaehltesSegmentNormal(null)} className="text-xs" style={{ color: 'var(--text-secondary)' }}>✕</button>
             </div>
             {material ? (
               <>
@@ -1284,8 +1265,8 @@ const MapView = memo(function MapView({
         })
         const ANZEIGE_LIMIT = 6
         return (
-          <div className="absolute bottom-3 right-3 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
-            style={{ backgroundColor: '#1a1a1a', border: `1px solid ${istUeberlastet ? '#f87171' : '#3b82f6'}` }}>
+          <div className="absolute bottom-3 right-3 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: 'var(--surface-1)', border: `1px solid ${istUeberlastet ? '#f87171' : '#3b82f6'}` }}>
             <span className="text-[10px] text-gray-500 uppercase tracking-wider">NVT {hoverNvtIdx + 1}</span>
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-300">Belegung</span>
@@ -1330,8 +1311,8 @@ const MapView = memo(function MapView({
           .filter((a): a is Address => !!a)
         const ANZEIGE_LIMIT = 6
         return (
-          <div className="absolute bottom-3 right-3 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
-            style={{ backgroundColor: '#1a1a1a', border: '1px solid #f97316' }}>
+          <div className="absolute bottom-3 right-3 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #f97316' }}>
             <span className="text-[10px] text-gray-500 uppercase tracking-wider">Schacht {hoverSchachtIdx + 1}</span>
             <span className="text-[10px] text-gray-500">{adressenHier.length} Hausanschluss(e):</span>
             <div className="flex flex-col gap-0.5">
@@ -1354,7 +1335,13 @@ const MapView = memo(function MapView({
         {tileVariante === 'satellit' ? (
           <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" attribution="© Esri" maxNativeZoom={19} maxZoom={21} />
         ) : (
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='© OpenStreetMap' maxNativeZoom={19} maxZoom={21} />
+          // Dunkel eingefärbte Basiskarte statt der hellen Standard-OSM-Kacheln
+          // (2026-08-14, komplette Design-Überarbeitung nach Sitenna-Referenz:
+          // "Karte ist eingefärbt, kein Kartendienst-Bruch mitten in der UI") —
+          // "nolabels"-Variante, da die Ortsnamen bereits als eigener Layer
+          // (siehe unten) zuschaltbar sind und sich sonst doppeln würden.
+          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
+            attribution='© <a href="https://carto.com/">CARTO</a> © OpenStreetMap' maxNativeZoom={20} maxZoom={21} />
         )}
         {ortsnamenSichtbar && (
           <TileLayer url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}" attribution="© Esri" maxNativeZoom={19} maxZoom={21} />
@@ -1600,7 +1587,7 @@ const MapView = memo(function MapView({
             <CircleMarker key={a.uuid} center={[a.lat, a.lon]}
               radius={istAussiedlerhof ? 9 : istNichtAngebunden ? 9 : istHsStart ? 9 : aktiv ? 6 : 4}
               pathOptions={{
-                fillColor: istAussiedlerhof ? '#a16207' : istNichtAngebunden ? '#ef4444' : istHsStart ? '#fbbf24' : aktiv ? adressFarbe : '#6b7280',
+                fillColor: istAussiedlerhof ? '#a16207' : istNichtAngebunden ? '#ef4444' : istHsStart ? '#fbbf24' : aktiv ? adressFarbe : 'var(--text-tertiary)',
                 color: istAussiedlerhof ? '#fcd34d' : istNichtAngebunden ? '#fca5a5' : istHsStart ? '#f59e0b' : aktiv ? adressFarbe : '#4b5563',
                 weight: istAussiedlerhof ? 3 : istNichtAngebunden ? 3 : istHsStart ? 3 : 1.5,
                 fillOpacity: istAussiedlerhof ? 0.95 : istNichtAngebunden ? 0.95 : aktiv ? 0.85 : 0.3,
@@ -1825,18 +1812,18 @@ const MapView = memo(function MapView({
 
       {startpunktSetzenAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #3b82f6' }}>
           Klick auf die Karte, um den Startpunkt zu setzen
         </div>
       )}
 
       {aussiedlerhofMarkierenAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #a16207' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #a16207' }}>
           🚜 Adressen anklicken zum Markieren/Entmarkieren als Aussiedlerhof
           <button onClick={() => onAussiedlerhofMarkierenFertig?.()}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#a16207', color: '#fff' }}>
+            style={{ backgroundColor: 'var(--accent-amber)', color: '#fff' }}>
             ✓ Fertig
           </button>
         </div>
@@ -1844,28 +1831,28 @@ const MapView = memo(function MapView({
 
       {nvtManuellSetzenAktiv && !neuerNvtPosition && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #3b82f6' }}>
           📍 Klick auf die Karte, um einen NVT-Standort zu setzen
           <button onClick={handleNeuerNvtAbbrechen}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
             ✕ Abbrechen
           </button>
         </div>
       )}
 
       {neuerNvtPosition && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg p-3 flex flex-col gap-2.5"
-          style={{ backgroundColor: '#1a1a1a', border: '1px solid #3b82f6', width: 280 }}>
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-2xl shadow-lg p-3 flex flex-col gap-2.5"
+          style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #3b82f6', width: 280 }}>
           <span className="text-sm font-medium text-white">📍 Kapazität für neuen NVT</span>
           <div className="flex items-center gap-1.5 flex-wrap">
             {[7, 12, 24, 96, 120].map((k) => (
               <button key={k} onClick={() => setNeueNvtKapazitaet(k)}
                 className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
                 style={{
-                  backgroundColor: neueNvtKapazitaet === k ? '#1e3a5f' : '#111827',
-                  color: neueNvtKapazitaet === k ? '#93c5fd' : '#9ca3af',
-                  border: `1px solid ${neueNvtKapazitaet === k ? '#3b82f6' : '#374151'}`,
+                  backgroundColor: neueNvtKapazitaet === k ? '#1e3a5f' : 'var(--surface-2)',
+                  color: neueNvtKapazitaet === k ? '#93c5fd' : 'var(--text-secondary)',
+                  border: `1px solid ${neueNvtKapazitaet === k ? '#3b82f6' : 'var(--border-strong)'}`,
                 }}>
                 {k}
               </button>
@@ -1873,17 +1860,17 @@ const MapView = memo(function MapView({
             <input type="number" min={1} value={neueNvtKapazitaet}
               onChange={(e) => setNeueNvtKapazitaet(Number(e.target.value) || 1)}
               className="w-16 px-2 py-1 rounded text-sm outline-none"
-              style={{ backgroundColor: '#111827', color: '#f9fafb', border: '1px solid #374151' }} />
+              style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)' }} />
           </div>
           <div className="flex gap-2">
             <button onClick={handleNeuerNvtBestaetigen}
               className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
-              style={{ backgroundColor: '#3b82f6', color: '#fff' }}>
+              style={{ backgroundColor: 'var(--accent-blue)', color: '#fff' }}>
               ✓ Anlegen
             </button>
             <button onClick={handleNeuerNvtAbbrechen}
               className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
-              style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+              style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
               ✕ Abbrechen
             </button>
           </div>
@@ -1892,11 +1879,11 @@ const MapView = memo(function MapView({
 
       {nvtZuweisenAktiv && zuweisenZielNvtIdx !== null && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #3b82f6' }}>
           🔗 Hausanschlüsse anklicken zum Zuweisen/Entfernen (NVT {zuweisenZielNvtIdx + 1})
           <button onClick={() => setNvtZuweisenAktiv(false)}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#3b82f6', color: '#fff' }}>
+            style={{ backgroundColor: 'var(--accent-blue)', color: '#fff' }}>
             ✓ Fertig
           </button>
         </div>
@@ -1904,11 +1891,11 @@ const MapView = memo(function MapView({
 
       {schachtZuweisenAktiv && ausgewaehltesSchachtIdx !== null && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #0d9488' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #0d9488' }}>
           🔗 Hausanschlüsse anklicken zum Zuweisen/Entfernen (Schacht {ausgewaehltesSchachtIdx + 1})
           <button onClick={() => setSchachtZuweisenAktiv(false)}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#0d9488', color: '#fff' }}>
+            style={{ backgroundColor: 'var(--accent-teal)', color: '#fff' }}>
             ✓ Fertig
           </button>
         </div>
@@ -1916,11 +1903,11 @@ const MapView = memo(function MapView({
 
       {schachtSetzenAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #0d9488' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #0d9488' }}>
           🕳️ Klick auf die Karte, um einen Schacht zu setzen
           <button onClick={() => onSchachtSetzenAbbrechen?.()}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
             ✕ Abbrechen
           </button>
         </div>
@@ -1929,11 +1916,11 @@ const MapView = memo(function MapView({
       {/* Backbone-Verbindung erstellen (2026-08-13) — Schritt 1: Ziel wählen. */}
       {backboneVerbindungQuelle && !backboneVerbindungZiel && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #a78bfa' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #a78bfa' }}>
           🔌 Ziel-NVT/Schacht anklicken für Backbone-Verbindung ab {backboneVerbindungQuelle.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungQuelle.idx + 1}
           <button onClick={backboneVerbindungAbbrechen}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
             ✕ Abbrechen
           </button>
         </div>
@@ -1948,8 +1935,8 @@ const MapView = memo(function MapView({
           Sekunden dauern, daher schließt der Dialog sofort und ein separater
           Fortschritts-/Fehler-Hinweis übernimmt (siehe unten). */}
       {backboneVerbindungQuelle && backboneVerbindungZiel && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg p-3 flex flex-col gap-2.5"
-          style={{ backgroundColor: '#1a1a1a', border: '1px solid #a78bfa', width: 300 }}>
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-2xl shadow-lg p-3 flex flex-col gap-2.5"
+          style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #a78bfa', width: 300 }}>
           <span className="text-sm font-medium text-white">
             🔌 {backboneVerbindungQuelle.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungQuelle.idx + 1} → {backboneVerbindungZiel.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungZiel.idx + 1}
           </span>
@@ -1958,9 +1945,9 @@ const MapView = memo(function MapView({
               <button key={m.bezeichnungFirma || m.lrArt} onClick={() => setBackboneVerbindungMaterial(m)}
                 className="flex items-center gap-2 px-2.5 py-1.5 rounded text-xs font-medium text-left transition-colors"
                 style={{
-                  backgroundColor: backboneVerbindungMaterial === m ? '#3b2f5f' : '#111827',
-                  color: backboneVerbindungMaterial === m ? '#c4b5fd' : '#9ca3af',
-                  border: `1px solid ${backboneVerbindungMaterial === m ? '#a78bfa' : '#374151'}`,
+                  backgroundColor: backboneVerbindungMaterial === m ? '#3b2f5f' : 'var(--surface-2)',
+                  color: backboneVerbindungMaterial === m ? '#c4b5fd' : 'var(--text-secondary)',
+                  border: `1px solid ${backboneVerbindungMaterial === m ? '#a78bfa' : 'var(--border-strong)'}`,
                 }}>
                 <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
                 {m.bezeichnungFirma || lrArtLabel(m.lrArt)}
@@ -1976,12 +1963,12 @@ const MapView = memo(function MapView({
               }}
               disabled={!backboneVerbindungMaterial}
               className="flex-1 px-3 py-1.5 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{ backgroundColor: '#a78bfa', color: '#1a1a1a' }}>
+              style={{ backgroundColor: '#a78bfa', color: 'var(--surface-1)' }}>
               ✓ Verbindung erstellen
             </button>
             <button onClick={backboneVerbindungAbbrechen}
               className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
-              style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+              style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
               ✕ Abbrechen
             </button>
           </div>
@@ -1990,18 +1977,18 @@ const MapView = memo(function MapView({
 
       {backboneVerbindungLaeuft && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #a78bfa' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #a78bfa' }}>
           🔌 Backbone-Verbindung wird über das Straßennetz berechnet …
         </div>
       )}
 
       {backboneVerbindungFehler && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#fca5a5', border: '1px solid #dc2626' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: '#fca5a5', border: '1px solid #dc2626' }}>
           ⚠️ {backboneVerbindungFehler}
           <button onClick={() => onBackboneVerbindungFehlerSchliessen?.()}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
             ✕
           </button>
         </div>
@@ -2015,13 +2002,13 @@ const MapView = memo(function MapView({
         const istFallback = !istFehler && trasseMethode.startsWith('Fallback:')
         const istHinweis = !istFehler && !istFallback && trasseMethode.startsWith('Hinweis:')
 
-        const farbe = istFehler ? '#f87171' : istFallback ? '#93c5fd' : istHinweis ? '#9ca3af' : '#4ade80'
+        const farbe = istFehler ? '#f87171' : istFallback ? '#93c5fd' : istHinweis ? 'var(--text-secondary)' : '#4ade80'
         const rand = istFehler ? '#dc2626' : istFallback ? '#2563eb' : istHinweis ? '#4b5563' : '#16a34a'
         const icon = istFehler ? '❌' : istFallback ? '🔁' : istHinweis ? 'ℹ️' : '✅'
 
         return (
           <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg max-w-xs"
-            style={{ backgroundColor: '#1a1a1a', color: farbe, border: `1px solid ${rand}` }}>
+            style={{ backgroundColor: 'var(--surface-1)', color: farbe, border: `1px solid ${rand}` }}>
             {icon} {trasseMethode}
             {istFehler && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
             {istFallback && <div style={{ marginTop: 4, color: '#bfdbfe' }}>Weniger präzise als OSM-Routing — bei Gelegenheit erneut versuchen</div>}
@@ -2032,13 +2019,13 @@ const MapView = memo(function MapView({
       {nichtAngebundeneAdressen.length > 0 && warnModalOffen && (
         <div className="absolute inset-0 z-1000 flex items-center justify-center"
           style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="rounded-lg shadow-lg p-4" style={{ backgroundColor: '#1a1a1a', border: '1px solid #dc2626', width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
+          <div className="rounded-2xl shadow-lg p-4" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #dc2626', width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold" style={{ color: '#f87171' }}>
                 ⚠️ {nichtAngebundeneAdressen.length} Adresse(n) nicht angebunden
               </span>
               <button onClick={() => setWarnModalOffen(false)}
-                className="text-xs px-2 py-1 rounded" style={{ color: '#9ca3af' }}>✕</button>
+                className="text-xs px-2 py-1 rounded" style={{ color: 'var(--text-secondary)' }}>✕</button>
             </div>
             <p className="text-xs mb-2" style={{ color: '#d1d5db' }}>
               Kein öffentlicher Weg (Straße/Feldweg) im OSM-Netz gefunden — bitte im Edit-Modus manuell anbinden.
@@ -2046,7 +2033,7 @@ const MapView = memo(function MapView({
             <div className="overflow-y-auto" style={{ flex: 1 }}>
               {nichtAngebundeneAdressen.map((a) => (
                 <div key={a.uuid} className="flex items-center justify-between text-xs py-1.5"
-                  style={{ borderBottom: '1px solid #374151', color: '#f9fafb' }}>
+                  style={{ borderBottom: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}>
                   <span>{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}, {a.ortsname}</span>
                   <button
                     onClick={() => { setFlugZiel({ lat: a.lat, lng: a.lon }); setWarnModalOffen(false) }}
@@ -2059,7 +2046,7 @@ const MapView = memo(function MapView({
             </div>
             <button onClick={() => setWarnModalOffen(false)}
               className="mt-3 px-3 py-1.5 rounded-lg text-xs font-medium"
-              style={{ backgroundColor: '#374151', color: '#f9fafb', border: 'none' }}>
+              style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)', border: 'none' }}>
               Schließen
             </button>
           </div>
@@ -2072,8 +2059,8 @@ const MapView = memo(function MapView({
           position: 'absolute',
           left: Math.min(aktivMenu.screenX + 16, window.innerWidth - 185),
           top: Math.max(aktivMenu.screenY - aktivMenu.aktionen.length * 46 - 26, 60),
-          zIndex: 2000, backgroundColor: '#1a1a1a',
-          border: `1px solid ${aktivesSegment ? GELB : '#374151'}`,
+          zIndex: 2000, backgroundColor: 'var(--surface-1)',
+          border: `1px solid ${aktivesSegment ? GELB : 'var(--border-strong)'}`,
           borderRadius: '10px', overflow: 'hidden',
           boxShadow: '0 8px 24px rgba(0,0,0,0.9)', minWidth: '170px',
         }}>
@@ -2088,17 +2075,17 @@ const MapView = memo(function MapView({
 
       {/* Bearbeitungs-Banner */}
       {editierbarAktiv && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg"
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-2xl shadow-lg"
           style={{
-            backgroundColor: segmentStart ? '#052e2b' : ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : '#111827',
-            border: `1px solid ${segmentStart ? '#4ade80' : ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : '#374151'}`,
+            backgroundColor: segmentStart ? '#052e2b' : ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : 'var(--surface-2)',
+            border: `1px solid ${segmentStart ? '#4ade80' : ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : 'var(--border-strong)'}`,
             padding: '10px 16px', maxWidth: '92vw',
           }}>
           {segmentStart ? (
             <p style={{ color: '#bbf7d0', fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
               📍 <b>Segment-Start gesetzt</b> — zweiten Punkt auf demselben Abschnitt antippen für Segment-Ende
               <button onClick={() => setSegmentStart(null)}
-                style={{ background: '#374151', color: '#f9fafb', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}>
+                style={{ background: 'var(--border-strong)', color: 'var(--text-primary)', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}>
                 ✕ Abbrechen
               </button>
             </p>
@@ -2118,7 +2105,7 @@ const MapView = memo(function MapView({
                 </span>
                 {aktivesSegment && <span style={{ color: GELB, marginLeft: 8, fontWeight: 600 }}>● Segment markiert</span>}
               </p>
-              <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 11, margin: 0 }}>
                 {kleinProjekt
                   ? <><b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → verschieben &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt antippen</b> → Menü &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Linie antippen</b> → Menü</>
                   : <><b style={{ color: '#d1d5db' }}>Segment antippen</b> → <span style={{ color: GELB }}>gelb</span> + Handles &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → verschieben &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>ESC</b> → Auswahl aufheben</>

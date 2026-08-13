@@ -1063,7 +1063,7 @@ export default function Home() {
   ).length
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0f0f0f]">
+    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--surface-0)' }}>
       <Sidebar
         projektName={projektName}
         onProjektNameAendern={setProjektName}

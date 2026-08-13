@@ -50,21 +50,21 @@ export default function NVTModal({
   }
 
   const sektion = (titel: string, inhalt: React.ReactNode) => (
-    <div className="rounded-xl p-3.5" style={{ backgroundColor: '#181c24', border: '1px solid #262b36' }}>
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">{titel}</p>
+    <div className="p-3.5" style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-lg)' }}>
+      <p className="text-xs font-medium uppercase tracking-wider mb-3" style={{ color: 'var(--text-tertiary)' }}>{titel}</p>
       {inhalt}
     </div>
   )
 
   return (
-    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
-      <div className="rounded-2xl shadow-2xl flex flex-col"
-        style={{ backgroundColor: '#14171d', border: '1px solid #2a2f3a', width: 420, maxHeight: '90vh' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#262b36' }}>
-          <span className="text-base font-semibold text-white">📡 NVT</span>
+    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(6,7,10,0.7)' }}>
+      <div className="shadow-2xl flex flex-col"
+        style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-xl)', width: 420, maxHeight: '90vh' }}>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <span className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>📡 NVT</span>
           <button onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-sm hover:bg-gray-800 transition-colors"
-            style={{ color: '#9ca3af' }}>
+            className="w-7 h-7 flex items-center justify-center text-sm transition-colors hover:brightness-125"
+            style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)', borderRadius: 'var(--radius-sm)' }}>
             ✕
           </button>
         </div>
@@ -75,34 +75,34 @@ export default function NVTModal({
             <div className="flex flex-col gap-2">
               <button
                 onClick={onAussiedlerhoefeMarkieren}
-                className="w-full px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors hover:brightness-110"
-                style={{ backgroundColor: '#2a2115', color: '#fbbf24', border: '1px solid #78350f' }}
+                className="w-full px-3.5 py-2.5 text-sm font-medium text-left transition-colors hover:brightness-110"
+                style={{ backgroundColor: 'var(--accent-amber-dim)', color: 'var(--accent-amber-bright)', borderRadius: 'var(--radius-md)' }}
               >
                 🚜 Aussiedlerhöfe markieren {aussiedlerhofAnzahl > 0 && `(${aussiedlerhofAnzahl})`}
               </button>
-              <p className="text-xs text-gray-600 px-0.5">
+              <p className="text-xs px-0.5" style={{ color: 'var(--text-tertiary)' }}>
                 Markierte Adressen sind von der Abstandsregel ausgenommen (Anfahrt mit größerem Kabel), hängen aber trotzdem am nächsten NVT.
               </p>
 
               <button
                 onClick={onManuellSetzen}
-                className="w-full px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors hover:brightness-110"
-                style={{ backgroundColor: '#1e2a3a', color: '#93c5fd', border: '1px solid #1e3a5f' }}
+                className="w-full px-3.5 py-2.5 text-sm font-medium text-left transition-colors hover:brightness-110"
+                style={{ backgroundColor: 'var(--accent-blue-dim)', color: '#93c5fd', borderRadius: 'var(--radius-md)' }}
               >
                 📍 NVT manuell setzen
               </button>
-              <p className="text-xs text-gray-600 px-0.5">
+              <p className="text-xs px-0.5" style={{ color: 'var(--text-tertiary)' }}>
                 Für Einzelfälle wie 2-3 benachbarte Aussiedlerhöfe — eigener Standort mit frei wählbarer Kapazität (z.B. kleiner 24er-Verband statt 96/120), Hausanschlüsse danach per Klick zuweisen.
               </p>
 
               <button
                 onClick={onSchachtSetzen}
-                className="w-full px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors hover:brightness-110"
-                style={{ backgroundColor: '#0f2a28', color: '#5eead4', border: '1px solid #0d9488' }}
+                className="w-full px-3.5 py-2.5 text-sm font-medium text-left transition-colors hover:brightness-110"
+                style={{ backgroundColor: 'var(--accent-teal-dim)', color: '#5eead4', borderRadius: 'var(--radius-md)' }}
               >
                 🕳️ Schacht setzen {schachtVorhandenAnzahl > 0 && `(${schachtVorhandenAnzahl})`}
               </button>
-              <p className="text-xs text-gray-600 px-0.5">
+              <p className="text-xs px-0.5" style={{ color: 'var(--text-tertiary)' }}>
                 Kabelschacht/Übergabepunkt ohne Kapazitätsgrenze — z.B. als Zwischenpunkt bei zu langer Strecke zwischen Dörfern, oder zur direkten Anbindung einzelner Aussiedlerhöfe. Hausanschlüsse danach per Klick zuweisen.
               </p>
             </div>
@@ -111,87 +111,89 @@ export default function NVTModal({
           {sektion('Automatisch generieren', (
             <div className="flex flex-col gap-3.5">
               <div>
-                <p className="text-xs text-gray-400 mb-1.5">Für welche(s) Dorf/Dörfer?</p>
-                <div className="flex flex-col gap-0.5 max-h-36 overflow-y-auto rounded-lg" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
+                <p className="text-xs mb-1.5" style={{ color: 'var(--text-secondary)' }}>Für welche(s) Dorf/Dörfer?</p>
+                <div className="flex flex-col gap-0.5 max-h-36 overflow-y-auto" style={{ backgroundColor: 'var(--surface-3)', borderRadius: 'var(--radius-md)' }}>
                   {orte.map((ort) => (
-                    <label key={ort.key} className="flex items-center gap-2.5 px-2.5 py-1.5 cursor-pointer hover:bg-gray-800 transition-colors">
+                    <label key={ort.key} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:brightness-125">
                       <input
                         type="checkbox"
                         checked={ausgewaehlt.has(ort.key)}
                         onChange={() => toggle(ort.key)}
                         className="accent-blue-500 w-3.5 h-3.5 shrink-0"
                       />
-                      <span className="text-xs text-gray-300 flex-1 truncate">{ort.name}</span>
-                      <span className="text-[10px] text-gray-600 shrink-0">{ort.anzahl}</span>
+                      <span className="text-xs flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>{ort.name}</span>
+                      <span className="text-[10px] shrink-0" style={{ color: 'var(--text-tertiary)' }}>{ort.anzahl}</span>
                     </label>
                   ))}
                 </div>
               </div>
 
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Max. Distanz Hausanschluss → NVT</span>
-                <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid #374151', backgroundColor: '#111827' }}>
+                <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Max. Distanz Hausanschluss → NVT</span>
+                <div className="flex items-center overflow-hidden" style={{ border: '1px solid var(--border-subtle)', backgroundColor: 'var(--surface-3)', borderRadius: 'var(--radius-md)' }}>
                   <input
                     type="number"
                     min={1}
                     value={distanzText}
                     onChange={(e) => setDistanzText(e.target.value)}
                     className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
-                    style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
+                    style={{ backgroundColor: 'transparent', color: 'var(--text-primary)' }}
                   />
-                  <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>Meter</span>
+                  <span className="px-3 text-xs shrink-0" style={{ color: 'var(--text-tertiary)', borderLeft: '1px solid var(--border-subtle)' }}>Meter</span>
                 </div>
               </label>
 
               <div>
-                <p className="text-xs text-gray-400 mb-1.5">Erlaubte NVT-Kapazitäten (Rohr)</p>
+                <p className="text-xs mb-1.5" style={{ color: 'var(--text-secondary)' }}>Erlaubte NVT-Kapazitäten (Rohr)</p>
                 <div className="flex items-center gap-1.5">
                   {[96, 120].map((k) => (
                     <button
                       key={k}
                       onClick={() => toggleKapazitaet(k)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                      className="px-3.5 py-1.5 text-xs font-medium transition-colors"
                       style={{
-                        backgroundColor: kapazitaeten.has(k) ? '#1e3a5f' : '#111827',
-                        color: kapazitaeten.has(k) ? '#93c5fd' : '#9ca3af',
-                        border: `1px solid ${kapazitaeten.has(k) ? '#3b82f6' : '#374151'}`,
+                        backgroundColor: kapazitaeten.has(k) ? 'var(--accent-blue-dim)' : 'var(--surface-3)',
+                        color: kapazitaeten.has(k) ? '#93c5fd' : 'var(--text-tertiary)',
+                        border: `1px solid ${kapazitaeten.has(k) ? 'var(--accent-blue)' : 'var(--border-subtle)'}`,
+                        borderRadius: 999,
                       }}
                     >
                       {k}er
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-gray-600 mt-1.5">
+                <p className="text-xs mt-1.5" style={{ color: 'var(--text-tertiary)' }}>
                   Pro Standort wird die kleinste ausreichende Kapazität genutzt. Reicht selbst die größte nicht, wird geografisch aufgeteilt — nie zwei NVT am selben Ort.
                 </p>
               </div>
 
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Reserve pro Standort (Röhrchen frei lassen)</span>
-                <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid #374151', backgroundColor: '#111827' }}>
+                <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Reserve pro Standort (Röhrchen frei lassen)</span>
+                <div className="flex items-center overflow-hidden" style={{ border: '1px solid var(--border-subtle)', backgroundColor: 'var(--surface-3)', borderRadius: 'var(--radius-md)' }}>
                   <input
                     type="number"
                     min={0}
                     value={reserveText}
                     onChange={(e) => setReserveText(e.target.value)}
                     className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
-                    style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
+                    style={{ backgroundColor: 'transparent', color: 'var(--text-primary)' }}
                   />
-                  <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>Stk.</span>
+                  <span className="px-3 text-xs shrink-0" style={{ color: 'var(--text-tertiary)', borderLeft: '1px solid var(--border-subtle)' }}>Stk.</span>
                 </div>
               </label>
-              <p className="text-xs text-gray-600 -mt-2">
+              <p className="text-xs -mt-2" style={{ color: 'var(--text-tertiary)' }}>
                 z.B. 50 bei einem 120er → es werden nur bis zu 70 Hausanschlüsse belegt, 50 bleiben als Reserve frei. Wirkt auf alle ausgewählten Kapazitäten.
               </p>
 
               {nvtVorhandenAnzahl > 0 && (
-                <p className="text-xs text-gray-500">Bereits {nvtVorhandenAnzahl} NVT-Standort(e) auf der Karte.</p>
+                <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Bereits {nvtVorhandenAnzahl} NVT-Standort(e) auf der Karte.</p>
               )}
 
               <button
                 onClick={() => onGenerieren([...ausgewaehlt], distanz, [...kapazitaeten], reserve)}
                 disabled={ausgewaehlt.size === 0 || kapazitaeten.size === 0}
-                className="w-full px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+                style={{ backgroundColor: 'var(--accent-blue)', borderRadius: 'var(--radius-md)' }}
               >
                 📡 NVT generieren
               </button>

@@ -78,11 +78,38 @@ function formatMeter(meter: number): string {
   return `${Math.round(meter).toLocaleString('de-DE')} m`
 }
 
+// Wiederverwendete Stil-Bausteine (2026-08-14, komplette Design-Überarbeitung
+// nach Sitenna-Referenz + Apple-Formsprache) — EIN Satz Grund-Styles statt
+// pro Button einzeln Hex-Werte zu wiederholen, damit spätere Anpassungen an
+// einer Stelle greifen. Tiefe entsteht durch Farbschichtung (surface-1 →
+// surface-2 → surface-3), nicht durch Rahmen/Schatten — sekundäre Buttons
+// sind daher schon im Ruhezustand als eigene Fläche erkennbar, nicht erst
+// beim Hover (Alex, 2026-08-13: "man sieht kaum, dass da Buttons sind").
+const sekundaerBtn: React.CSSProperties = {
+  backgroundColor: 'var(--surface-2)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--radius-md)',
+  color: 'var(--text-secondary)',
+}
+const primaerBtn: React.CSSProperties = {
+  backgroundColor: 'var(--accent-blue)',
+  borderRadius: 'var(--radius-md)',
+  color: '#fff',
+}
+const pill: React.CSSProperties = {
+  backgroundColor: 'var(--surface-3)',
+  color: 'var(--text-secondary)',
+  borderRadius: 999,
+}
+
 // Einklappbarer Abschnitt: Titel + optionales Badge (nur sichtbar wenn
 // eingeklappt, zeigt eine Kurz-Zusammenfassung ohne den Inhalt aufklappen zu
 // müssen — z.B. Adressenanzahl oder Trassenlänge). Zustand liegt beim
 // Aufrufer (Sidebar selbst), nicht lokal im Abschnitt, damit man den
-// Default-Zustand pro Sektion einzeln steuern kann.
+// Default-Zustand pro Sektion einzeln steuern kann. Offener Zustand bekommt
+// einen farbigen Akzent-Balken links (als inset-box-shadow, verschiebt
+// dadurch keinen Content) statt nur einer Textfarben-Änderung — dieselbe
+// Sprache wie die aktive Navigation im Sitenna-Referenzdesign.
 function Abschnitt({
   titel,
   badge,
@@ -100,33 +127,40 @@ function Abschnitt({
     <div>
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between mb-2 px-2 py-1.5 rounded-xl transition-colors group"
-        style={{ backgroundColor: offen ? '#1a1a1a' : 'transparent' }}
+        className="w-full flex items-center justify-between mb-2.5 pl-3 pr-2 py-2 transition-colors group"
+        style={{
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: offen ? 'var(--surface-2)' : 'transparent',
+          boxShadow: offen ? 'inset 3px 0 0 0 var(--accent-blue)' : 'inset 3px 0 0 0 transparent',
+        }}
       >
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider group-hover:text-gray-300 transition-colors">
+        <span
+          className="text-xs font-semibold uppercase tracking-wider transition-colors"
+          style={{ color: offen ? 'var(--text-primary)' : 'var(--text-tertiary)' }}
+        >
           {titel}
         </span>
         <span className="flex items-center gap-2">
           {!offen && badge && (
-            <span className="text-[10px] text-gray-500 normal-case tracking-normal">{badge}</span>
+            <span className="text-[10px] font-medium normal-case tracking-normal px-2 py-0.5" style={pill}>{badge}</span>
           )}
           <span
-            className="flex items-center justify-center w-5 h-5 rounded-full transition-colors group-hover:bg-gray-700"
-            style={{ backgroundColor: '#262b36' }}
+            className="flex items-center justify-center w-5 h-5 transition-colors group-hover:brightness-125"
+            style={{ backgroundColor: 'var(--surface-3)', borderRadius: 999 }}
           >
             <svg
               width="10"
               height="10"
               viewBox="0 0 10 10"
-              className="text-gray-400 transition-transform duration-200"
-              style={{ transform: offen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+              className="transition-transform duration-200"
+              style={{ color: 'var(--text-secondary)', transform: offen ? 'rotate(180deg)' : 'rotate(0deg)' }}
             >
               <path d="M1.5 3.5L5 7L8.5 3.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </span>
         </span>
       </button>
-      {offen && children}
+      {offen && <div className="px-0.5">{children}</div>}
     </div>
   )
 }
@@ -151,19 +185,20 @@ function ErsteSchritteBanner({
   onKalkulationKlick: () => void
 }) {
   return (
-    <div className="rounded-xl p-3 flex flex-col gap-2" style={{ backgroundColor: '#0f1f33', border: '1px solid #1e3a5f' }}>
+    <div className="p-3 flex flex-col gap-2"
+      style={{ backgroundColor: 'var(--accent-blue-dim)', borderRadius: 'var(--radius-lg)', border: '1px solid #2c4a70' }}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold" style={{ color: '#93c5fd' }}>👋 Erste Schritte</span>
-        <button onClick={onSchliessen} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">✕</button>
+        <button onClick={onSchliessen} className="text-xs transition-colors hover:brightness-125" style={{ color: 'var(--text-secondary)' }}>✕</button>
       </div>
       <button onClick={onFirmaKlick}
-        className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors"
-        style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}>
+        className="w-full text-left px-3 py-2 text-xs font-medium transition-colors hover:brightness-110"
+        style={{ backgroundColor: 'var(--accent-blue)', color: '#fff', borderRadius: 'var(--radius-md)' }}>
         1️⃣ 🏢 Firma & Material einrichten
       </button>
       <button onClick={onKalkulationKlick}
-        className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors"
-        style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}>
+        className="w-full text-left px-3 py-2 text-xs font-medium transition-colors hover:brightness-110"
+        style={{ backgroundColor: 'var(--accent-blue)', color: '#fff', borderRadius: 'var(--radius-md)' }}>
         2️⃣ 💰 Kalkulation (Preise hinterlegen)
       </button>
     </div>
@@ -265,13 +300,13 @@ export default function Sidebar({
   return (
     <aside
       className="w-72 h-screen shrink-0 flex flex-col overflow-y-auto"
-      style={{ backgroundColor: '#141414', borderRight: '1px solid #1f2937' }}
+      style={{ backgroundColor: 'var(--surface-1)', borderRight: '1px solid var(--border-subtle)' }}
     >
       {/* Header */}
-      <div className="px-5 py-5 border-b border-gray-800 flex items-start justify-between">
+      <div className="px-5 py-5 flex items-start justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <div>
-          <h1 className="text-white font-semibold text-lg leading-tight">Trassenplaner</h1>
-          <span className="text-xs text-gray-500 mt-0.5 block">Glasfaser Streckenplanung</span>
+          <h1 className="font-semibold text-lg leading-tight" style={{ color: 'var(--text-primary)' }}>Trassenplaner</h1>
+          <span className="text-xs mt-0.5 block" style={{ color: 'var(--text-tertiary)' }}>Glasfaser Streckenplanung</span>
           {projektName.trim() !== '' && projektName !== 'Neues Projekt' && (
             <span className="text-xs mt-1 block" style={{ color: '#93c5fd' }}>📁 {projektName}</span>
           )}
@@ -279,7 +314,8 @@ export default function Sidebar({
         <button
           onClick={() => setEinstellungenOffen(true)}
           title="Einstellungen"
-          className="text-lg text-gray-500 hover:text-white transition-colors leading-none mt-0.5"
+          className="w-8 h-8 flex items-center justify-center text-base transition-colors hover:brightness-125"
+          style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-sm)' }}
         >
           ⚙️
         </button>
@@ -291,16 +327,17 @@ export default function Sidebar({
           Materialkatalog-Profil fürs ganze Projekt, die wichtigste
           Weichenstellung, bevor überhaupt losgelegt wird. */}
       <label
-        className="mx-4 mt-3 flex items-center justify-between px-3 py-2.5 rounded-xl text-sm cursor-pointer transition-colors"
+        className="mx-4 mt-3 flex items-center justify-between px-3.5 py-2.5 text-sm cursor-pointer transition-colors"
         style={{
-          backgroundColor: bundesfoerderung ? '#3f2d0a' : '#161b22',
-          border: `1px solid ${bundesfoerderung ? '#d97706' : '#30363d'}`,
+          backgroundColor: bundesfoerderung ? 'var(--accent-amber-dim)' : 'var(--surface-2)',
+          border: `1px solid ${bundesfoerderung ? 'var(--accent-amber)' : 'var(--border-subtle)'}`,
+          borderRadius: 'var(--radius-lg)',
         }}
         title="Steuert GIS-NB-Export-Schema (statt freiem Layout) und welches Materialkatalog-Profil angewendet wird"
       >
         <span className="flex flex-col">
-          <span style={{ color: bundesfoerderung ? '#fbbf24' : '#e5e7eb' }} className="font-medium">🏛️ Bundesförderung</span>
-          <span className="text-[10px] text-gray-500">Bestimmt Material & Export-Format</span>
+          <span style={{ color: bundesfoerderung ? 'var(--accent-amber-bright)' : 'var(--text-primary)' }} className="font-medium">🏛️ Bundesförderung</span>
+          <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Bestimmt Material & Export-Format</span>
         </span>
         <input
           type="checkbox"
@@ -333,13 +370,13 @@ export default function Sidebar({
               value={projektName}
               onChange={(e) => onProjektNameAendern(e.target.value)}
               placeholder="Projektname"
-              className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-              style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
+              className="w-full px-3.5 py-2.5 text-sm outline-none"
+              style={{ backgroundColor: 'var(--surface-3)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }}
             />
             <button
               onClick={() => projektLadenRef.current?.click()}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
-              style={{ backgroundColor: '#1a1a1a', border: '1px solid #262b36' }}
+              className="w-full text-left px-3.5 py-2.5 text-sm transition-colors hover:brightness-125"
+              style={sekundaerBtn}
             >
               📂 Projekt laden
             </button>
@@ -357,8 +394,8 @@ export default function Sidebar({
             <button
               onClick={onProjektSpeichern}
               disabled={!hatDaten}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 hover:text-white hover:border-gray-600"
-              style={{ backgroundColor: '#1a1a1a', border: '1px solid #262b36' }}
+              className="w-full text-left px-3.5 py-2.5 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-125"
+              style={sekundaerBtn}
             >
               💾 Projekt speichern
             </button>
@@ -366,8 +403,8 @@ export default function Sidebar({
               <button
                 onClick={onUndo}
                 disabled={!canUndo}
-                className="flex-1 text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ color: canUndo ? '#fbbf24' : '#6b7280', backgroundColor: '#1a1a1a', border: '1px solid #262b36' }}
+                className="flex-1 text-left px-3.5 py-2.5 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ ...sekundaerBtn, color: canUndo ? 'var(--accent-amber-bright)' : 'var(--text-tertiary)' }}
               >
                 ↩ Zurück{canUndo ? ` (${undoCount})` : ''}
               </button>
@@ -375,21 +412,26 @@ export default function Sidebar({
                 <button
                   onClick={() => setVerlaufOffen((v) => !v)}
                   title="Verlauf anzeigen"
-                  className="px-3 py-2 rounded-lg text-sm transition-colors"
-                  style={{ color: verlaufOffen ? '#fbbf24' : '#9ca3af', backgroundColor: verlaufOffen ? '#2a2115' : '#1a1a1a', border: `1px solid ${verlaufOffen ? '#d97706' : '#262b36'}` }}
+                  className="px-3.5 py-2.5 text-sm transition-colors"
+                  style={{
+                    borderRadius: 'var(--radius-md)',
+                    color: verlaufOffen ? 'var(--accent-amber-bright)' : 'var(--text-secondary)',
+                    backgroundColor: verlaufOffen ? 'var(--accent-amber-dim)' : 'var(--surface-2)',
+                    border: `1px solid ${verlaufOffen ? 'var(--accent-amber)' : 'var(--border-subtle)'}`,
+                  }}
                 >
                   📜
                 </button>
               )}
             </div>
             {verlaufOffen && canUndo && (
-              <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto rounded-lg" style={{ backgroundColor: '#1a1a1a' }}>
+              <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto" style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-md)' }}>
                 {historyLabels.map((_, i) => historyLabels.length - 1 - i).map((idx, pos) => (
                   <button
                     key={idx}
                     onClick={() => { onUndoZu(idx); setVerlaufOffen(false) }}
-                    className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-gray-800 transition-colors"
-                    style={{ color: pos === 0 ? '#fbbf24' : '#9ca3af' }}
+                    className="w-full text-left px-3 py-2 text-xs transition-colors hover:brightness-125"
+                    style={{ color: pos === 0 ? 'var(--accent-amber-bright)' : 'var(--text-secondary)' }}
                     title="Zu diesem Zeitpunkt zurückspringen"
                   >
                     ↩ Vor: „{historyLabels[idx]}“
@@ -402,15 +444,13 @@ export default function Sidebar({
                 if (hatDaten && !confirm('Alle Daten löschen und neu anfangen?')) return
                 onAllesZuruecksetzen()
               }}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors text-red-400 hover:text-red-300 hover:border-red-900"
-              style={{ backgroundColor: '#1a1a1a', border: '1px solid #262b36' }}
+              className="w-full text-left px-3.5 py-2.5 text-sm transition-colors hover:brightness-125"
+              style={{ ...sekundaerBtn, color: 'var(--accent-red)' }}
             >
               🗑️ Neu anfangen
             </button>
           </div>
         </Abschnitt>
-
-        <div className="border-t border-gray-800" />
 
         {/* Sektion: Daten */}
         <Abschnitt
@@ -421,8 +461,8 @@ export default function Sidebar({
         >
           <button
             onClick={() => excelInputRef.current?.click()}
-            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors"
-            style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}
+            className="w-full text-left px-3.5 py-2.5 text-sm font-medium transition-colors hover:brightness-110"
+            style={primaerBtn}
           >
             📊 Excel importieren
           </button>
@@ -438,7 +478,7 @@ export default function Sidebar({
             }}
           />
           {hatDaten && (
-            <p className="mt-2 px-3 text-xs text-green-400">
+            <p className="mt-2 px-3 text-xs" style={{ color: 'var(--accent-green)' }}>
               ✅ {adressenCount.toLocaleString('de-DE')} Adressen geladen
             </p>
           )}
@@ -447,30 +487,32 @@ export default function Sidebar({
           {orte.length > 1 && (
             <div className="mt-3">
               <div className="flex items-center justify-between px-1 mb-1.5">
-                <span className="text-[10px] text-gray-500 uppercase tracking-wider">
+                <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>
                   Orte für Trasse ({aktiveOrteKeys.length}/{orte.length})
                 </span>
                 <div className="flex gap-2.5">
                   <button
                     onClick={() => onAlleOrteToggle(true)}
-                    className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                    className="text-[10px] transition-colors hover:brightness-125"
+                    style={{ color: '#93c5fd' }}
                   >
                     Alle
                   </button>
                   <button
                     onClick={() => onAlleOrteToggle(false)}
-                    className="text-[10px] text-gray-500 hover:text-gray-400 transition-colors"
+                    className="text-[10px] transition-colors hover:brightness-125"
+                    style={{ color: 'var(--text-tertiary)' }}
                   >
                     Keine
                   </button>
                 </div>
               </div>
-              <div className="flex flex-col gap-0.5 max-h-44 overflow-y-auto rounded-lg"
-                style={{ backgroundColor: '#1a1a1a' }}>
+              <div className="flex flex-col gap-0.5 max-h-44 overflow-y-auto"
+                style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-md)' }}>
                 {orte.map((ort) => (
                   <label
                     key={ort.key}
-                    className="flex items-center gap-2.5 px-2.5 py-1.5 cursor-pointer hover:bg-gray-800 transition-colors"
+                    className="flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:brightness-125"
                   >
                     <input
                       type="checkbox"
@@ -478,16 +520,14 @@ export default function Sidebar({
                       onChange={() => onOrtToggle(ort.key)}
                       className="accent-blue-500 w-3.5 h-3.5 shrink-0"
                     />
-                    <span className="text-xs text-gray-300 flex-1 truncate">{ort.name}</span>
-                    <span className="text-[10px] text-gray-600 shrink-0">{ort.anzahl}</span>
+                    <span className="text-xs flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>{ort.name}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 shrink-0" style={pill}>{ort.anzahl}</span>
                   </label>
                 ))}
               </div>
             </div>
           )}
         </Abschnitt>
-
-        <div className="border-t border-gray-800" />
 
         {/* Sektion: Schritte */}
         <Abschnitt
@@ -498,8 +538,8 @@ export default function Sidebar({
         >
           {/* Hinweis Bearbeitungsmodus */}
           {editierbarAktiv && (
-            <div className="mb-3 px-3 py-2 rounded-lg text-xs"
-              style={{ backgroundColor: '#1e2a1f', border: '1px solid #16a34a', color: '#86efac' }}>
+            <div className="mb-3 px-3.5 py-2.5 text-xs"
+              style={{ backgroundColor: 'var(--accent-green-dim)', borderRadius: 'var(--radius-md)', color: '#86efac' }}>
               ✏️ Bearbeitung aktiv — Generierung gesperrt
             </div>
           )}
@@ -508,14 +548,15 @@ export default function Sidebar({
 
             {/* Schritt 1 */}
             <div>
-              <p className="text-xs font-medium text-gray-400 mb-1.5">
-                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] mr-1.5">1</span>
+              <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-white text-[10px] mr-1.5" style={{ backgroundColor: 'var(--accent-blue)' }}>1</span>
                 Startpunkt setzen
               </p>
               {startpunktGesetzt ? (
                 <button
                   onClick={onStartpunktZuruecksetzen}
-                  className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-green-900/40 text-green-400 border border-green-800 hover:bg-green-900/60 transition-colors text-left"
+                  className="w-full px-3.5 py-2.5 text-sm font-medium transition-colors text-left hover:brightness-110"
+                  style={{ backgroundColor: 'var(--accent-green-dim)', color: '#86efac', borderRadius: 'var(--radius-md)' }}
                 >
                   ✅ Startpunkt gesetzt
                 </button>
@@ -523,13 +564,14 @@ export default function Sidebar({
                 <button
                   onClick={onStartpunktSetzen}
                   disabled={!hatDaten}
-                  className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+                  style={primaerBtn}
                 >
                   📍 Startpunkt setzen
                 </button>
               )}
               {startpunktKoords && (
-                <p className="mt-1 px-1 text-[11px] text-gray-500">
+                <p className="mt-1 px-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
                   {startpunktKoords.lat.toFixed(5)}, {startpunktKoords.lng.toFixed(5)}
                 </p>
               )}
@@ -537,29 +579,31 @@ export default function Sidebar({
 
             {/* Schritt 2 */}
             <div>
-              <p className="text-xs font-medium text-gray-400 mb-1.5">
-                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] mr-1.5">2</span>
+              <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-white text-[10px] mr-1.5" style={{ backgroundColor: 'var(--accent-blue)' }}>2</span>
                 Trasse generieren
               </p>
               {trasseVorhanden && !isGeneratingTrasse ? (
                 <div className="flex flex-col gap-2">
-                  <div className="px-3 py-2 rounded-lg text-sm bg-green-900/40 text-green-400 border border-green-800">
+                  <div className="px-3.5 py-2.5 text-sm" style={{ backgroundColor: 'var(--accent-green-dim)', color: '#86efac', borderRadius: 'var(--radius-md)' }}>
                     ✅ Trasse: {formatMeter(trassenLaenge)}
                   </div>
                   <button
                     onClick={onTrasseGenerieren}
                     disabled={editierbarAktiv}
-                    className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="w-full px-3.5 py-2 text-xs transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-125"
+                    style={{ color: 'var(--text-tertiary)' }}
                   >
                     ↺ Neu generieren
                   </button>
                   <button
                     onClick={onEditierbarToggle}
-                    className="w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left"
+                    className="w-full px-3.5 py-2.5 text-sm font-medium transition-colors text-left hover:brightness-110"
                     style={{
-                      backgroundColor: editierbarAktiv ? '#1e3a5f' : '#3f2d0a',
-                      color: editierbarAktiv ? '#93c5fd' : '#fbbf24',
-                      border: `1px solid ${editierbarAktiv ? '#3b82f6' : '#d97706'}`,
+                      backgroundColor: editierbarAktiv ? 'var(--accent-blue-dim)' : 'var(--accent-amber-dim)',
+                      color: editierbarAktiv ? '#93c5fd' : 'var(--accent-amber-bright)',
+                      border: `1px solid ${editierbarAktiv ? 'var(--accent-blue)' : 'var(--accent-amber)'}`,
+                      borderRadius: 'var(--radius-md)',
                     }}
                   >
                     ✏️ {editierbarAktiv ? 'Bearbeitung beenden' : 'Trasse bearbeiten'}
@@ -568,26 +612,27 @@ export default function Sidebar({
                     <button
                       onClick={onTrasseErweitern}
                       disabled={neueAdressenFuerTrasseAnzahl === 0 || editierbarAktiv}
-                      className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="w-full px-3.5 py-2 text-xs transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-125"
+                      style={{ color: 'var(--text-tertiary)' }}
                     >
                       🔗 Trasse erweitern
                       {neueAdressenFuerTrasseAnzahl > 0 && !editierbarAktiv && (
-                        <span className="ml-1.5 text-[10px] text-blue-400">({neueAdressenFuerTrasseAnzahl} Adr.)</span>
+                        <span className="ml-1.5 text-[10px]" style={{ color: '#93c5fd' }}>({neueAdressenFuerTrasseAnzahl} Adr.)</span>
                       )}
                     </button>
                   )}
                 </div>
               ) : isGeneratingTrasse ? (
                 <div className="flex flex-col gap-1.5">
-                  <div className="w-full bg-gray-800 rounded-full h-2">
+                  <div className="w-full h-2 rounded-full" style={{ backgroundColor: 'var(--surface-3)' }}>
                     <div
-                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${trasseProgress}%` }}
+                      className="h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${trasseProgress}%`, backgroundColor: 'var(--accent-blue)' }}
                     />
                   </div>
-                  <p className="text-xs text-gray-500 text-right">{trasseProgress}%</p>
+                  <p className="text-xs text-right" style={{ color: 'var(--text-tertiary)' }}>{trasseProgress}%</p>
                   {trasseLangsam && (
-                    <p className="text-xs text-amber-500 text-right">
+                    <p className="text-xs text-right" style={{ color: 'var(--accent-amber-bright)' }}>
                       Straßendaten werden geladen – bei langsamer Verbindung kann das länger dauern …
                     </p>
                   )}
@@ -596,7 +641,8 @@ export default function Sidebar({
                 <button
                   onClick={onTrasseGenerieren}
                   disabled={!kannTrasseGenerieren || editierbarAktiv}
-                  className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+                  style={primaerBtn}
                 >
                   🔵 Trasse generieren
                 </button>
@@ -605,29 +651,30 @@ export default function Sidebar({
 
             {/* Schritt 3 */}
             <div>
-              <p className="text-xs font-medium text-gray-400 mb-1.5">
-                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] mr-1.5">3</span>
+              <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-white text-[10px] mr-1.5" style={{ backgroundColor: 'var(--accent-blue)' }}>3</span>
                 Hausanschlüsse generieren
               </p>
               {isGeneratingHaus ? (
                 <div className="flex flex-col gap-1.5">
-                  <div className="w-full bg-gray-800 rounded-full h-2">
+                  <div className="w-full h-2 rounded-full" style={{ backgroundColor: 'var(--surface-3)' }}>
                     <div
-                      className="bg-red-500 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${hausanschluesseProgress}%` }}
+                      className="h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${hausanschluesseProgress}%`, backgroundColor: 'var(--accent-red)' }}
                     />
                   </div>
-                  <p className="text-xs text-gray-500 text-right">{hausanschluesseProgress}%</p>
+                  <p className="text-xs text-right" style={{ color: 'var(--text-tertiary)' }}>{hausanschluesseProgress}%</p>
                 </div>
               ) : hausanschluesseCount > 0 ? (
                 <div className="flex flex-col gap-2">
-                  <div className="px-3 py-2 rounded-lg text-sm bg-green-900/40 text-green-400 border border-green-800">
+                  <div className="px-3.5 py-2.5 text-sm" style={{ backgroundColor: 'var(--accent-green-dim)', color: '#86efac', borderRadius: 'var(--radius-md)' }}>
                     ✅ {hausanschluesseCount} / {gefilterteAdressenAnzahl} Adressen: {formatMeter(hausanschlussLaenge)}
                   </div>
                   <button
                     onClick={onHausanschluesseGenerieren}
                     disabled={!trasseVorhanden || editierbarAktiv}
-                    className="w-full px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-800 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="w-full px-3.5 py-2 text-xs transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-125"
+                    style={{ color: 'var(--text-tertiary)' }}
                   >
                     ↺ Alle neu generieren
                   </button>
@@ -635,11 +682,12 @@ export default function Sidebar({
                     <button
                       onClick={onHausanschluesseHinzufuegen}
                       disabled={!trasseVorhanden || neueAdressenOhneHsAnzahl === 0 || editierbarAktiv}
-                      className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="w-full px-3.5 py-2 text-xs font-medium transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
                       style={{
-                        backgroundColor: neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? '#1e3a5f' : '#1f2937',
-                        color: neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? '#93c5fd' : '#6b7280',
-                        border: `1px solid ${neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? '#3b82f6' : '#374151'}`,
+                        backgroundColor: neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? 'var(--accent-blue-dim)' : 'var(--surface-2)',
+                        color: neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? '#93c5fd' : 'var(--text-tertiary)',
+                        border: `1px solid ${neueAdressenOhneHsAnzahl > 0 && !editierbarAktiv ? 'var(--accent-blue)' : 'var(--border-subtle)'}`,
+                        borderRadius: 'var(--radius-md)',
                       }}
                     >
                       ➕ Für aktive Orte hinzufügen
@@ -649,7 +697,7 @@ export default function Sidebar({
                     </button>
                   )}
                   {editierbarAktiv && (
-                    <p className="px-1 text-[10px] text-red-400 leading-tight">
+                    <p className="px-1 text-[10px] leading-tight" style={{ color: 'var(--accent-red)' }}>
                       Klick auf rote Linie löscht den Hausanschluss
                     </p>
                   )}
@@ -658,7 +706,8 @@ export default function Sidebar({
                 <button
                   onClick={onHausanschluesseGenerieren}
                   disabled={!trasseVorhanden || editierbarAktiv}
-                  className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+                  style={primaerBtn}
                 >
                   🔴 Hausanschlüsse generieren
                 </button>
@@ -666,8 +715,6 @@ export default function Sidebar({
             </div>
           </div>
         </Abschnitt>
-
-        <div className="border-t border-gray-800" />
 
         {/* Sektion: NVT (dev) */}
         <Abschnitt
@@ -677,27 +724,26 @@ export default function Sidebar({
           onToggle={() => toggleSektion('nvt')}
         >
           <div className="flex flex-col gap-1.5">
-          <button
-            onClick={onNvtButtonKlick}
-            disabled={!trasseVorhanden || hausanschluesseCount === 0}
-            className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            📡 NVT generieren {nvtStandorteAnzahl > 0 && `(${nvtStandorteAnzahl})`}
-          </button>
-          {nvtStandorteAnzahl > 0 && (
             <button
-              onClick={onNvtNeuZuweisenKlick}
-              title="Nach manuellem Verschieben eines NVT: alle zugeordneten Hausanschlüsse neu dem jeweils nächsten NVT zuordnen"
-              className="w-full px-3 py-1.5 rounded-lg text-xs font-medium transition-colors hover:brightness-125 active:brightness-150"
-              style={{ backgroundColor: '#1e293b', color: '#93c5fd', border: '1px solid #334155' }}
+              onClick={onNvtButtonKlick}
+              disabled={!trasseVorhanden || hausanschluesseCount === 0}
+              className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+              style={primaerBtn}
             >
-              🔄 Hausanschlüsse neu zuweisen
+              📡 NVT generieren {nvtStandorteAnzahl > 0 && `(${nvtStandorteAnzahl})`}
             </button>
-          )}
+            {nvtStandorteAnzahl > 0 && (
+              <button
+                onClick={onNvtNeuZuweisenKlick}
+                title="Nach manuellem Verschieben eines NVT: alle zugeordneten Hausanschlüsse neu dem jeweils nächsten NVT zuordnen"
+                className="w-full px-3.5 py-2 text-xs font-medium transition-colors hover:brightness-125"
+                style={{ backgroundColor: 'var(--accent-blue-dim)', color: '#93c5fd', borderRadius: 'var(--radius-md)' }}
+              >
+                🔄 Hausanschlüsse neu zuweisen
+              </button>
+            )}
           </div>
         </Abschnitt>
-
-        <div className="border-t border-gray-800" />
 
         {/* Sektion: Auswertung */}
         <Abschnitt
@@ -706,43 +752,42 @@ export default function Sidebar({
           offen={offeneSektionen.has('auswertung')}
           onToggle={() => toggleSektion('auswertung')}
         >
-          <div className="rounded-xl p-3 flex flex-col gap-2" style={{ backgroundColor: '#1a1a1a' }}>
+          <div className="p-3.5 flex flex-col gap-2" style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-lg)' }}>
             <div className="flex justify-between items-center">
-              <span className="text-xs text-gray-500">Trasse</span>
-              <span className="text-sm font-medium text-white">{formatMeter(trassenLaenge)}</span>
+              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Trasse</span>
+              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{formatMeter(trassenLaenge)}</span>
             </div>
             {feldwegLaenge > 0 && (
               <>
                 <div className="flex justify-between items-center pl-3">
-                  <span className="text-xs text-gray-600">davon Straße</span>
-                  <span className="text-xs text-gray-400">{formatMeter(strasseLaenge)}</span>
+                  <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>davon Straße</span>
+                  <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatMeter(strasseLaenge)}</span>
                 </div>
                 <div className="flex justify-between items-center pl-3">
-                  <span className="text-xs text-gray-600">davon Feldweg</span>
-                  <span className="text-xs text-gray-400">{formatMeter(feldwegLaenge)}</span>
+                  <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>davon Feldweg</span>
+                  <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatMeter(feldwegLaenge)}</span>
                 </div>
               </>
             )}
             <div className="flex justify-between items-center">
-              <span className="text-xs text-gray-500">Hausanschlüsse</span>
-              <span className="text-sm font-medium text-white">{formatMeter(hausanschlussLaenge)}</span>
+              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Hausanschlüsse</span>
+              <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{formatMeter(hausanschlussLaenge)}</span>
             </div>
-            <div className="border-t border-gray-700 my-0.5" />
+            <div style={{ borderTop: '1px solid var(--border-subtle)', margin: '2px 0' }} />
             <div className="flex justify-between items-center">
-              <span className="text-xs text-gray-400 font-medium">Gesamt</span>
-              <span className="text-sm font-semibold text-blue-400">{formatMeter(gesamtLaenge)}</span>
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Gesamt</span>
+              <span className="text-sm font-semibold" style={{ color: '#93c5fd' }}>{formatMeter(gesamtLaenge)}</span>
             </div>
           </div>
           <button
             onClick={() => setKalkulationOffen(true)}
             disabled={!trasseVorhanden}
-            className="w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full mt-2 px-3.5 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+            style={primaerBtn}
           >
             💰 Kalkulation
           </button>
         </Abschnitt>
-
-        <div className="border-t border-gray-800" />
 
         {/* Sektion: Export */}
         <Abschnitt
@@ -754,14 +799,16 @@ export default function Sidebar({
             <button
               onClick={onKMLExport}
               disabled={!trasseVorhanden}
-              className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+              style={primaerBtn}
             >
               📥 KML exportieren
             </button>
             <button
               onClick={onShapefileExport}
               disabled={!trasseVorhanden}
-              className="w-full px-3 py-2 rounded-lg text-sm font-medium border border-[#334155] bg-[#1e293b] text-[#93c5fd] hover:bg-[#2a3b52] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#1e293b]"
+              className="w-full px-3.5 py-2.5 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
+              style={{ backgroundColor: 'var(--accent-blue-dim)', color: '#93c5fd', border: '1px solid #2c4a70', borderRadius: 'var(--radius-md)' }}
             >
               🗺️ Shapefile exportieren
             </button>
@@ -771,7 +818,8 @@ export default function Sidebar({
         {ersteSchritteVerborgen && (
           <button
             onClick={() => setErsteSchritteVerborgen(false)}
-            className="w-full text-center px-3 py-2 rounded-lg text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            className="w-full text-center px-3 py-2 text-xs transition-colors hover:brightness-125"
+            style={{ color: 'var(--text-tertiary)' }}
           >
             👋 Erste Schritte wieder anzeigen
           </button>

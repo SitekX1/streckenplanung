@@ -65,6 +65,11 @@ function formatEuro(betrag: number): string {
   return betrag.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 }
 
+// siehe EinstellungenModal.tsx für dieselbe Feld-Stil-Konvention
+const feldStyle: React.CSSProperties = {
+  backgroundColor: 'var(--surface-3)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)',
+}
+
 export default function KalkulationModal({
   projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, hausanschlussLaenge, nvtAnzahl, schachtAnzahl, bundesfoerderung,
   trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, backboneVerbindungen, onClose,
@@ -119,8 +124,8 @@ export default function KalkulationModal({
 
   const feld = (label: string, key: keyof KalkulationPreise, einheit: string) => (
     <label className="flex flex-col gap-1">
-      <span className="text-xs text-gray-400">{label}</span>
-      <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid #374151', backgroundColor: '#111827' }}>
+      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <div className="flex items-center overflow-hidden" style={feldStyle}>
         <input
           type="number"
           min={0}
@@ -131,26 +136,26 @@ export default function KalkulationModal({
             setPreise((p) => ({ ...p, [key]: Number(text) || 0 }))
           }}
           className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
-          style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
+          style={{ backgroundColor: 'transparent', color: 'var(--text-primary)' }}
         />
-        <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>{einheit}</span>
+        <span className="px-3 text-xs shrink-0" style={{ color: 'var(--text-tertiary)', borderLeft: '1px solid var(--border-subtle)' }}>{einheit}</span>
       </div>
     </label>
   )
 
   const materialPreisFeld = (label: string, wert: number, onChange: (v: number) => void) => (
     <label className="flex flex-col gap-1">
-      <span className="text-xs text-gray-400">{label}</span>
-      <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid #374151', backgroundColor: '#111827' }}>
+      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <div className="flex items-center overflow-hidden" style={feldStyle}>
         <input
           type="number"
           min={0}
           value={wert}
           onChange={(e) => onChange(Number(e.target.value) || 0)}
           className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
-          style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
+          style={{ backgroundColor: 'transparent', color: 'var(--text-primary)' }}
         />
-        <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>€/m</span>
+        <span className="px-3 text-xs shrink-0" style={{ color: 'var(--text-tertiary)', borderLeft: '1px solid var(--border-subtle)' }}>€/m</span>
       </div>
     </label>
   )
@@ -244,28 +249,28 @@ export default function KalkulationModal({
   }
 
   const zeile = (label: string, menge: string, summe: number) => (
-    <div className="flex justify-between items-center text-xs py-1.5" style={{ borderBottom: '1px solid #1f2430' }}>
-      <span className="text-gray-500">{label} <span className="text-gray-600">({menge})</span></span>
-      <span className="text-gray-200 font-medium">{formatEuro(summe)}</span>
+    <div className="flex justify-between items-center text-xs py-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <span style={{ color: 'var(--text-tertiary)' }}>{label} <span style={{ color: 'var(--text-tertiary)', opacity: 0.7 }}>({menge})</span></span>
+      <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{formatEuro(summe)}</span>
     </div>
   )
 
   const sektion = (titel: string, inhalt: React.ReactNode) => (
-    <div className="rounded-xl p-3.5" style={{ backgroundColor: '#181c24', border: '1px solid #262b36' }}>
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">{titel}</p>
+    <div className="p-3.5" style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-lg)' }}>
+      <p className="text-xs font-medium uppercase tracking-wider mb-3" style={{ color: 'var(--text-tertiary)' }}>{titel}</p>
       <div className="grid grid-cols-2 gap-3">{inhalt}</div>
     </div>
   )
 
   return (
-    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
-      <div className="rounded-2xl shadow-2xl flex flex-col"
-        style={{ backgroundColor: '#14171d', border: '1px solid #2a2f3a', width: 420, maxHeight: '90vh' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#262b36' }}>
-          <span className="text-base font-semibold text-white">💰 Kalkulation</span>
+    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(6,7,10,0.7)' }}>
+      <div className="shadow-2xl flex flex-col"
+        style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-xl)', width: 460, maxHeight: '90vh' }}>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <span className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>💰 Kalkulation</span>
           <button onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-sm hover:bg-gray-800 transition-colors"
-            style={{ color: '#9ca3af' }}>
+            className="w-7 h-7 flex items-center justify-center text-sm transition-colors hover:brightness-125"
+            style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)', borderRadius: 'var(--radius-sm)' }}>
             ✕
           </button>
         </div>
@@ -284,7 +289,7 @@ export default function KalkulationModal({
               <div />
               {feld('Sonderposition · Anzahl', 'sonderpositionAnzahl', 'Stk.')}
               {feld('Sonderposition · Preis', 'sonderpositionPreis', '€/Stk.')}
-              <p className="col-span-2 text-xs text-gray-600 -mt-1.5">
+              <p className="col-span-2 text-xs -mt-1.5" style={{ color: 'var(--text-tertiary)' }}>
                 Frei nutzbarer Zusatzposten, z.B. für Erschwerniszuschläge, Bohrungen oder sonstige Sonderfälle, die nicht über die Standardsätze abgedeckt sind.
               </p>
             </>
@@ -293,8 +298,8 @@ export default function KalkulationModal({
           {sektion('📡 NVT', (
             <>
               <div className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Anzahl (aus Projekt)</span>
-                <div className="flex items-center rounded-lg px-3 py-2 text-sm" style={{ border: '1px solid #374151', backgroundColor: '#0d1117', color: '#9ca3af' }}>
+                <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Anzahl (aus Projekt)</span>
+                <div className="flex items-center px-3 py-2 text-sm" style={{ ...feldStyle, color: 'var(--text-secondary)' }}>
                   {nvtAnzahl} Stk.
                 </div>
               </div>
@@ -305,8 +310,8 @@ export default function KalkulationModal({
           {sektion('🕳️ Schacht', (
             <>
               <div className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Anzahl (aus Projekt)</span>
-                <div className="flex items-center rounded-lg px-3 py-2 text-sm" style={{ border: '1px solid #374151', backgroundColor: '#0d1117', color: '#9ca3af' }}>
+                <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Anzahl (aus Projekt)</span>
+                <div className="flex items-center px-3 py-2 text-sm" style={{ ...feldStyle, color: 'var(--text-secondary)' }}>
                   {schachtAnzahl} Stk.
                 </div>
               </div>
@@ -331,13 +336,13 @@ export default function KalkulationModal({
                   {materialPreisFeld(`Sammelverband ${stufe.bezeichnungFirma}`, stufe.preisProMeter, (v) => aktualisiereStufePreis(i, v))}
                 </div>
               ))}
-              <p className="col-span-2 text-xs text-gray-600 -mt-1">
+              <p className="col-span-2 text-xs -mt-1" style={{ color: 'var(--text-tertiary)' }}>
                 Material-Typ/-Größe wird unter ⚙️ Einstellungen → Materialkatalog festgelegt, hier nur der Preis pro Meter. Die Summe unten rechnet mit der tatsächlich je Segment verlegten Länge (Backbone nur zwischen Verteilern, Sammelverband nach echtem Bedarf) — nicht mit der gesamten Trassenlänge.
               </p>
             </>
           ))}
 
-          <div className="rounded-xl p-4 flex flex-col mt-1" style={{ backgroundColor: '#0f1216', border: '1px solid #262b36' }}>
+          <div className="p-4 flex flex-col mt-1" style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-lg)' }}>
             {zeile('Befestigte Oberfläche', `${Math.round(strasseLaenge)} m`, strasseSumme)}
             {zeile('Unbefestigte Oberfläche', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
             {zeile('Hausanschlüsse', `${hausanschluesseCount} Stk.`, hausanschlussSumme)}
@@ -352,18 +357,19 @@ export default function KalkulationModal({
                 </div>
               ))}
             {materialHausanschlussSumme > 0 && zeile(`Material Hausanschluss`, `${Math.round(hausanschlussLaenge)} m`, materialHausanschlussSumme)}
-            <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid #262b36' }}>
-              <span className="text-sm font-medium text-gray-300">Gesamt</span>
-              <span className="text-lg font-semibold text-blue-400">{formatEuro(gesamt)}</span>
+            <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+              <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Gesamt</span>
+              <span className="text-lg font-semibold" style={{ color: '#93c5fd' }}>{formatEuro(gesamt)}</span>
             </div>
           </div>
 
           <button onClick={handlePdfExport}
-            className="w-full px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors">
+            className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors hover:brightness-110"
+            style={{ backgroundColor: 'var(--accent-blue)', borderRadius: 'var(--radius-md)' }}>
             📄 Als PDF exportieren
           </button>
 
-          <p className="text-xs text-gray-600 text-center">
+          <p className="text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
             Preise werden geräteweit gespeichert und gelten projektübergreifend.
           </p>
         </div>
