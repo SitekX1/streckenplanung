@@ -275,14 +275,11 @@ export default function Sidebar({
   const [verlaufOffen, setVerlaufOffen] = useState(false)
   const [ersteSchritteVerborgen, setErsteSchritteVerborgen] = useState(false)
 
-  // Einklappbare Sektionen: Default so gewählt, dass der übliche Arbeitsablauf
-  // (Daten laden → Schritte → Auswertung prüfen) offen ist, seltener gebrauchte
-  // Sektionen (Projekt-Verwaltung, NVT, Export) starten eingeklappt — hält die
-  // Sidebar übersichtlich, auch wenn mit wachsendem Funktionsumfang mehr
-  // Sektionen dazukommen.
-  const [offeneSektionen, setOffeneSektionen] = useState<Set<string>>(
-    new Set(['daten', 'schritte', 'auswertung'])
-  )
+  // Einklappbare Sektionen: starten ALLE zu (Alex, 2026-08-14: "wenn ich
+  // frisch reingehe, sollen alle Sidebar-Überpunkte zubleiben, auch bei
+  // Strg+Shift+R") — bewusst kein Default-Set mehr, jede Sektion öffnet sich
+  // erst durch bewussten Klick.
+  const [offeneSektionen, setOffeneSektionen] = useState<Set<string>>(new Set())
   const toggleSektion = (id: string) => {
     setOffeneSektionen((prev) => {
       const next = new Set(prev)
@@ -454,7 +451,7 @@ export default function Sidebar({
 
         {/* Sektion: Daten */}
         <Abschnitt
-          titel="Daten"
+          titel="Daten / Import"
           badge={hatDaten ? `${adressenCount.toLocaleString('de-DE')} Adr.` : undefined}
           offen={offeneSektionen.has('daten')}
           onToggle={() => toggleSektion('daten')}
