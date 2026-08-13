@@ -123,6 +123,44 @@ function Abschnitt({
   )
 }
 
+// Nicht-blockierender Einstiegs-Hinweis statt starrem Pflicht-Wizard
+// (2026-08-13, Alex: "einer, der das Tool öffnet, weiß gar nicht, was los
+// ist" — Recherche zu aktueller SaaS-Onboarding-Praxis empfiehlt kontextuelle,
+// überspringbare Hinweise statt linearer Zwangs-Flows). Erscheint nur bei
+// leerem Projekt, lässt sich wegklicken und über den Link am Sidebar-Ende
+// jederzeit wieder einblenden.
+function ErsteSchritteBanner({
+  onSchliessen,
+  onFirmaKlick,
+  onImportKlick,
+}: {
+  onSchliessen: () => void
+  onFirmaKlick: () => void
+  onImportKlick: () => void
+}) {
+  return (
+    <div className="rounded-xl p-3 flex flex-col gap-2.5" style={{ backgroundColor: '#0f1f33', border: '1px solid #1e3a5f' }}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold" style={{ color: '#93c5fd' }}>👋 Erste Schritte</span>
+        <button onClick={onSchliessen} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">✕</button>
+      </div>
+      <button onClick={onFirmaKlick}
+        className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-200 hover:border-blue-500 transition-colors"
+        style={{ backgroundColor: '#111827', border: '1px solid #1e3a5f' }}>
+        1️⃣ Firma & Material einrichten (⚙️ oben rechts)
+      </button>
+      <div className="px-3 py-2 rounded-lg text-xs text-gray-300" style={{ backgroundColor: '#111827', border: '1px solid #1e3a5f' }}>
+        2️⃣ Bundesförderung ja/nein — Schalter ☝ oben
+      </div>
+      <button onClick={onImportKlick}
+        className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+        style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}>
+        3️⃣ Adressen importieren →
+      </button>
+    </div>
+  )
+}
+
 export default function Sidebar({
   projektName,
   onProjektNameAendern,
@@ -185,6 +223,7 @@ export default function Sidebar({
   const [kalkulationOffen, setKalkulationOffen] = useState(false)
   const [einstellungenOffen, setEinstellungenOffen] = useState(false)
   const [verlaufOffen, setVerlaufOffen] = useState(false)
+  const [ersteSchritteVerborgen, setErsteSchritteVerborgen] = useState(false)
 
   // Einklappbare Sektionen: Default so gewählt, dass der übliche Arbeitsablauf
   // (Daten laden → Schritte → Auswertung prüfen) offen ist, seltener gebrauchte
@@ -231,7 +270,40 @@ export default function Sidebar({
         </button>
       </div>
 
+      {/* Bundesförderung: bewusst IMMER sichtbar direkt unterm Header statt in
+          einem einklappbaren Abschnitt versteckt (Alex, 2026-08-13: "keiner
+          weiß, wo der Haken ist") — bestimmt Export-Schema UND
+          Materialkatalog-Profil fürs ganze Projekt, die wichtigste
+          Weichenstellung, bevor überhaupt losgelegt wird. */}
+      <label
+        className="mx-4 mt-3 flex items-center justify-between px-3 py-2.5 rounded-xl text-sm cursor-pointer transition-colors"
+        style={{
+          backgroundColor: bundesfoerderung ? '#3f2d0a' : '#161b22',
+          border: `1px solid ${bundesfoerderung ? '#d97706' : '#30363d'}`,
+        }}
+        title="Steuert GIS-NB-Export-Schema (statt freiem Layout) und welches Materialkatalog-Profil angewendet wird"
+      >
+        <span className="flex flex-col">
+          <span style={{ color: bundesfoerderung ? '#fbbf24' : '#e5e7eb' }} className="font-medium">🏛️ Bundesförderung</span>
+          <span className="text-[10px] text-gray-500">Bestimmt Material & Export-Format</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={bundesfoerderung}
+          onChange={(e) => onBundesfoerderungAendern(e.target.checked)}
+          className="accent-amber-500 w-4 h-4 shrink-0"
+        />
+      </label>
+
       <div className="flex-1 px-4 py-4 flex flex-col gap-4">
+
+        {!hatDaten && !ersteSchritteVerborgen && (
+          <ErsteSchritteBanner
+            onSchliessen={() => setErsteSchritteVerborgen(true)}
+            onFirmaKlick={() => setEinstellungenOffen(true)}
+            onImportKlick={() => excelInputRef.current?.click()}
+          />
+        )}
 
         {/* Sektion: Projekt */}
         <Abschnitt
@@ -249,25 +321,10 @@ export default function Sidebar({
               className="w-full px-3 py-2 rounded-lg text-sm outline-none"
               style={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
             />
-            <label
-              className="flex items-center justify-between px-3 py-2 rounded-lg text-sm cursor-pointer"
-              style={{
-                backgroundColor: bundesfoerderung ? '#3f2d0a' : '#1a1a1a',
-                border: `1px solid ${bundesfoerderung ? '#d97706' : '#262b36'}`,
-              }}
-              title="Steuert GIS-NB-Export-Schema (statt freiem Layout) und welches Materialkatalog-Profil angewendet wird"
-            >
-              <span style={{ color: bundesfoerderung ? '#fbbf24' : '#9ca3af' }}>🏛️ Bundesförderung</span>
-              <input
-                type="checkbox"
-                checked={bundesfoerderung}
-                onChange={(e) => onBundesfoerderungAendern(e.target.checked)}
-                className="accent-amber-500 w-4 h-4"
-              />
-            </label>
             <button
               onClick={() => projektLadenRef.current?.click()}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
+              className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+              style={{ backgroundColor: '#1a1a1a', border: '1px solid #262b36' }}
             >
               📂 Projekt laden
             </button>
@@ -285,7 +342,8 @@ export default function Sidebar({
             <button
               onClick={onProjektSpeichern}
               disabled={!hatDaten}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 hover:text-white hover:bg-gray-800 enabled:hover:bg-gray-800"
+              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 hover:text-white hover:border-gray-600"
+              style={{ backgroundColor: '#1a1a1a', border: '1px solid #262b36' }}
             >
               💾 Projekt speichern
             </button>
@@ -294,7 +352,7 @@ export default function Sidebar({
                 onClick={onUndo}
                 disabled={!canUndo}
                 className="flex-1 text-left px-3 py-2 rounded-lg text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ color: canUndo ? '#fbbf24' : '#6b7280' }}
+                style={{ color: canUndo ? '#fbbf24' : '#6b7280', backgroundColor: '#1a1a1a', border: '1px solid #262b36' }}
               >
                 ↩ Zurück{canUndo ? ` (${undoCount})` : ''}
               </button>
@@ -303,7 +361,7 @@ export default function Sidebar({
                   onClick={() => setVerlaufOffen((v) => !v)}
                   title="Verlauf anzeigen"
                   className="px-3 py-2 rounded-lg text-sm transition-colors"
-                  style={{ color: verlaufOffen ? '#fbbf24' : '#6b7280', backgroundColor: verlaufOffen ? '#2a2115' : 'transparent' }}
+                  style={{ color: verlaufOffen ? '#fbbf24' : '#9ca3af', backgroundColor: verlaufOffen ? '#2a2115' : '#1a1a1a', border: `1px solid ${verlaufOffen ? '#d97706' : '#262b36'}` }}
                 >
                   📜
                 </button>
@@ -329,7 +387,8 @@ export default function Sidebar({
                 if (hatDaten && !confirm('Alle Daten löschen und neu anfangen?')) return
                 onAllesZuruecksetzen()
               }}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors text-red-500 hover:text-red-400 hover:bg-red-950/30"
+              className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors text-red-400 hover:text-red-300 hover:border-red-900"
+              style={{ backgroundColor: '#1a1a1a', border: '1px solid #262b36' }}
             >
               🗑️ Neu anfangen
             </button>
@@ -347,7 +406,8 @@ export default function Sidebar({
         >
           <button
             onClick={() => excelInputRef.current?.click()}
-            className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
+            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+            style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}
           >
             📊 Excel importieren
           </button>
@@ -692,6 +752,15 @@ export default function Sidebar({
             </button>
           </div>
         </Abschnitt>
+
+        {ersteSchritteVerborgen && (
+          <button
+            onClick={() => setErsteSchritteVerborgen(false)}
+            className="w-full text-center px-3 py-2 rounded-lg text-xs text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            👋 Erste Schritte wieder anzeigen
+          </button>
+        )}
 
       </div>
 
