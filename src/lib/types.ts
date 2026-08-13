@@ -1,3 +1,5 @@
+import { MaterialEintrag } from './materialkatalog'
+
 export interface Address {
   uuid: string
   lat: number
@@ -56,6 +58,21 @@ export interface SchachtStandort {
   hausanschlussIds: string[]
 }
 
+// Manuell erstellte Backbone-Verbindung zwischen zwei Verteilern (NVT/Schacht/
+// Startpunkt), z.B. eine nachträgliche Anbindung eines abseits liegenden
+// Aussiedlerhof-Schachts (2026-08-13, Alex: "muss man dann alles auswählen
+// können, was hinterlegt wurde" — 4x20, 2x20, 7x14, ...). "von"/"nach" sind
+// die Standort-Positionen zum Erstellzeitpunkt, nicht Array-Indizes — bleibt
+// dadurch stabil, auch wenn die Trasse später neu segmentiert wird (siehe
+// ermittleUeberschriebenesMaterialProSegment in faserdimensionierung.ts, das
+// die betroffenen Segmente jedes Mal frisch aus der Geometrie ableitet statt
+// gespeicherte Indizes zu vertrauen).
+export interface BackboneVerbindung {
+  von: LatLng
+  nach: LatLng
+  material: MaterialEintrag
+}
+
 export interface Projekt {
   name: string
   erstelltAm: string
@@ -73,6 +90,9 @@ export interface Projekt {
   nvtStandorte?: NvtStandort[]
   aussiedlerhofUuids?: string[]
   schachtStandorte?: SchachtStandort[]
+  // Manuell erstellte Backbone-Verbindungen (siehe BackboneVerbindung oben) —
+  // fehlt bei älteren Projekten, dann einfach keine.
+  backboneVerbindungen?: BackboneVerbindung[]
   // Welche Orte-Filter beim Speichern aktiv waren (Sidebar-Auswahl) — fehlt
   // bei älteren Projekten, dann sind beim Laden wie bisher alle Orte aktiv.
   aktiveOrteKeys?: string[]

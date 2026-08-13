@@ -8,10 +8,11 @@ import {
 import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
-import { Address, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
+import { Address, BackboneVerbindung, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
 import {
   ermittleBackboneSegmente,
   ermittleHausanschluesseProSegment,
+  ermittleUeberschriebenesMaterialProSegment,
   berechneHausanschlussAnzahlProSegment,
   berechneNvtKapazitaetsbedarfProSegment,
 } from '../lib/faserdimensionierung'
@@ -161,6 +162,9 @@ interface MapViewProps {
   nvtManuellSetzenAktiv?: boolean
   schachtStandorte?: SchachtStandort[]
   schachtSetzenAktiv?: boolean
+  backboneVerbindungen?: BackboneVerbindung[]
+  backboneVerbindungLaeuft?: boolean
+  backboneVerbindungFehler?: string | null
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][], kinds: WegKind[]) => void
@@ -177,6 +181,8 @@ interface MapViewProps {
   onSchachtLoeschen?: (schachtIdx: number) => void
   onSchachtHausanschlussToggle?: (schachtIdx: number, hausId: string) => void
   onSchachtVerschoben?: (schachtIdx: number, position: LatLng) => void
+  onBackboneVerbindungErstellen?: (quelle: LatLng, ziel: LatLng, material: MaterialEintrag) => void
+  onBackboneVerbindungFehlerSchliessen?: () => void
 }
 
 function KlickHandler({
@@ -345,10 +351,12 @@ const MapView = memo(function MapView({
   nichtAngebundeneAdressen = [],
   aussiedlerhofUuids = new Set(), aussiedlerhofMarkierenAktiv = false, nvtStandorte = [],
   nvtManuellSetzenAktiv = false, schachtStandorte = [], schachtSetzenAktiv = false,
+  backboneVerbindungen = [], backboneVerbindungLaeuft = false, backboneVerbindungFehler = null,
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
   onAussiedlerhofToggle, onAussiedlerhofMarkierenFertig,
   onNvtManuellHinzufuegen, onNvtManuellSetzenAbbrechen, onNvtLoeschen, onNvtHausanschlussToggle, onNvtVerschoben,
   onSchachtGesetzt, onSchachtSetzenAbbrechen, onSchachtLoeschen, onSchachtHausanschlussToggle, onSchachtVerschoben,
+  onBackboneVerbindungErstellen, onBackboneVerbindungFehlerSchliessen,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -467,16 +475,22 @@ const MapView = memo(function MapView({
     const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
     const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse)
     const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
+    // Manuell erstellte Backbone-Verbindungen (siehe BackboneVerbindung)
+    // überschreiben nur das gewählte Material auf ihren Segmenten — die
+    // automatische Backbone-Klassifizierung selbst bleibt unverändert (die
+    // neuen Segmente liegen ohnehin zwischen zwei Verteilern, sind also
+    // schon automatisch als Backbone erkannt).
+    const ueberschriebenProSegment = ermittleUeberschriebenesMaterialProSegment(trassePfade, backboneVerbindungen)
     return trassePfade.map((_, i) => {
       const bedarf = bedarfProSegment[i] ?? 0
       const kunde = bedarf > 0 ? waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined) : null
-      const back = backbone[i] ? materialProfil.trasse : null
+      const back = ueberschriebenProSegment[i] ?? (backbone[i] ? materialProfil.trasse : null)
       if (kunde && back) return { haupt: kunde, zusatz: back }
       if (kunde) return { haupt: kunde, zusatz: null }
       if (back) return { haupt: back, zusatz: null }
       return null
     })
-  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil])
+  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen])
   const farbeProSegment = useMemo(
     () => materialProSegment.map((m) => m?.haupt.farbe ?? trasseFarbe),
     [materialProSegment, trasseFarbe]
@@ -528,6 +542,25 @@ const MapView = memo(function MapView({
   // Zuweisen-Modus: Hausanschlüsse anklicken ordnet sie dem ausgewählten NVT/Schacht zu.
   const [nvtZuweisenAktiv, setNvtZuweisenAktiv] = useState(false)
   const [schachtZuweisenAktiv, setSchachtZuweisenAktiv] = useState(false)
+
+  // Backbone-Verbindung erstellen (2026-08-13, Alex: "Schacht setzen oder
+  // NVT, markiert den, sagt Backbone-Verbindung erstellen mit diesem
+  // Verband") — Quelle wird per Kontextmenü-Aktion gesetzt, danach fängt der
+  // nächste Klick auf einen ANDEREN NVT/Schacht (siehe click-Handler der
+  // Marker oben) das Ziel ab statt die normale Markieren-Auswahl auszulösen.
+  // Sobald beide stehen, fragt ein kleiner Dialog das Material ab (jedes im
+  // aktiven Katalog-Profil hinterlegte, nicht nur das feste Backbone-Material
+  // — "kann man dann alles auswählen, was hinterlegt wurde").
+  const [backboneVerbindungQuelle, setBackboneVerbindungQuelle] =
+    useState<{ typ: 'nvt' | 'schacht'; idx: number; position: LatLng } | null>(null)
+  const [backboneVerbindungZiel, setBackboneVerbindungZiel] =
+    useState<{ typ: 'nvt' | 'schacht'; idx: number; position: LatLng } | null>(null)
+  const [backboneVerbindungMaterial, setBackboneVerbindungMaterial] = useState<MaterialEintrag | null>(null)
+  const backboneVerbindungAbbrechen = useCallback(() => {
+    setBackboneVerbindungQuelle(null)
+    setBackboneVerbindungZiel(null)
+    setBackboneVerbindungMaterial(null)
+  }, [setBackboneVerbindungQuelle, setBackboneVerbindungZiel, setBackboneVerbindungMaterial])
 
   // Lokale Arbeitskopie der Pfade im Edit-Modus
   const [localPfade, setLocalPfade] = useState<LatLng[][]>([])
@@ -1652,6 +1685,12 @@ const MapView = memo(function MapView({
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
+                  if (backboneVerbindungQuelle) {
+                    if (backboneVerbindungQuelle.typ === 'nvt' && backboneVerbindungQuelle.idx === i) return
+                    setBackboneVerbindungZiel({ typ: 'nvt', idx: i, position: nvt.position })
+                    setBackboneVerbindungMaterial(materialProfil.trasse)
+                    return
+                  }
                   setAusgewaehltesSchachtIdx(null)
                   setAusgewaehlteNvtIdxs((prev) => {
                     const next = new Set(prev)
@@ -1664,6 +1703,7 @@ const MapView = memo(function MapView({
                   if (e.originalEvent) e.originalEvent.stopPropagation()
                   zeigeMenu(e, [
                     { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesSchachtIdx(null); setAusgewaehlteNvtIdxs(new Set([i])); setNvtZuweisenAktiv(true); setAktivMenu(null) } },
+                    { label: '🔌 Backbone-Verbindung erstellen', farbe: '#a78bfa', action: () => { setAusgewaehlteNvtIdxs(new Set()); setAusgewaehltesSchachtIdx(null); setBackboneVerbindungQuelle({ typ: 'nvt', idx: i, position: nvt.position }); setAktivMenu(null) } },
                     { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onNvtLoeschen?.(i); setAusgewaehlteNvtIdxs(new Set()); setNvtZuweisenAktiv(false); setAktivMenu(null) } },
                   ])
                 },
@@ -1689,6 +1729,12 @@ const MapView = memo(function MapView({
             eventHandlers={{
               click: (e) => {
                 if (e.originalEvent) e.originalEvent.stopPropagation()
+                if (backboneVerbindungQuelle) {
+                  if (backboneVerbindungQuelle.typ === 'schacht' && backboneVerbindungQuelle.idx === i) return
+                  setBackboneVerbindungZiel({ typ: 'schacht', idx: i, position: schacht.position })
+                  setBackboneVerbindungMaterial(materialProfil.trasse)
+                  return
+                }
                 setAusgewaehlteNvtIdxs(new Set())
                 setAusgewaehltesSchachtIdx((prev) => (prev === i ? null : i))
               },
@@ -1696,6 +1742,7 @@ const MapView = memo(function MapView({
                 if (e.originalEvent) e.originalEvent.stopPropagation()
                 zeigeMenu(e, [
                   { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehlteNvtIdxs(new Set()); setAusgewaehltesSchachtIdx(i); setSchachtZuweisenAktiv(true); setAktivMenu(null) } },
+                  { label: '🔌 Backbone-Verbindung erstellen', farbe: '#a78bfa', action: () => { setAusgewaehlteNvtIdxs(new Set()); setAusgewaehltesSchachtIdx(null); setBackboneVerbindungQuelle({ typ: 'schacht', idx: i, position: schacht.position }); setAktivMenu(null) } },
                   { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onSchachtLoeschen?.(i); setAusgewaehltesSchachtIdx(null); setSchachtZuweisenAktiv(false); setAktivMenu(null) } },
                 ])
               },
@@ -1898,6 +1945,87 @@ const MapView = memo(function MapView({
             className="px-3 py-1 rounded text-xs font-medium"
             style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
             ✕ Abbrechen
+          </button>
+        </div>
+      )}
+
+      {/* Backbone-Verbindung erstellen (2026-08-13) — Schritt 1: Ziel wählen. */}
+      {backboneVerbindungQuelle && !backboneVerbindungZiel && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #a78bfa' }}>
+          🔌 Ziel-NVT/Schacht anklicken für Backbone-Verbindung ab {backboneVerbindungQuelle.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungQuelle.idx + 1}
+          <button onClick={backboneVerbindungAbbrechen}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            ✕ Abbrechen
+          </button>
+        </div>
+      )}
+
+      {/* Schritt 2: Material wählen — jede im aktiven Katalog-Profil
+          hinterlegte Sorte steht zur Auswahl (Backbone-Material + alle
+          Kundenanschluss-Stufen), nicht nur das eine feste Backbone-Material
+          (Alex: "kann man dann alles auswählen, was hinterlegt wurde"). Die
+          Route wird beim Bestätigen über das echte Straßennetz berechnet
+          (siehe onBackboneVerbindungErstellen in page.tsx) — kann ein paar
+          Sekunden dauern, daher schließt der Dialog sofort und ein separater
+          Fortschritts-/Fehler-Hinweis übernimmt (siehe unten). */}
+      {backboneVerbindungQuelle && backboneVerbindungZiel && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg p-3 flex flex-col gap-2.5"
+          style={{ backgroundColor: '#1a1a1a', border: '1px solid #a78bfa', width: 300 }}>
+          <span className="text-sm font-medium text-white">
+            🔌 {backboneVerbindungQuelle.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungQuelle.idx + 1} → {backboneVerbindungZiel.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungZiel.idx + 1}
+          </span>
+          <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+            {[materialProfil.trasse, ...materialProfil.kundenanschlussStufen].map((m) => (
+              <button key={m.bezeichnungFirma || m.lrArt} onClick={() => setBackboneVerbindungMaterial(m)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded text-xs font-medium text-left transition-colors"
+                style={{
+                  backgroundColor: backboneVerbindungMaterial === m ? '#3b2f5f' : '#111827',
+                  color: backboneVerbindungMaterial === m ? '#c4b5fd' : '#9ca3af',
+                  border: `1px solid ${backboneVerbindungMaterial === m ? '#a78bfa' : '#374151'}`,
+                }}>
+                <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+                {m.bezeichnungFirma || lrArtLabel(m.lrArt)}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                if (!backboneVerbindungMaterial) return
+                onBackboneVerbindungErstellen?.(backboneVerbindungQuelle.position, backboneVerbindungZiel.position, backboneVerbindungMaterial)
+                backboneVerbindungAbbrechen()
+              }}
+              disabled={!backboneVerbindungMaterial}
+              className="flex-1 px-3 py-1.5 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ backgroundColor: '#a78bfa', color: '#1a1a1a' }}>
+              ✓ Verbindung erstellen
+            </button>
+            <button onClick={backboneVerbindungAbbrechen}
+              className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
+              style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+              ✕ Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
+
+      {backboneVerbindungLaeuft && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
+          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #a78bfa' }}>
+          🔌 Backbone-Verbindung wird über das Straßennetz berechnet …
+        </div>
+      )}
+
+      {backboneVerbindungFehler && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: '#1a1a1a', color: '#fca5a5', border: '1px solid #dc2626' }}>
+          ⚠️ {backboneVerbindungFehler}
+          <button onClick={() => onBackboneVerbindungFehlerSchliessen?.()}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            ✕
           </button>
         </div>
       )}

@@ -5,7 +5,8 @@ import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
 import NVTModal from '../components/NVTModal'
 import BestaetigungsModal from '../components/BestaetigungsModal'
-import { Address, LatLng, Hausstich, OrtInfo, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
+import { Address, LatLng, Hausstich, OrtInfo, WegKind, NvtStandort, SchachtStandort, BackboneVerbindung } from '../lib/types'
+import { MaterialEintrag } from '../lib/materialkatalog'
 import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
 import { buildRoadGraph } from '../lib/roadGraph'
@@ -185,6 +186,7 @@ type HistorySnapshot = {
   nvtStandorte: NvtStandort[]
   aussiedlerhofUuids: string[]
   schachtStandorte: SchachtStandort[]
+  backboneVerbindungen: BackboneVerbindung[]
 }
 
 export default function Home() {
@@ -242,6 +244,13 @@ export default function Home() {
   // Aussiedlerhöfe ohne eigenen NVT) — kapazitätslos, kein Automatik-Feature.
   const [schachtStandorte, setSchachtStandorte] = useState<SchachtStandort[]>([])
   const [schachtSetzenAktiv, setSchachtSetzenAktiv] = useState(false)
+  // Manuell erstellte Backbone-Verbindungen (siehe BackboneVerbindung in
+  // types.ts) — jede trägt ihr eigenes gewähltes Material, überschreibt damit
+  // gezielt das sonst einheitliche Backbone-Material auf ihren Segmenten
+  // (siehe ermittleUeberschriebenesMaterialProSegment in faserdimensionierung.ts).
+  const [backboneVerbindungen, setBackboneVerbindungen] = useState<BackboneVerbindung[]>([])
+  const [backboneVerbindungLaeuft, setBackboneVerbindungLaeuft] = useState(false)
+  const [backboneVerbindungFehler, setBackboneVerbindungFehler] = useState<string | null>(null)
   // Eigenes Bestätigungs-/Info-Modal statt nativer confirm()/alert()-Dialoge —
   // ohne onAbbrechen wird nur ein "OK"-Button gezeigt (reine Info-Meldung).
   const [bestaetigungsModal, setBestaetigungsModal] = useState<{
@@ -257,9 +266,10 @@ export default function Home() {
         label, trassePfade, trasse, hausanschluesse, laengen,
         trasseAdressenUuids: [...trasseAdressenUuids], trassePfadeKinds,
         nvtStandorte, aussiedlerhofUuids: [...aussiedlerhofUuids], schachtStandorte,
+        backboneVerbindungen,
       },
     ])
-  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte])
+  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, backboneVerbindungen])
 
   const wendeSnapshotAn = useCallback((snap: HistorySnapshot) => {
     setTrassePfade(snap.trassePfade)
@@ -271,6 +281,7 @@ export default function Home() {
     setNvtStandorte(snap.nvtStandorte)
     setAussiedlerhofUuids(new Set(snap.aussiedlerhofUuids))
     setSchachtStandorte(snap.schachtStandorte)
+    setBackboneVerbindungen(snap.backboneVerbindungen)
   }, [])
 
   const handleUndo = useCallback(() => {
@@ -633,6 +644,8 @@ export default function Home() {
     setNvtStandorte([])
     setSchachtStandorte([])
     setSchachtSetzenAktiv(false)
+    setBackboneVerbindungen([])
+    setBackboneVerbindungFehler(null)
     setProjektName('Neues Projekt')
     setBundesfoerderung(false)
   }, [])
@@ -793,6 +806,60 @@ export default function Home() {
     })
   }, [pushHistory])
 
+  // Backbone-Verbindung zwischen zwei NVT/Schacht-Standorten manuell
+  // erstellen (2026-08-13, Alex: "Schacht setzen oder NVT, markiert den,
+  // Backbone-Verbindung erstellen mit diesem Verband") — z.B. für einen
+  // nachträglich gesetzten Aussiedlerhof-Schacht, der noch keine echte
+  // Straßenanbindung an die bestehende Trasse hat. Nutzt dieselbe
+  // Overpass+Steiner-Baum-Pipeline wie "Trasse erweitern" (handleTrasseErweitern
+  // oben), nur mit genau einem Start- und einem Zielpunkt statt allen neuen
+  // Adressen eines Ortes — degeneriert dadurch zum kürzesten Weg über das
+  // echte Straßen-/Feldwegnetz. Bewusst OHNE den dortigen ORS-Fallback bei
+  // Overpass-Ausfall (deutlich seltenerer Pfad, hier reicht eine klare
+  // Fehlermeldung zum erneuten Versuch statt der doppelten Komplexität).
+  const handleBackboneVerbindungErstellen = useCallback(async (quelle: LatLng, ziel: LatLng, material: MaterialEintrag) => {
+    const vorhandenePfade = trassePfade.length > 0 ? trassePfade : (trasse.length >= 2 ? [trasse] : [])
+    if (vorhandenePfade.length === 0) return
+
+    pushHistory('Backbone-Verbindung erstellt')
+    setBackboneVerbindungFehler(null)
+    setBackboneVerbindungLaeuft(true)
+    try {
+      const bounds = berechneGrenzen([], quelle, 0.008, [ziel, ...vorhandenePfade.flat()])
+      const osmNetz = await fetchOsmNetz(bounds)
+      const graph = buildRoadGraph(osmNetz, [quelle, ziel])
+      const vonId = graph.nearestPointOnGraph(quelle)
+      const zielId = graph.nearestPointOnGraph(ziel)
+
+      const ergebnis = await berechneSteinerBaum(graph, vonId, [zielId])
+      if (ergebnis.pfade.length === 0 || ergebnis.nichtErreichbareNodeIds.includes(zielId)) {
+        setBackboneVerbindungFehler(
+          'Kein öffentliches Straßen-/Feldwegnetz zwischen den beiden Standorten gefunden — die Verbindung müsste manuell im Bearbeitungsmodus gezeichnet werden.'
+        )
+        return
+      }
+
+      const vorhandeneKinds = passendeKinds(vorhandenePfade, trassePfadeKinds)
+      const kombiniert = deduplicatePfadeMitKind(
+        [...vorhandenePfade, ...ergebnis.pfade],
+        [...vorhandeneKinds, ...ergebnis.pfadeKinds]
+      )
+      const { pfade: finalePfade, kinds: finaleKinds } = segmentiereAnKreuzungen(kombiniert.pfade, kombiniert.kinds)
+      setTrassePfade(finalePfade)
+      setTrasse(finalePfade.flat())
+      setTrassePfadeKinds(finaleKinds)
+      setLaengen(berechneLaengen(finalePfade, hausanschluesse, finaleKinds))
+      setBackboneVerbindungen((prev) => [...prev, { von: quelle, nach: ziel, material }])
+    } catch (err) {
+      const fehlerText = err instanceof Error ? err.message : String(err)
+      setBackboneVerbindungFehler(`Verbindung fehlgeschlagen: ${fehlerText}`)
+    } finally {
+      setBackboneVerbindungLaeuft(false)
+    }
+  }, [trassePfade, trasse, trassePfadeKinds, hausanschluesse, pushHistory])
+
+  const handleBackboneVerbindungFehlerSchliessen = useCallback(() => setBackboneVerbindungFehler(null), [])
+
   // Ordnet jeden bereits einem NVT zugeordneten Hausanschluss neu dem
   // (Luftlinien-)nächsten der AKTUELLEN NVT-Standorte zu — gedacht als
   // Werkzeug nach dem manuellen Verschieben eines oder mehrerer NVT, damit
@@ -905,9 +972,10 @@ export default function Home() {
       trassePfadeKinds: trassePfadeKinds.length > 0 ? trassePfadeKinds : undefined,
       nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
       schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
+      backboneVerbindungen: backboneVerbindungen.length > 0 ? backboneVerbindungen : undefined,
       bundesfoerderung,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, schachtStandorte, bundesfoerderung])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, schachtStandorte, backboneVerbindungen, bundesfoerderung])
 
   const handleProjektSpeichern = useCallback(() => {
     exportProjekt({
@@ -924,10 +992,11 @@ export default function Home() {
       nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
       aussiedlerhofUuids: aussiedlerhofUuids.size > 0 ? [...aussiedlerhofUuids] : undefined,
       schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
+      backboneVerbindungen: backboneVerbindungen.length > 0 ? backboneVerbindungen : undefined,
       aktiveOrteKeys,
       bundesfoerderung,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, aktiveOrteKeys, bundesfoerderung])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, backboneVerbindungen, aktiveOrteKeys, bundesfoerderung])
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
@@ -966,6 +1035,8 @@ export default function Home() {
     setNvtModalOffen(false)
     setSchachtStandorte(projekt.schachtStandorte ?? [])
     setSchachtSetzenAktiv(false)
+    setBackboneVerbindungen(projekt.backboneVerbindungen ?? [])
+    setBackboneVerbindungFehler(null)
   }, [])
 
   const gefilterteAdressenAnzahl =
@@ -1074,6 +1145,9 @@ export default function Home() {
           nvtManuellSetzenAktiv={nvtManuellSetzenAktiv}
           schachtStandorte={schachtStandorte}
           schachtSetzenAktiv={schachtSetzenAktiv}
+          backboneVerbindungen={backboneVerbindungen}
+          backboneVerbindungLaeuft={backboneVerbindungLaeuft}
+          backboneVerbindungFehler={backboneVerbindungFehler}
           onStartpunktGesetzt={handleStartpunktGesetzt}
           onTrasseGeaendert={handleTrasseGeaendert}
           onTrassePfadeGeaendert={handleTrassePfadeGeaendert}
@@ -1090,6 +1164,8 @@ export default function Home() {
           onSchachtLoeschen={handleSchachtLoeschen}
           onSchachtHausanschlussToggle={handleSchachtHausanschlussToggle}
           onSchachtVerschoben={handleSchachtVerschoben}
+          onBackboneVerbindungErstellen={handleBackboneVerbindungErstellen}
+          onBackboneVerbindungFehlerSchliessen={handleBackboneVerbindungFehlerSchliessen}
         />
         {nvtModalOffen && (
           <NVTModal

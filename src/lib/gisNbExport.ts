@@ -7,6 +7,7 @@ import {
   berechneHausanschlussAnzahlProSegment,
   berechneNvtKapazitaetsbedarfProSegment,
   ermittleBackboneSegmente,
+  ermittleUeberschriebenesMaterialProSegment,
   passendesKabel,
 } from './faserdimensionierung'
 import { layerHinzufuegen, layerHinzufuegenLinien, GEMEINSAMER_ORDNER, segmentLaenge } from './shapefileExport'
@@ -161,6 +162,12 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
     projekt.startpunkt != null
       ? ermittleBackboneSegmente(trassePfade, projekt.startpunkt, nvtStandorte, schachtStandorte)
       : trassePfade.map(() => false)
+  // Manuell erstellte Backbone-Verbindungen (siehe BackboneVerbindung) tragen
+  // ihr eigenes gewähltes Material statt des einheitlichen Profil-Backbones.
+  const ueberschriebenProSegment = ermittleUeberschriebenesMaterialProSegment(
+    trassePfade,
+    projekt.backboneVerbindungen ?? []
+  )
 
   trassePfade.forEach((pfad, i) => {
     if (pfad.length < 2) return
@@ -173,7 +180,7 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
         geometry: { type: 'LineString', coordinates: coords },
         properties: {
           id: id++,
-          ...materialEigenschaften(profil.trasse),
+          ...materialEigenschaften(ueberschriebenProSegment[i] ?? profil.trasse),
           lae_lr: laenge,
           zustand: 2, // Leerrohre: 2 = Neubau (Codes hier ANDERS als bei Verbindungen/Bauten!)
         },

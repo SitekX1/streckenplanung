@@ -1,4 +1,5 @@
-import { Address, Hausstich, LatLng, NvtStandort, SchachtStandort } from './types'
+import { Address, BackboneVerbindung, Hausstich, LatLng, NvtStandort, SchachtStandort } from './types'
+import { MaterialEintrag } from './materialkatalog'
 import { baueGraph, naechsterKnoten, dijkstraVon } from './nvt'
 
 // Faseranzahl-Berechnung nach Materialkonzept Abschnitt 1 (RN 4): "vier Fasern
@@ -311,4 +312,53 @@ export function ermittleBackboneSegmente(
     }
     return false
   })
+}
+
+// Liefert pro Trasse-Segment das manuell gewählte Material einer
+// Backbone-Verbindung (siehe BackboneVerbindung in types.ts), falls das
+// Segment auf dem kürzesten Pfad zwischen deren "von"/"nach"-Standorten
+// liegt — sonst null (automatische Zuordnung greift wie bisher). Bewusst
+// jedes Mal frisch aus der aktuellen Trasse-Geometrie abgeleitet (Dijkstra
+// zwischen den beiden gespeicherten Positionen) statt über gespeicherte
+// Segment-Indizes, da segmentiereAnKreuzungen() die Trasse bei jeder
+// Änderung neu aufteilen kann — Indizes wären sofort wieder falsch.
+export function ermittleUeberschriebenesMaterialProSegment(
+  trassePfade: LatLng[][],
+  verbindungen: BackboneVerbindung[]
+): Array<MaterialEintrag | null> {
+  const ergebnis: Array<MaterialEintrag | null> = trassePfade.map(() => null)
+  if (trassePfade.length === 0 || verbindungen.length === 0) return ergebnis
+
+  const graph = baueGraph(trassePfade)
+  const r = (v: number) => Math.round(v * 100000) / 100000
+  const knotenKeyVon = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+
+  for (const verbindung of verbindungen) {
+    const vonKnoten = naechsterKnoten(graph, verbindung.von)
+    const nachKnoten = naechsterKnoten(graph, verbindung.nach)
+    if (!vonKnoten || !nachKnoten || vonKnoten === nachKnoten) continue
+
+    const { prev } = dijkstraVon(graph, vonKnoten)
+    if (!prev.has(nachKnoten)) continue // nicht (mehr) über die Trasse verbunden
+
+    const kantenAufPfad = new Set<string>()
+    let cur = nachKnoten
+    while (prev.has(cur)) {
+      const vor = prev.get(cur)!
+      kantenAufPfad.add(cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`)
+      cur = vor
+    }
+
+    trassePfade.forEach((pfad, i) => {
+      if (ergebnis[i] || pfad.length < 2) return
+      for (let j = 0; j < pfad.length - 1; j++) {
+        const a = knotenKeyVon(pfad[j])
+        const b = knotenKeyVon(pfad[j + 1])
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`
+        if (kantenAufPfad.has(key)) { ergebnis[i] = verbindung.material; break }
+      }
+    })
+  }
+
+  return ergebnis
 }
