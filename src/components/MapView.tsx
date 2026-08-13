@@ -389,6 +389,14 @@ const MapView = memo(function MapView({
   const [ausgewaehlteNvtIdxs, setAusgewaehlteNvtIdxs] = useState<Set<number>>(new Set())
   const [ausgewaehltesSchachtIdx, setAusgewaehltesSchachtIdx] = useState<number | null>(null)
 
+  // Mausover-Übersicht für NVT/Schacht (2026-08-13, Alex: "wenn ich mit der
+  // Maus drüber geh, soll son kleines Modal aufgehen mit allen wichtigen
+  // Daten") — bewusst getrennt von ausgewaehlteNvtIdxs/-SchachtIdx, da Klick
+  // weiterhin die Hausanschlüsse auf der Karte markiert und das eine mit dem
+  // anderen nichts zu tun haben soll.
+  const [hoverNvtIdx, setHoverNvtIdx] = useState<number | null>(null)
+  const [hoverSchachtIdx, setHoverSchachtIdx] = useState<number | null>(null)
+
   // Welche Hausanschlüsse hängen an welchem Trasse-Segment (2026-08-13, Alex:
   // "ich möchte sehen, auf welchem Segment welche Kunden hängen") — dieselbe
   // Baum-Aggregation wie im GIS-NB-Export, hier für die Klick-Info + optische
@@ -446,7 +454,16 @@ const MapView = memo(function MapView({
   // einzelnen Farbe, sonst wäre auf der Karte gar nicht sichtbar, dass dort
   // zwei Verbände liegen — Alex-Feedback 2026-08-13).
   const materialProSegment = useMemo((): Array<{ haupt: MaterialEintrag; zusatz: MaterialEintrag | null } | null> => {
-    if (!startpunkt || trassePfade.length === 0) return trassePfade.map(() => null)
+    // Ohne mindestens einen Verteiler (NVT/Schacht) lässt sich noch gar kein
+    // Verbund sinnvoll bestimmen — die Kapazitätsobergrenze UND die
+    // Backbone-Klassifizierung hängen direkt an dessen Standort. Vorher wird
+    // rein aus der Hausanschluss-Anzahl schon eine Kundenanschluss-Stufe
+    // gewählt, obwohl das Programm noch gar nicht weiß, wo der NVT sitzt
+    // (Alex, 2026-08-13: "Verbünde sollen erst gesetzt sein, wenn die NVTs
+    // stehen") — bis dahin bleibt die Trasse in der Fallback-Farbe.
+    if (!startpunkt || trassePfade.length === 0 || (nvtStandorte.length === 0 && schachtStandorte.length === 0)) {
+      return trassePfade.map(() => null)
+    }
     const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
     const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse)
     const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
@@ -1148,7 +1165,7 @@ const MapView = memo(function MapView({
       {/* Material-Legende (2026-08-13, Alex: "ich seh lauter verschiedene
           Farben, aber ich weiß nicht was was ist") — zeigt Farbe ↔ Material
           aus dem gerade aktiven Katalog-Profil (Firmenstandard/Förderung). */}
-      {trasseSichtbar && !editierbarAktiv && trassePfade.length > 0 && (
+      {trasseSichtbar && !editierbarAktiv && trassePfade.length > 0 && (nvtStandorte.length > 0 || schachtStandorte.length > 0) && (
         <div className="absolute bottom-3 left-3 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-56"
           style={{ backgroundColor: '#1a1a1a', border: '1px solid #374151' }}>
           <span className="text-[10px] text-gray-500 uppercase tracking-wider">Legende — Material</span>
@@ -1203,6 +1220,99 @@ const MapView = memo(function MapView({
               <span className="text-xs text-gray-500">Kein Material zugewiesen</span>
             )}
             <span className="text-[10px] text-gray-500">{hausIds.length} Hausanschluss(e) auf diesem Verbund:</span>
+            <div className="flex flex-col gap-0.5">
+              {adressenHier.slice(0, ANZEIGE_LIMIT).map((a) => (
+                <span key={a.uuid} className="text-[10px] text-gray-300 truncate">
+                  {a.strasse} {a.nr}{a.nr_zusatz}
+                </span>
+              ))}
+              {adressenHier.length > ANZEIGE_LIMIT && (
+                <span className="text-[10px] text-gray-600">… und {adressenHier.length - ANZEIGE_LIMIT} weitere</span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Mausover-Übersicht fürs NVT (2026-08-13, Alex: "wenn ich mit der
+          Maus draufgeh, soll son kleines Modal aufgehen mit allen wichtigen
+          Daten") — zeigt Belegung, hängende Hausanschlüsse und die
+          Kundenanschluss-Verbände auf den Zuführungssegmenten, die
+          ausschließlich diesem NVT zugeordnet sind (bei geteilten
+          Backbone-Segmenten also nicht mitgezählt, da die dort mehreren
+          NVTs gleichzeitig dienen). */}
+      {hoverNvtIdx !== null && nvtStandorte[hoverNvtIdx] && (() => {
+        const nvt = nvtStandorte[hoverNvtIdx]
+        const istUeberlastet = nvt.belegung > nvt.kapazitaet
+        const auslastung = nvt.kapazitaet > 0 ? Math.round((nvt.belegung / nvt.kapazitaet) * 100) : 0
+        const adressenHier = nvt.hausanschlussIds
+          .map((id) => hausanschluesse.find((h) => h.id === id))
+          .filter((h): h is Hausstich => !!h)
+          .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
+          .filter((a): a is Address => !!a)
+        const verbaende = new Map<string, { material: MaterialEintrag; anzahl: number }>()
+        trassePfade.forEach((_, i) => {
+          const ids = hausanschluesseProSegment[i] ?? []
+          if (ids.length === 0 || !ids.every((id) => nvt.hausanschlussIds.includes(id))) return
+          const m = materialProSegment[i]?.haupt
+          if (!m) return
+          const key = m.bezeichnungFirma || lrArtLabel(m.lrArt)
+          const eintrag = verbaende.get(key)
+          if (eintrag) eintrag.anzahl++
+          else verbaende.set(key, { material: m, anzahl: 1 })
+        })
+        const ANZEIGE_LIMIT = 6
+        return (
+          <div className="absolute bottom-3 right-3 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: '#1a1a1a', border: `1px solid ${istUeberlastet ? '#f87171' : '#3b82f6'}` }}>
+            <span className="text-[10px] text-gray-500 uppercase tracking-wider">NVT {hoverNvtIdx + 1}</span>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-300">Belegung</span>
+              <span className="text-xs font-medium" style={{ color: istUeberlastet ? '#f87171' : '#93c5fd' }}>
+                {nvt.belegung}/{nvt.kapazitaet} ({auslastung}%){istUeberlastet ? ' ⚠️' : ''}
+              </span>
+            </div>
+            {verbaende.size > 0 && (
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-500">Verbände auf Zuführung:</span>
+                {[...verbaende.values()].map(({ material, anzahl }) => (
+                  <div key={material.bezeichnungFirma || material.lrArt} className="flex items-center gap-1.5">
+                    <span style={{ width: 12, height: 3, borderRadius: 2, background: material.farbe, display: 'inline-block', flexShrink: 0 }} />
+                    <span className="text-[10px] text-gray-300">{anzahl}× {material.bezeichnungFirma || lrArtLabel(material.lrArt)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <span className="text-[10px] text-gray-500">{adressenHier.length} Hausanschluss(e):</span>
+            <div className="flex flex-col gap-0.5">
+              {adressenHier.slice(0, ANZEIGE_LIMIT).map((a) => (
+                <span key={a.uuid} className="text-[10px] text-gray-300 truncate">
+                  {a.strasse} {a.nr}{a.nr_zusatz}
+                </span>
+              ))}
+              {adressenHier.length > ANZEIGE_LIMIT && (
+                <span className="text-[10px] text-gray-600">… und {adressenHier.length - ANZEIGE_LIMIT} weitere</span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Mausover-Übersicht fürs Schacht — dieselbe Idee wie beim NVT, aber
+          ohne Kapazitätsgrenze (Schacht hat keine, siehe types.ts). */}
+      {hoverSchachtIdx !== null && schachtStandorte[hoverSchachtIdx] && (() => {
+        const schacht = schachtStandorte[hoverSchachtIdx]
+        const adressenHier = schacht.hausanschlussIds
+          .map((id) => hausanschluesse.find((h) => h.id === id))
+          .filter((h): h is Hausstich => !!h)
+          .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
+          .filter((a): a is Address => !!a)
+        const ANZEIGE_LIMIT = 6
+        return (
+          <div className="absolute bottom-3 right-3 z-1000 rounded-lg shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: '#1a1a1a', border: '1px solid #f97316' }}>
+            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Schacht {hoverSchachtIdx + 1}</span>
+            <span className="text-[10px] text-gray-500">{adressenHier.length} Hausanschluss(e):</span>
             <div className="flex flex-col gap-0.5">
               {adressenHier.slice(0, ANZEIGE_LIMIT).map((a) => (
                 <span key={a.uuid} className="text-[10px] text-gray-300 truncate">
@@ -1550,6 +1660,8 @@ const MapView = memo(function MapView({
                   const ll = (e.target as L.Marker).getLatLng()
                   onNvtVerschoben?.(i, { lat: ll.lat, lng: ll.lng })
                 },
+                mouseover: () => setHoverNvtIdx(i),
+                mouseout: () => setHoverNvtIdx((prev) => (prev === i ? null : prev)),
               }}>
               <Tooltip>
                 NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt{istUeberlastet ? ' · ⚠️ überbelegt' : ''}
@@ -1580,6 +1692,8 @@ const MapView = memo(function MapView({
                 const ll = (e.target as L.Marker).getLatLng()
                 onSchachtVerschoben?.(i, { lat: ll.lat, lng: ll.lng })
               },
+              mouseover: () => setHoverSchachtIdx(i),
+              mouseout: () => setHoverSchachtIdx((prev) => (prev === i ? null : prev)),
             }}>
             <Tooltip>
               Schacht {i + 1}{schacht.hausanschlussIds.length > 0 ? ` · ${schacht.hausanschlussIds.length} Hausanschluss(e)` : ''}
