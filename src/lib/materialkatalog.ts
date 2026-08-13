@@ -85,7 +85,14 @@ const KUNDENANSCHLUSS_STUFEN_DEFAULT: MaterialEintrag[] = [
 
 const FIRMA_DEFAULT: MaterialProfil = {
   trasse: { lrArt: 16, lrAnzahl: 4, anzahl: 1, reserve: 0, bezeichnungFirma: '4x20', preisProMeter: 0, farbe: '#ec4899' },
-  hausanschluss: { lrArt: 15, lrAnzahl: 12, anzahl: 1, reserve: 0, bezeichnungFirma: '12x7', preisProMeter: 0, farbe: '#eab308' },
+  // Einzelne Hauszuführung NVT/Schacht → EIN Haus — bewusst ein einzelnes/
+  // kleines Bündel, NICHT der Kundenanschluss-Sammelverband (der läuft
+  // separat auf dem Trasse-Segment, siehe kundenanschlussStufen). Vorheriger
+  // Default (12x7) war ein Fehler — 12 Röhrchen für einen einzelnen
+  // Hausanschluss ergeben keinen Sinn (Alex, 2026-08-14: "da liegt mal
+  // entweder ein 1x7 oder maximal ein 2x7"). 1x7 als typischer Fall, im
+  // Katalog jederzeit auf 2x7 änderbar.
+  hausanschluss: { lrArt: 15, lrAnzahl: 1, anzahl: 1, reserve: 0, bezeichnungFirma: '1x7', preisProMeter: 0, farbe: '#eab308' },
   kundenanschlussStufen: KUNDENANSCHLUSS_STUFEN_DEFAULT,
 }
 

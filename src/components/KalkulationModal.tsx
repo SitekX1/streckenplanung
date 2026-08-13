@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { exportKalkulationPdf } from '../lib/kalkulationPdfExport'
 import { ladeFirmendaten } from '../lib/firmendaten'
-import { aktivesMaterialProfil, lrArtLabel } from '../lib/materialkatalog'
+import { ladeMaterialkatalog, speichereMaterialkatalog, lrArtLabel, profilName } from '../lib/materialkatalog'
 
 interface KalkulationModalProps {
   projektName: string
@@ -58,8 +58,31 @@ export default function KalkulationModal({
 }: KalkulationModalProps) {
   // Material-Leerrohrpreise (nicht Verlegekosten — die stehen separat oben)
   // kommen aus dem geräteweiten Materialkatalog, je nach Projekt-Schalter
-  // "Bundesförderung" das passende Profil (siehe EinstellungenModal.tsx).
-  const materialProfil = aktivesMaterialProfil(bundesfoerderung)
+  // "Bundesförderung" das passende Profil. Typ/Größe des Materials wird
+  // weiterhin unter Einstellungen festgelegt, der €/m-Preis aber HIER
+  // editiert (2026-08-14, Alex: "Kosten pro laufenden Meter nicht in die
+  // Material-Einstellung reinschmeißen, sondern wie bei der Kalkulation") —
+  // eigener Katalog-State statt des einmaligen aktivesMaterialProfil()-Calls,
+  // damit Preisänderungen hier sofort zurückgeschrieben werden können.
+  const [katalog, setKatalog] = useState(ladeMaterialkatalog)
+  const materialProfil = katalog[profilName(bundesfoerderung)]
+  const aktualisiereMaterialPreis = (ebene: 'trasse' | 'hausanschluss', preisProMeter: number) => {
+    setKatalog((k) => {
+      const profil = profilName(bundesfoerderung)
+      const naechster = { ...k, [profil]: { ...k[profil], [ebene]: { ...k[profil][ebene], preisProMeter } } }
+      speichereMaterialkatalog(naechster)
+      return naechster
+    })
+  }
+  const aktualisiereStufePreis = (index: number, preisProMeter: number) => {
+    setKatalog((k) => {
+      const profil = profilName(bundesfoerderung)
+      const naechsteStufen = k[profil].kundenanschlussStufen.map((s, i) => (i === index ? { ...s, preisProMeter } : s))
+      const naechster = { ...k, [profil]: { ...k[profil], kundenanschlussStufen: naechsteStufen } }
+      speichereMaterialkatalog(naechster)
+      return naechster
+    })
+  }
   const trassenLaengeGesamt = strasseLaenge + feldwegLaenge
   // Preise sind geräteweit gespeichert (nicht Teil des Projekts) — die
   // Sätze eurer Firma ändern sich kaum von Projekt zu Projekt, im
@@ -99,6 +122,23 @@ export default function KalkulationModal({
           style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
         />
         <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>{einheit}</span>
+      </div>
+    </label>
+  )
+
+  const materialPreisFeld = (label: string, wert: number, onChange: (v: number) => void) => (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-gray-400">{label}</span>
+      <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid #374151', backgroundColor: '#111827' }}>
+        <input
+          type="number"
+          min={0}
+          value={wert}
+          onChange={(e) => onChange(Number(e.target.value) || 0)}
+          className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
+          style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
+        />
+        <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>€/m</span>
       </div>
     </label>
   )
@@ -228,17 +268,24 @@ export default function KalkulationModal({
 
           {sektion(`🧵 Material${bundesfoerderung ? ' (Bundesförderung)' : ''}`, (
             <>
-              <div className="col-span-2 flex flex-col gap-1">
-                <span className="text-xs text-gray-400">
-                  Trasse: {materialProfil.trasse.bezeichnungFirma} · {lrArtLabel(materialProfil.trasse.lrArt)}
-                </span>
-                <span className="text-xs text-gray-400">
-                  Hausanschluss: {materialProfil.hausanschluss.bezeichnungFirma} · {lrArtLabel(materialProfil.hausanschluss.lrArt)}
-                </span>
-                <span className="text-xs text-gray-600">
-                  Preise (€/m) unter ⚙️ Einstellungen → Materialkatalog hinterlegen.
-                </span>
-              </div>
+              {materialPreisFeld(
+                `Trasse (${materialProfil.trasse.bezeichnungFirma} · ${lrArtLabel(materialProfil.trasse.lrArt)})`,
+                materialProfil.trasse.preisProMeter,
+                (v) => aktualisiereMaterialPreis('trasse', v)
+              )}
+              {materialPreisFeld(
+                `Hausanschluss (${materialProfil.hausanschluss.bezeichnungFirma} · ${lrArtLabel(materialProfil.hausanschluss.lrArt)})`,
+                materialProfil.hausanschluss.preisProMeter,
+                (v) => aktualisiereMaterialPreis('hausanschluss', v)
+              )}
+              {materialProfil.kundenanschlussStufen.map((stufe, i) => (
+                <div key={i}>
+                  {materialPreisFeld(`Sammelverband ${stufe.bezeichnungFirma}`, stufe.preisProMeter, (v) => aktualisiereStufePreis(i, v))}
+                </div>
+              ))}
+              <p className="col-span-2 text-xs text-gray-600 -mt-1">
+                Material-Typ/-Größe wird unter ⚙️ Einstellungen → Materialkatalog festgelegt, hier nur der Preis pro Meter. Der Sammelverband-Preis fließt noch nicht in die Summe unten ein (dessen tatsächliche Länge hängt vom jeweiligen Segment ab).
+              </p>
             </>
           ))}
 

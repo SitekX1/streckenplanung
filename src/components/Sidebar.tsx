@@ -128,34 +128,35 @@ function Abschnitt({
 // ist" — Recherche zu aktueller SaaS-Onboarding-Praxis empfiehlt kontextuelle,
 // überspringbare Hinweise statt linearer Zwangs-Flows). Erscheint nur bei
 // leerem Projekt, lässt sich wegklicken und über den Link am Sidebar-Ende
-// jederzeit wieder einblenden.
+// jederzeit wieder einblenden. Bewusst NUR die zwei Setup-Schritte, die es
+// sonst nirgendwo offensichtlich gibt (Bundesförderung-Schalter ist jetzt
+// selbst schon immer sichtbar, Adressen-Import steht schon unten unter
+// "Daten" — beides hier zusätzlich zu zeigen war doppelt, siehe Alex'
+// Korrektur 2026-08-14: "das ist auch Quatsch").
 function ErsteSchritteBanner({
   onSchliessen,
   onFirmaKlick,
-  onImportKlick,
+  onKalkulationKlick,
 }: {
   onSchliessen: () => void
   onFirmaKlick: () => void
-  onImportKlick: () => void
+  onKalkulationKlick: () => void
 }) {
   return (
-    <div className="rounded-xl p-3 flex flex-col gap-2.5" style={{ backgroundColor: '#0f1f33', border: '1px solid #1e3a5f' }}>
+    <div className="rounded-xl p-3 flex flex-col gap-2" style={{ backgroundColor: '#0f1f33', border: '1px solid #1e3a5f' }}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold" style={{ color: '#93c5fd' }}>👋 Erste Schritte</span>
         <button onClick={onSchliessen} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">✕</button>
       </div>
       <button onClick={onFirmaKlick}
-        className="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-200 hover:border-blue-500 transition-colors"
-        style={{ backgroundColor: '#111827', border: '1px solid #1e3a5f' }}>
-        1️⃣ Firma & Material einrichten (⚙️ oben rechts)
-      </button>
-      <div className="px-3 py-2 rounded-lg text-xs text-gray-300" style={{ backgroundColor: '#111827', border: '1px solid #1e3a5f' }}>
-        2️⃣ Bundesförderung ja/nein — Schalter ☝ oben
-      </div>
-      <button onClick={onImportKlick}
         className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors"
         style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}>
-        3️⃣ Adressen importieren →
+        1️⃣ 🏢 Firma & Material einrichten
+      </button>
+      <button onClick={onKalkulationKlick}
+        className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+        style={{ backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #3b82f6' }}>
+        2️⃣ 💰 Kalkulation (Preise hinterlegen)
       </button>
     </div>
   )
@@ -301,7 +302,7 @@ export default function Sidebar({
           <ErsteSchritteBanner
             onSchliessen={() => setErsteSchritteVerborgen(true)}
             onFirmaKlick={() => setEinstellungenOffen(true)}
-            onImportKlick={() => excelInputRef.current?.click()}
+            onKalkulationKlick={() => setKalkulationOffen(true)}
           />
         )}
 

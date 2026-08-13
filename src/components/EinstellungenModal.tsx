@@ -100,11 +100,14 @@ export default function EinstellungenModal({
     })
   }
 
-  const materialZeile = (profil: MaterialProfilName, ebene: 'trasse' | 'hausanschluss', label: string) => {
+  const materialZeile = (profil: MaterialProfilName, ebene: 'trasse' | 'hausanschluss', label: string, hinweis?: string) => {
     const eintrag = katalog[profil][ebene]
     return (
       <div className="flex flex-col gap-2 rounded-xl p-3" style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
-        <span className="text-xs text-gray-400">{label}</span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs text-gray-400">{label}</span>
+          {hinweis && <span className="text-[10px] text-gray-600">{hinweis}</span>}
+        </div>
         <div className="flex gap-1.5">
           <input
             type="text"
@@ -133,7 +136,7 @@ export default function EinstellungenModal({
             <option key={e.code} value={e.code}>{e.code} — {e.label}</option>
           ))}
         </select>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <label className="flex flex-col gap-0.5">
             <span className="text-[10px] text-gray-500">Röhrchen/Verb.</span>
             <input type="number" min={0} value={eintrag.lrAnzahl}
@@ -150,12 +153,6 @@ export default function EinstellungenModal({
             <span className="text-[10px] text-gray-500">Reserve</span>
             <input type="number" min={0} value={eintrag.reserve}
               onChange={(e) => aktualisiereMaterial(profil, ebene, { reserve: Number(e.target.value) || 0 })}
-              className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-gray-500">€/m</span>
-            <input type="number" min={0} value={eintrag.preisProMeter}
-              onChange={(e) => aktualisiereMaterial(profil, ebene, { preisProMeter: Number(e.target.value) || 0 })}
               className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
           </label>
         </div>
@@ -177,7 +174,7 @@ export default function EinstellungenModal({
       <span className="text-xs text-gray-400">Kundenanschluss-Sammelverband (Doppelbelegung auf Trasse-Segmenten)</span>
       <span className="text-[10px] text-gray-600 -mt-1">Kleinste ausreichende Stufe wird je Segment automatisch gewählt, je nach Anzahl versorgter Hausanschlüsse dahinter.</span>
       {katalog[profil].kundenanschlussStufen.map((stufe, i) => (
-        <div key={i} className="grid grid-cols-5 gap-2 items-end">
+        <div key={i} className="grid grid-cols-4 gap-2 items-end">
           <input type="text" value={stufe.bezeichnungFirma}
             onChange={(e) => aktualisiereStufe(profil, i, { bezeichnungFirma: e.target.value })}
             placeholder="z.B. 7x7"
@@ -194,12 +191,6 @@ export default function EinstellungenModal({
             <span className="text-[9px] text-gray-500">Röhrchen</span>
             <input type="number" min={0} value={stufe.lrAnzahl}
               onChange={(e) => aktualisiereStufe(profil, i, { lrAnzahl: Number(e.target.value) || 0 })}
-              className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[9px] text-gray-500">€/m</span>
-            <input type="number" min={0} value={stufe.preisProMeter}
-              onChange={(e) => aktualisiereStufe(profil, i, { preisProMeter: Number(e.target.value) || 0 })}
               className="px-2 py-1.5 rounded-lg text-xs outline-none" style={{ backgroundColor: '#0d1117', border: '1px solid #374151', color: '#f9fafb' }} />
           </label>
         </div>
@@ -359,7 +350,7 @@ export default function EinstellungenModal({
         <div>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Materialkatalog</p>
           <p className="text-xs text-gray-600 mb-2.5">
-            Wird pro Projekt automatisch angewendet — je nachdem, ob unten in der Sidebar &bdquo;Bundesförderung&ldquo; aktiviert ist. Die Farbe je Material-Typ (rechts neben der Bezeichnung) bestimmt auch die Einfärbung der Trasse auf der Karte.
+            Wird pro Projekt automatisch angewendet — je nachdem, ob oben &bdquo;Bundesförderung&ldquo; aktiviert ist. Die Farbe je Material-Typ (rechts neben der Bezeichnung) bestimmt auch die Einfärbung der Trasse auf der Karte. Preise pro Meter werden separat in der 💰 Kalkulation hinterlegt, nicht hier.
           </p>
           <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl mb-1"
             style={{ backgroundColor: '#111827', border: '1px solid #262b36' }}>
@@ -382,16 +373,16 @@ export default function EinstellungenModal({
             <div>
               <span className="text-[11px] text-blue-400 font-medium block mb-1.5">Firmenstandard</span>
               <div className="flex flex-col gap-2">
-                {materialZeile('firma', 'trasse', 'Trasse (NVT-zu-NVT-Backbone)')}
-                {materialZeile('firma', 'hausanschluss', 'Hausanschluss (Hauszuführung)')}
+                {materialZeile('firma', 'trasse', 'Trasse (NVT-zu-NVT-Backbone)', 'Läuft nur zwischen zwei Verteilern (NVT/Schacht), siehe Kartenlegende')}
+                {materialZeile('firma', 'hausanschluss', 'Hausanschluss (Hauszuführung)', 'Einzelne Leitung von NVT/Schacht zu EINEM Haus — nicht der Sammelverband unten')}
                 {stufenZeilen('firma')}
               </div>
             </div>
             <div>
               <span className="text-[11px] text-amber-400 font-medium block mb-1.5">Bundesförderung</span>
               <div className="flex flex-col gap-2">
-                {materialZeile('foerderung', 'trasse', 'Trasse (NVT-zu-NVT-Backbone)')}
-                {materialZeile('foerderung', 'hausanschluss', 'Hausanschluss (Hauszuführung)')}
+                {materialZeile('foerderung', 'trasse', 'Trasse (NVT-zu-NVT-Backbone)', 'Läuft nur zwischen zwei Verteilern (NVT/Schacht), siehe Kartenlegende')}
+                {materialZeile('foerderung', 'hausanschluss', 'Hausanschluss (Hauszuführung)', 'Einzelne Leitung von NVT/Schacht zu EINEM Haus — nicht der Sammelverband unten')}
                 {stufenZeilen('foerderung')}
               </div>
             </div>
