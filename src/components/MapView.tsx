@@ -97,6 +97,32 @@ function haversineMeter(a: LatLng, b: LatLng): number {
   return 2 * R * Math.asin(Math.sqrt(s))
 }
 
+// Versetzt einen Pfad senkrecht zu seiner Laufrichtung um einen festen
+// Meter-Betrag — für Doppelbelegung (zwei Materialien auf demselben
+// Segment) statt der bisherigen konzentrischen Überlagerung zwei parallel
+// nebeneinander laufende Linien zu zeichnen (wie ein Leitungsgraben mit
+// zwei Kabeln), damit beide Farben eigenständig erkennbar bleiben (Alex,
+// 2026-08-21: "Verbünde die aufeinander liegen ... ist unübersichtlich").
+// Bewusst keine echte Polygon-Versatzberechnung (Miter/Bevel je Knick) —
+// bei den vielen, meist sanft gekrümmten Straßen-Stützpunkten reicht ein
+// einfacher Pro-Punkt-Versatz anhand der lokalen Laufrichtung völlig aus.
+function versetzePfadSenkrecht(pfad: LatLng[], meterVersatz: number): LatLng[] {
+  const METER_PRO_GRAD_LAT = 111_320
+  return pfad.map((p, i) => {
+    const von = pfad[Math.max(0, i - 1)]
+    const nach = pfad[Math.min(pfad.length - 1, i + 1)]
+    const cosLat = Math.cos((p.lat * Math.PI) / 180)
+    const dxMeter = (nach.lng - von.lng) * METER_PRO_GRAD_LAT * cosLat
+    const dyMeter = (nach.lat - von.lat) * METER_PRO_GRAD_LAT
+    const laenge = Math.hypot(dxMeter, dyMeter)
+    if (laenge < 1e-6) return p
+    // Senkrechte Richtung (um 90° gedreht), auf Ziel-Versatz normiert
+    const nx = (-dyMeter / laenge) * meterVersatz
+    const ny = (dxMeter / laenge) * meterVersatz
+    return { lat: p.lat + ny / METER_PRO_GRAD_LAT, lng: p.lng + nx / (METER_PRO_GRAD_LAT * cosLat) }
+  })
+}
+
 // Sucht beim Ziehen eines Punkts das nächstgelegene Schnapp-Ziel — entweder
 // ein bestehender Punkt (Vertex) auf irgendeinem Trasse-Pfad, oder die
 // Projektion auf eine Pfad-Linie selbst (falls näher als jeder einzelne
@@ -531,22 +557,36 @@ const MapView = memo(function MapView({
     return [...gruppen.entries()]
   }, [trassePfade, trassePfadeKinds, materialProSegment, farbeProSegment, trasseFarbe])
 
-  // Doppelbelegung: zwei Materialien auf demselben Segment — als zwei
-  // Linien übereinander gerendert (Zusatz-Material breiter dahinter, Haupt-
-  // Material schmaler davor), gruppiert nach Farbpaar. Bewusst KEINE
-  // gestrichelte/Punkt-Strich-Symbolik (von Alex explizit abgelehnt), nur
-  // Farbe + Linienbreite.
-  const trassePfadeDoppelbelegung = useMemo(() => {
-    const gruppen = new Map<string, { hauptFarbe: string; zusatzFarbe: string; pfade: LatLng[][] }>()
+  // Doppelbelegung: zwei Materialien auf demselben Segment — statt der
+  // früheren konzentrischen Überlagerung (schmal auf breit) zwei parallel
+  // versetzte Linien wie ein Leitungsgraben mit zwei Kabeln, gruppiert nach
+  // Farbe für performantes Canvas-Rendering (wie die einfarbigen Segmente).
+  // Bewusst KEINE gestrichelte/Punkt-Strich-Symbolik (von Alex explizit
+  // abgelehnt), nur Farbe + räumlicher Versatz.
+  const DOPPELBELEGUNG_VERSATZ_METER = 1.6
+  const trassePfadeDoppelbelegungHaupt = useMemo(() => {
+    const gruppen = new Map<string, LatLng[][]>()
     trassePfade.forEach((pfad, i) => {
       if (trassePfadeKinds[i] === 'track') return
       const m = materialProSegment[i]
       if (!m?.zusatz) return
-      const key = `${m.haupt.farbe}|${m.zusatz.farbe}`
-      if (!gruppen.has(key)) gruppen.set(key, { hauptFarbe: m.haupt.farbe, zusatzFarbe: m.zusatz.farbe, pfade: [] })
-      gruppen.get(key)!.pfade.push(pfad)
+      const farbe = m.haupt.farbe
+      if (!gruppen.has(farbe)) gruppen.set(farbe, [])
+      gruppen.get(farbe)!.push(versetzePfadSenkrecht(pfad, DOPPELBELEGUNG_VERSATZ_METER))
     })
-    return [...gruppen.values()]
+    return [...gruppen.entries()]
+  }, [trassePfade, trassePfadeKinds, materialProSegment])
+  const trassePfadeDoppelbelegungZusatz = useMemo(() => {
+    const gruppen = new Map<string, LatLng[][]>()
+    trassePfade.forEach((pfad, i) => {
+      if (trassePfadeKinds[i] === 'track') return
+      const m = materialProSegment[i]
+      if (!m?.zusatz) return
+      const farbe = m.zusatz.farbe
+      if (!gruppen.has(farbe)) gruppen.set(farbe, [])
+      gruppen.get(farbe)!.push(versetzePfadSenkrecht(pfad, -DOPPELBELEGUNG_VERSATZ_METER))
+    })
+    return [...gruppen.entries()]
   }, [trassePfade, trassePfadeKinds, materialProSegment])
   const trassePfadeNurFeldweg = useMemo(
     () => trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track'),
@@ -1469,15 +1509,16 @@ const MapView = memo(function MapView({
                 {trassePfadeNachFarbeOhneFeldweg.map(([farbe, pfade]) => (
                   <TrasseNetzwerk key={farbe} pfade={pfade} farbe={farbe} opacity={0.9} />
                 ))}
-                {/* Doppelbelegung: Zusatz-Material breiter dahinter, Haupt-
-                    Material schmaler davor — macht auf der Karte sichtbar,
-                    dass hier zwei Verbände übereinander liegen (Alex,
-                    2026-08-13), statt einer einzelnen, nicht unterscheidbaren Farbe. */}
-                {trassePfadeDoppelbelegung.map(({ hauptFarbe, zusatzFarbe, pfade }, gi) => (
-                  <Fragment key={gi}>
-                    <TrasseNetzwerk pfade={pfade} farbe={zusatzFarbe} opacity={0.95} weight={10} />
-                    <TrasseNetzwerk pfade={pfade} farbe={hauptFarbe} opacity={1} weight={4} />
-                  </Fragment>
+                {/* Doppelbelegung: zwei parallel versetzte Linien statt einer
+                    einzelnen, nicht unterscheidbaren Farbe — macht sichtbar,
+                    dass hier zwei Verbände auf demselben Segment liegen
+                    (Alex, 2026-08-13 / 2026-08-21: Überlagerung war
+                    "unübersichtlich"). */}
+                {trassePfadeDoppelbelegungZusatz.map(([farbe, pfade]) => (
+                  <TrasseNetzwerk key={`db-zusatz-${farbe}`} pfade={pfade} farbe={farbe} opacity={0.9} weight={4} />
+                ))}
+                {trassePfadeDoppelbelegungHaupt.map(([farbe, pfade]) => (
+                  <TrasseNetzwerk key={`db-haupt-${farbe}`} pfade={pfade} farbe={farbe} opacity={0.9} weight={4} />
                 ))}
                 <TrasseNetzwerk pfade={trassePfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.9} />
                 <TrasseKlickbar pfade={trassePfade} ausgewaehlteIdxs={verbandSegmentIdxs}
