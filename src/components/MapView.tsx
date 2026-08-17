@@ -210,6 +210,7 @@ interface MapViewProps {
 function KlickHandler({
   aktiv, onKlick, ziehModus, onZiehZiel, hsZeichenModus, onHsZeichenZiel,
   nvtSetzenModus, onNvtSetzenZiel, schachtSetzenModus, onSchachtSetzenZiel,
+  mehrpunktModus, onMehrpunktKlick, onMehrpunktFertig,
   menuOffen, onMenuSchliessen, onMapKlick,
 }: {
   aktiv: boolean
@@ -222,22 +223,38 @@ function KlickHandler({
   onNvtSetzenZiel?: (p: LatLng) => void
   schachtSetzenModus?: boolean
   onSchachtSetzenZiel?: (p: LatLng) => void
+  mehrpunktModus?: boolean
+  onMehrpunktKlick?: (p: LatLng) => void
+  onMehrpunktFertig?: () => void
   menuOffen?: boolean
   onMenuSchliessen?: () => void
   onMapKlick?: () => void
 }) {
-  useMapEvents({
+  const map = useMapEvents({
     click(e) {
       if (menuOffen) { onMenuSchliessen?.(); return }
       const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
-      if (ziehModus && onZiehZiel) onZiehZiel(pos)
+      if (mehrpunktModus && onMehrpunktKlick) onMehrpunktKlick(pos)
+      else if (ziehModus && onZiehZiel) onZiehZiel(pos)
       else if (hsZeichenModus && onHsZeichenZiel) onHsZeichenZiel(pos)
       else if (nvtSetzenModus && onNvtSetzenZiel) onNvtSetzenZiel(pos)
       else if (schachtSetzenModus && onSchachtSetzenZiel) onSchachtSetzenZiel(pos)
       else if (aktiv) onKlick(pos)
       else onMapKlick?.()
     },
+    dblclick(e) {
+      if (mehrpunktModus && onMehrpunktFertig) {
+        L.DomEvent.stopPropagation(e)
+        onMehrpunktFertig()
+      }
+    },
   })
+  // Doppelklick-Zoom stört den "Doppelklick = Linie fertig"-Abschluss beim
+  // Mehrpunkt-Zeichnen (BayernAtlas-Flow) — während des Modus deaktivieren.
+  useEffect(() => {
+    if (mehrpunktModus) map.doubleClickZoom.disable()
+    else map.doubleClickZoom.enable()
+  }, [mehrpunktModus, map])
   return null
 }
 
@@ -663,6 +680,13 @@ const MapView = memo(function MapView({
   // Start, zweiter Klick auf DEMSELBEN Pfad schneidet den Abschnitt dazwischen
   // als eigenständiges Segment heraus (für den Export wichtig).
   const [segmentStart, setSegmentStart] = useState<{ pfadIdx: number; pos: LatLng } | null>(null)
+  // Mehrpunkt-Linienzeichnen (BayernAtlas-Flow, 2026-08-21, Alex: "Eine Linie
+  // zieht mit mehreren Punkten ... zwischendrin verbinden Sie die Linien") —
+  // ZUSÄTZLICH zum bestehenden Ein-Klick-"Neuer Strich" (unverändert), nicht
+  // als Ersatz. Startet wie "Neuer Strich" an einem bestehenden Punkt, sammelt
+  // aber beliebig viele weitere Punkte, bis "Fertig" (oder Doppelklick).
+  const [mehrpunktModus, setMehrpunktModus] = useState(false)
+  const [mehrpunktPunkte, setMehrpunktPunkte] = useState<LatLng[]>([])
 
   const trasseRef = useRef<LatLng[]>([])
   const trassePfadeRef = useRef<LatLng[][]>([])
@@ -781,6 +805,8 @@ const MapView = memo(function MapView({
       setAktivMenu(null)
       setAktivesSegment(null)
       setSegmentStart(null)
+      setMehrpunktModus(false)
+      setMehrpunktPunkte([])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
@@ -791,6 +817,7 @@ const MapView = memo(function MapView({
       setZiehStartId(null); setZiehStartPos(null)
       setNeuerHsStart(null); setAktivMenu(null)
       setSegmentStart(null)
+      setMehrpunktModus(false); setMehrpunktPunkte([])
       handleDeselect()
     }
     window.addEventListener('keydown', onKey)
@@ -1055,6 +1082,48 @@ const MapView = memo(function MapView({
     setZiehStartPos(null)
   }
 
+  // Mehrpunkt-Linie: jeder Klick (auf Karte oder bestehenden Punkt) hängt
+  // einen weiteren Punkt an — Abschluss erst über "Fertig" / Doppelklick /
+  // Enter, im Gegensatz zu handleZiehZiel oben, das nach einem Klick endet.
+  function handleMehrpunktPunkt(p: LatLng) {
+    setMehrpunktPunkte((prev) => [...prev, p])
+  }
+
+  function handleMehrpunktUndo() {
+    setMehrpunktPunkte((prev) => prev.slice(0, -1))
+  }
+
+  function handleMehrpunktAbbrechen() {
+    setMehrpunktModus(false)
+    setMehrpunktPunkte([])
+  }
+
+  function handleMehrpunktFertig() {
+    if (mehrpunktPunkte.length < 2) { handleMehrpunktAbbrechen(); return }
+    let aktuelllePfade = localPfadeRef.current
+    const segIdx = editSegmentIdxRef.current
+    const punkte = editPunkteRef.current
+    if (segIdx !== null && punkte.length >= 2) {
+      aktuelllePfade = aktuelllePfade.map((pf, i) => i === segIdx ? punkte : pf)
+    }
+    const neuePfade = [...aktuelllePfade, mehrpunktPunkte]
+    localPfadeRef.current = neuePfade
+    setLocalPfade(neuePfade)
+    const neueKinds = [...localPfadeKindsRef.current, 'paved' as WegKind]
+    localPfadeKindsRef.current = neueKinds
+    setLocalPfadeKinds(neueKinds)
+    if (!kleinProjekt) {
+      setEditSegmentIdx(neuePfade.length - 1)
+      editSegmentIdxRef.current = neuePfade.length - 1
+      setEditPunkte(mehrpunktPunkte)
+      editPunkteRef.current = mehrpunktPunkte
+      setAktivesSegment(`pfad-${neuePfade.length - 1}`)
+    }
+    editiertRef.current = true
+    setMehrpunktModus(false)
+    setMehrpunktPunkte([])
+  }
+
   // Schaltet die Straße/Feldweg-Klassifizierung eines Segments manuell um —
   // sowohl für frisch generierte als auch für per Hand editierte Segmente.
   function handleSegmentKindToggle(idx: number) {
@@ -1205,7 +1274,7 @@ const MapView = memo(function MapView({
     </button>
   )
 
-  const imZeichenModus = !!ziehStartId || !!neuerHsStart
+  const imZeichenModus = !!ziehStartId || !!neuerHsStart || mehrpunktModus
 
   // Handle-Dezimierung für Groß-Projekt (nur für ausgewähltes Segment)
   const handleSchritt = editPunkte.length > MAX_HANDLES ? Math.ceil(editPunkte.length / MAX_HANDLES) : 1
@@ -1492,6 +1561,7 @@ const MapView = memo(function MapView({
           hsZeichenModus={!!neuerHsStart} onHsZeichenZiel={handleNeuerHsZiel}
           nvtSetzenModus={nvtManuellSetzenAktiv && !neuerNvtPosition} onNvtSetzenZiel={handleNvtSetzenZiel}
           schachtSetzenModus={schachtSetzenAktiv} onSchachtSetzenZiel={handleSchachtSetzenZiel}
+          mehrpunktModus={mehrpunktModus} onMehrpunktKlick={handleMehrpunktPunkt} onMehrpunktFertig={handleMehrpunktFertig}
           menuOffen={!!aktivMenu} onMenuSchliessen={() => setAktivMenu(null)}
           onMapKlick={() => {
             if (editierbarAktiv && !kleinProjekt) handleDeselect()
@@ -1546,6 +1616,7 @@ const MapView = memo(function MapView({
                     click: (e) => {
                       L.DomEvent.stopPropagation(e)
                       const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                      if (mehrpunktModus) { handleMehrpunktPunkt(pos); return }
                       if (ziehStartId) { handleZiehZiel(pos); return }
                       if (neuerHsStart) { handleNeuerHsZiel(pos); return }
                       handleSegmentAuswaehlen(pi)
@@ -1606,11 +1677,13 @@ const MapView = memo(function MapView({
                   eventHandlers={{
                     click: (e) => {
                       if (e.originalEvent) e.originalEvent.stopPropagation()
+                      if (mehrpunktModus) { handleMehrpunktPunkt(p); return }
                       if (ziehStartId) { handleZiehZiel(p); return }
                       if (neuerHsStart) { handleNeuerHsZiel(p); return }
                       zeigeMenu(e, [
                         { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleEditPunktLoeschen(i); setAktivMenu(null) } },
                         { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
+                        { label: '📐 Mehrpunkt-Linie', farbe: '#93c5fd', action: () => { setMehrpunktModus(true); setMehrpunktPunkte([p]); setAktivMenu(null) } },
                         segmentDefinierenMenuEintrag(editSegmentIdx, p),
                       ])
                     },
@@ -1652,6 +1725,7 @@ const MapView = memo(function MapView({
                   click: (e) => {
                     L.DomEvent.stopPropagation(e)
                     const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                    if (mehrpunktModus) { handleMehrpunktPunkt(pos); return }
                     if (ziehStartId) { handleZiehZiel(pos); return }
                     if (neuerHsStart) { handleNeuerHsZiel(pos); return }
                     setAktivesSegment(segKey)
@@ -1687,11 +1761,13 @@ const MapView = memo(function MapView({
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
+                    if (mehrpunktModus) { handleMehrpunktPunkt(p); return }
                     if (ziehStartId) { handleZiehZiel(p); return }
                     if (neuerHsStart) { handleNeuerHsZiel(p); return }
                     zeigeMenu(e, [
                       { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleKleinPunktLoeschen(pi, i); setAktivMenu(null) } },
                       { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
+                      { label: '📐 Mehrpunkt-Linie', farbe: '#93c5fd', action: () => { setMehrpunktModus(true); setMehrpunktPunkte([p]); setAktivMenu(null) } },
                       segmentDefinierenMenuEintrag(pi, p),
                     ])
                   },
@@ -1718,6 +1794,16 @@ const MapView = memo(function MapView({
             gelandet wird, wenn jetzt losgelassen wird. */}
         <SchnappZielLayer layerRef={schnappZielLayerRef} />
 
+        {/* Mehrpunkt-Linie: live wachsende Vorschau während des Zeichnens */}
+        {mehrpunktModus && mehrpunktPunkte.length >= 2 && (
+          <Polyline positions={mehrpunktPunkte.map((p) => [p.lat, p.lng] as [number, number])}
+            interactive={false} pathOptions={{ color: '#4ade80', weight: 4, opacity: 0.9 }} />
+        )}
+        {mehrpunktModus && mehrpunktPunkte.map((p, i) => (
+          <CircleMarker key={`mp-${i}`} center={[p.lat, p.lng]} radius={5}
+            pathOptions={{ color: '#4ade80', fillColor: '#4ade80', fillOpacity: 1, weight: 2 }} />
+        ))}
+
         {/* Adressen */}
         {adressenSichtbar && adressen.map((a) => {
           const aktiv = aktiveOrteKeys.includes(`${a.plz}_${a.ortsname}_${a.ortsteil}`)
@@ -1741,6 +1827,7 @@ const MapView = memo(function MapView({
               } : editierbarAktiv ? {
                 click: (e) => {
                   L.DomEvent.stopPropagation(e)
+                  if (mehrpunktModus) { handleMehrpunktPunkt({ lat: a.lat, lng: a.lon }); return }
                   if (ziehStartId) { handleZiehZiel({ lat: a.lat, lng: a.lon }); return }
                   if (neuerHsStart) {
                     setNeuerHsStart({ adresseUuid: a.uuid, pos: { lat: a.lat, lng: a.lon }, name: `${a.strasse} ${a.nr}` })
@@ -1935,6 +2022,7 @@ const MapView = memo(function MapView({
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
+                    if (mehrpunktModus) { handleMehrpunktPunkt(p); return }
                     if (ziehStartId) { handleZiehZiel(p); return }
                     if (neuerHsStart) { handleNeuerHsZiel(p); return }
                     zeigeMenu(e, [
@@ -2218,11 +2306,27 @@ const MapView = memo(function MapView({
       {editierbarAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-2xl shadow-lg"
           style={{
-            backgroundColor: segmentStart ? '#052e2b' : ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : 'var(--surface-2)',
-            border: `1px solid ${segmentStart ? '#4ade80' : ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : 'var(--border-strong)'}`,
+            backgroundColor: mehrpunktModus ? '#022c22' : segmentStart ? '#052e2b' : ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : 'var(--surface-2)',
+            border: `1px solid ${mehrpunktModus ? '#4ade80' : segmentStart ? '#4ade80' : ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : 'var(--border-strong)'}`,
             padding: '10px 16px', maxWidth: '92vw',
           }}>
-          {segmentStart ? (
+          {mehrpunktModus ? (
+            <p style={{ color: '#bbf7d0', fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              📐 <b>Mehrpunkt-Linie</b> — {mehrpunktPunkte.length} Punkt{mehrpunktPunkte.length === 1 ? '' : 'e'} &nbsp;·&nbsp; Karte/Punkt antippen = weiterer Punkt &nbsp;·&nbsp; Doppelklick = fertig
+              <button onClick={handleMehrpunktUndo} disabled={mehrpunktPunkte.length === 0}
+                style={{ background: 'var(--border-strong)', color: 'var(--text-primary)', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: mehrpunktPunkte.length === 0 ? 'default' : 'pointer', fontSize: 11, opacity: mehrpunktPunkte.length === 0 ? 0.5 : 1 }}>
+                ↩ Letzten Punkt entfernen
+              </button>
+              <button onClick={handleMehrpunktFertig} disabled={mehrpunktPunkte.length < 2}
+                style={{ background: mehrpunktPunkte.length < 2 ? 'var(--border-strong)' : '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: mehrpunktPunkte.length < 2 ? 'default' : 'pointer', fontSize: 11, opacity: mehrpunktPunkte.length < 2 ? 0.5 : 1 }}>
+                ✅ Fertig
+              </button>
+              <button onClick={handleMehrpunktAbbrechen}
+                style={{ background: 'var(--border-strong)', color: 'var(--text-primary)', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}>
+                ✕ Abbrechen
+              </button>
+            </p>
+          ) : segmentStart ? (
             <p style={{ color: '#bbf7d0', fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
               📍 <b>Segment-Start gesetzt</b> — zweiten Punkt auf demselben Abschnitt antippen für Segment-Ende
               <button onClick={() => setSegmentStart(null)}
