@@ -6,7 +6,7 @@ import { ladeFirmendaten } from '../lib/firmendaten'
 import { MaterialEintrag, ladeMaterialkatalog, speichereMaterialkatalog, lrArtLabel, profilName } from '../lib/materialkatalog'
 import { ermittleMaterialProSegment } from '../lib/faserdimensionierung'
 import { segmentLaenge } from '../lib/shapefileExport'
-import { BackboneVerbindung, Hausstich, LatLng, NvtStandort, SchachtStandort } from '../lib/types'
+import { BackboneVerbindung, Hausstich, LatLng, MaterialUebersteuerung, NvtStandort, SchachtStandort } from '../lib/types'
 
 interface KalkulationModalProps {
   projektName: string
@@ -26,6 +26,7 @@ interface KalkulationModalProps {
   schachtStandorte: SchachtStandort[]
   hausanschluesse: Hausstich[]
   backboneVerbindungen: BackboneVerbindung[]
+  materialUebersteuerungen: MaterialUebersteuerung[]
   onClose: () => void
 }
 
@@ -72,7 +73,7 @@ const feldStyle: React.CSSProperties = {
 
 export default function KalkulationModal({
   projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, hausanschlussLaenge, nvtAnzahl, schachtAnzahl, bundesfoerderung,
-  trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, backboneVerbindungen, onClose,
+  trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, backboneVerbindungen, materialUebersteuerungen, onClose,
 }: KalkulationModalProps) {
   // Material-Leerrohrpreise (nicht Verlegekosten — die stehen separat oben)
   // kommen aus dem geräteweiten Materialkatalog, je nach Projekt-Schalter
@@ -172,7 +173,7 @@ export default function KalkulationModal({
   // Materialien, da physisch zwei separate Leitungen verlegt werden.
   const trasseMaterialLaengen = useMemo(() => {
     const materialProSegment = ermittleMaterialProSegment(
-      trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen
+      trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen
     )
     const map = new Map<string, { material: MaterialEintrag; laenge: number }>()
     trassePfade.forEach((pfad, i) => {
@@ -189,7 +190,7 @@ export default function KalkulationModal({
       if (m.zusatz) addiere(m.zusatz)
     })
     return [...map.values()]
-  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen])
+  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen])
 
   const strasseSumme = strasseLaenge * preise.strassePreisProMeter
   const feldwegSumme = feldwegLaenge * preise.feldwegPreisProMeter

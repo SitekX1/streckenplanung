@@ -73,6 +73,22 @@ export interface BackboneVerbindung {
   material: MaterialEintrag
 }
 
+// Manuelle Material-Übersteuerung für EIN einzelnes Trasse-Segment
+// (2026-08-21, Alex: "im Nachhinein kann ich aber keinen einzigen Verbund
+// bearbeiten") — überschreibt die automatisch (nach Hausanschluss-Bedarf)
+// gewählte Kundenanschluss-Sammelverband-Stufe für dieses Segment fest.
+// "von"/"nach" sind die Endpunkt-Positionen des Segments zum Erstellzeitpunkt
+// (nicht der Array-Index) — dasselbe Stabilitätsprinzip wie bei
+// BackboneVerbindung, da segmentiereAnKreuzungen() die Trasse jederzeit neu
+// aufteilen kann. Ein längerer Verband (mehrere Trasse-Segmente) bekommt
+// entsprechend mehrere Einträge, einen je Segment — siehe
+// ermittleMaterialUebersteuerungProSegment in faserdimensionierung.ts.
+export interface MaterialUebersteuerung {
+  von: LatLng
+  nach: LatLng
+  material: MaterialEintrag
+}
+
 export interface Projekt {
   name: string
   erstelltAm: string
@@ -93,6 +109,10 @@ export interface Projekt {
   // Manuell erstellte Backbone-Verbindungen (siehe BackboneVerbindung oben) —
   // fehlt bei älteren Projekten, dann einfach keine.
   backboneVerbindungen?: BackboneVerbindung[]
+  // Manuelle Material-Übersteuerungen einzelner Segmente (siehe
+  // MaterialUebersteuerung oben) — fehlt bei älteren Projekten, dann einfach
+  // keine (alles bleibt automatisch berechnet wie bisher).
+  materialUebersteuerungen?: MaterialUebersteuerung[]
   // Welche Orte-Filter beim Speichern aktiv waren (Sidebar-Auswahl) — fehlt
   // bei älteren Projekten, dann sind beim Laden wie bisher alle Orte aktiv.
   aktiveOrteKeys?: string[]

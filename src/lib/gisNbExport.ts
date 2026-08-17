@@ -7,6 +7,7 @@ import {
   berechneHausanschlussAnzahlProSegment,
   berechneNvtKapazitaetsbedarfProSegment,
   ermittleBackboneSegmente,
+  ermittleMaterialUebersteuerungProSegment,
   ermittleUeberschriebenesMaterialProSegment,
   passendesKabel,
 } from './faserdimensionierung'
@@ -168,6 +169,10 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
     trassePfade,
     projekt.backboneVerbindungen ?? []
   )
+  // Manuelle Material-Übersteuerung einzelner Segmente (siehe
+  // MaterialUebersteuerung) — gewinnt gegen die automatische Stufenwahl,
+  // analog zu ermittleMaterialProSegment (dieselbe Regel für Karte/Kalkulation).
+  const manuellProSegment = ermittleMaterialUebersteuerungProSegment(trassePfade, projekt.materialUebersteuerungen ?? [])
 
   trassePfade.forEach((pfad, i) => {
     if (pfad.length < 2) return
@@ -190,7 +195,7 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
     const bedarf = bedarfProSegment[i] ?? 0
     if (bedarf > 0) {
       const kapazitaetsObergrenze = kapazitaetsObergrenzeProSegment[i] || undefined
-      const stufe = waehleVerbandMitReserve(profil, bedarf, kapazitaetsObergrenze)
+      const stufe = manuellProSegment[i] ?? waehleVerbandMitReserve(profil, bedarf, kapazitaetsObergrenze)
       features.push({
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: coords },

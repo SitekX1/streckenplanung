@@ -8,8 +8,8 @@ import {
 import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
-import { Address, BackboneVerbindung, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
-import { ermittleHausanschluesseProSegment, ermittleMaterialProSegment, ermittleVerbandSegmente } from '../lib/faserdimensionierung'
+import { Address, BackboneVerbindung, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort, MaterialUebersteuerung } from '../lib/types'
+import { ermittleHausanschluesseProSegment, ermittleMaterialProSegment, ermittleMaterialUebersteuerungProSegment, ermittleVerbandSegmente } from '../lib/faserdimensionierung'
 import { aktivesMaterialProfil, lrArtLabel, MaterialEintrag } from '../lib/materialkatalog'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -159,6 +159,7 @@ interface MapViewProps {
   backboneVerbindungen?: BackboneVerbindung[]
   backboneVerbindungLaeuft?: boolean
   backboneVerbindungFehler?: string | null
+  materialUebersteuerungen?: MaterialUebersteuerung[]
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][], kinds: WegKind[]) => void
@@ -177,6 +178,7 @@ interface MapViewProps {
   onSchachtVerschoben?: (schachtIdx: number, position: LatLng) => void
   onBackboneVerbindungErstellen?: (quelle: LatLng, ziel: LatLng, material: MaterialEintrag) => void
   onBackboneVerbindungFehlerSchliessen?: () => void
+  onMaterialUebersteuern?: (segmentIdxs: number[], material: MaterialEintrag | null) => void
 }
 
 function KlickHandler({
@@ -357,11 +359,12 @@ const MapView = memo(function MapView({
   aussiedlerhofUuids = new Set(), aussiedlerhofMarkierenAktiv = false, nvtStandorte = [],
   nvtManuellSetzenAktiv = false, schachtStandorte = [], schachtSetzenAktiv = false,
   backboneVerbindungen = [], backboneVerbindungLaeuft = false, backboneVerbindungFehler = null,
+  materialUebersteuerungen = [],
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
   onAussiedlerhofToggle, onAussiedlerhofMarkierenFertig,
   onNvtManuellHinzufuegen, onNvtManuellSetzenAbbrechen, onNvtLoeschen, onNvtHausanschlussToggle, onNvtVerschoben,
   onSchachtGesetzt, onSchachtSetzenAbbrechen, onSchachtLoeschen, onSchachtHausanschlussToggle, onSchachtVerschoben,
-  onBackboneVerbindungErstellen, onBackboneVerbindungFehlerSchliessen,
+  onBackboneVerbindungErstellen, onBackboneVerbindungFehlerSchliessen, onMaterialUebersteuern,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -377,6 +380,9 @@ const MapView = memo(function MapView({
   const [schachtSichtbar, setSchachtSichtbar] = useState(true)
   // Segment-Markierung außerhalb des Bearbeitungsmodus (reines Ansehen).
   const [ausgewaehltesSegmentNormal, setAusgewaehltesSegmentNormal] = useState<number | null>(null)
+  // Material-Auswahl im Klick-Panel ein-/ausgeklappt (2026-08-21, Alex:
+  // "im Nachhinein kann ich aber keinen einzigen Verbund bearbeiten").
+  const [materialAuswahlOffen, setMaterialAuswahlOffen] = useState(false)
   const [warnModalOffen, setWarnModalOffen] = useState(false)
   // Referenz der zuletzt gesehenen Liste — erlaubt, das Warnmodal direkt beim
   // Render zu öffnen sobald eine NEUE (andere Referenz) Liste ankommt, ohne
@@ -462,8 +468,15 @@ const MapView = memo(function MapView({
   // ermittleMaterialProSegment in faserdimensionierung.ts, die dieselbe
   // Prüfung macht und leer zurückgibt).
   const materialProSegment = useMemo(
-    () => ermittleMaterialProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen),
-    [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen]
+    () => ermittleMaterialProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen),
+    [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen]
+  )
+  // Ist das Segment gerade manuell übersteuert? Nur fürs Klick-Panel (zeigt
+  // "manuell gesetzt" + "Automatisch zurücksetzen"-Option statt der
+  // Material-Auswahl bei einem bereits übersteuerten Segment).
+  const manuellUebersteuertProSegment = useMemo(
+    () => ermittleMaterialUebersteuerungProSegment(trassePfade, materialUebersteuerungen),
+    [trassePfade, materialUebersteuerungen]
   )
   // Kompletter Verlauf des Verbands, zu dem das angeklickte Segment gehört
   // (2026-08-21, Alex: "möchte den Verlauf des Verbands sehen, auch bei einer
@@ -541,6 +554,7 @@ const MapView = memo(function MapView({
   )
   const handleSegmentNormalKlick = useCallback((i: number) => {
     setAusgewaehltesSegmentNormal((prev) => (prev === i ? null : i))
+    setMaterialAuswahlOffen(false)
   }, [])
 
   // Manuelles NVT setzen: nach Klick auf die Karte erst Kapazität abfragen,
@@ -1265,6 +1279,48 @@ const MapView = memo(function MapView({
                 <span className="text-[10px] text-gray-600">… und {adressenHier.length - ANZEIGE_LIMIT} weitere</span>
               )}
             </div>
+            {/* Manuelle Material-Übersteuerung (2026-08-21, Alex: "im
+                Nachhinein kann ich aber keinen einzigen Verbund
+                bearbeiten") — wirkt auf den KOMPLETTEN Verband-Verlauf
+                (verbandSegmentIdxs), nicht nur das angeklickte Einzelsegment. */}
+            {onMaterialUebersteuern && (
+              <div className="flex flex-col gap-1 pt-1" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                {manuellUebersteuertProSegment[ausgewaehltesSegmentNormal] && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px]" style={{ color: '#c084fc' }}>✏️ manuell gesetzt</span>
+                    <button
+                      onClick={() => { onMaterialUebersteuern(verbandSegmentIdxs, null); setMaterialAuswahlOffen(false) }}
+                      className="text-[10px] underline"
+                      style={{ color: 'var(--text-secondary)' }}>
+                      ↺ Automatisch
+                    </button>
+                  </div>
+                )}
+                {materialAuswahlOffen ? (
+                  <div className="flex flex-col gap-0.5">
+                    {[...materialProfil.kundenanschlussStufen]
+                      .sort((a, b) => a.lrAnzahl - b.lrAnzahl)
+                      .map((m) => (
+                        <button
+                          key={m.bezeichnungFirma || m.lrArt}
+                          onClick={() => { onMaterialUebersteuern(verbandSegmentIdxs, m); setMaterialAuswahlOffen(false) }}
+                          className="flex items-center gap-1.5 px-1.5 py-1 rounded text-left transition-colors hover:brightness-125"
+                          style={{ backgroundColor: 'var(--surface-2)' }}>
+                          <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+                          <span className="text-[10px] text-gray-200">{m.bezeichnungFirma || lrArtLabel(m.lrArt)}</span>
+                        </button>
+                      ))}
+                    <button onClick={() => setMaterialAuswahlOffen(false)} className="text-[10px] text-left" style={{ color: 'var(--text-secondary)' }}>
+                      ✕ Abbrechen
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => setMaterialAuswahlOffen(true)} className="text-[10px] text-left underline" style={{ color: '#93c5fd' }}>
+                    ✏️ Material ändern
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )
       })()}
@@ -1323,7 +1379,7 @@ const MapView = memo(function MapView({
                 {[...verbaende.values()].map(({ material, anzahl, beispielSegmentIdx }) => (
                   <button
                     key={material.bezeichnungFirma || material.lrArt}
-                    onClick={() => setAusgewaehltesSegmentNormal(beispielSegmentIdx)}
+                    onClick={() => { setAusgewaehltesSegmentNormal(beispielSegmentIdx); setMaterialAuswahlOffen(false) }}
                     className="flex items-center gap-1.5 text-left transition-colors hover:brightness-125"
                   >
                     <span style={{ width: 12, height: 3, borderRadius: 2, background: material.farbe, display: 'inline-block', flexShrink: 0 }} />

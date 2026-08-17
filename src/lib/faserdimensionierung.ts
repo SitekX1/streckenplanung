@@ -1,4 +1,4 @@
-import { Address, BackboneVerbindung, Hausstich, LatLng, NvtStandort, SchachtStandort } from './types'
+import { Address, BackboneVerbindung, Hausstich, LatLng, MaterialUebersteuerung, NvtStandort, SchachtStandort } from './types'
 import { MaterialEintrag, MaterialProfil, waehleVerbandMitReserve } from './materialkatalog'
 import { baueGraph, naechsterKnoten, dijkstraVon } from './nvt'
 
@@ -435,7 +435,8 @@ export function ermittleMaterialProSegment(
   schachtStandorte: SchachtStandort[],
   hausanschluesse: Hausstich[],
   materialProfil: MaterialProfil,
-  backboneVerbindungen: BackboneVerbindung[]
+  backboneVerbindungen: BackboneVerbindung[],
+  materialUebersteuerungen: MaterialUebersteuerung[] = []
 ): Array<SegmentMaterial | null> {
   if (!startpunkt || trassePfade.length === 0 || (nvtStandorte.length === 0 && schachtStandorte.length === 0)) {
     return trassePfade.map(() => null)
@@ -444,16 +445,57 @@ export function ermittleMaterialProSegment(
   const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse, nvtStandorte, schachtStandorte)
   const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
   const ueberschriebenProSegment = ermittleUeberschriebenesMaterialProSegment(trassePfade, backboneVerbindungen)
+  const manuellProSegment = ermittleMaterialUebersteuerungProSegment(trassePfade, materialUebersteuerungen)
 
   return trassePfade.map((_, i): SegmentMaterial | null => {
     const bedarf = bedarfProSegment[i] ?? 0
-    const kunde = bedarf > 0 ? waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined) : null
+    const kundeAuto = bedarf > 0 ? waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined) : null
+    // Manuelle Übersteuerung (2026-08-21, Alex: "im Nachhinein kann ich
+    // aber keinen einzigen Verbund bearbeiten") gewinnt immer gegen die
+    // automatische Stufenwahl für dieses Segment.
+    const kunde = manuellProSegment[i] ?? kundeAuto
     const back = ueberschriebenProSegment[i] ?? (backbone[i] ? materialProfil.trasse : null)
     if (kunde && back) return { haupt: kunde, zusatz: back }
     if (kunde) return { haupt: kunde, zusatz: null }
     if (back) return { haupt: back, zusatz: null }
     return null
   })
+}
+
+// Liefert pro Trasse-Segment das manuell gewählte Material, falls für dessen
+// eigene Endpunkte eine Übersteuerung hinterlegt ist (siehe
+// MaterialUebersteuerung in types.ts) — sonst null (automatische Wahl greift
+// wie bisher). Anders als ermittleUeberschriebenesMaterialProSegment (für
+// BackboneVerbindung, die einen ganzen PFAD zwischen zwei Verteilern
+// überschreibt) reicht hier ein reiner Endpunkt-Abgleich ohne Pfadsuche —
+// eine Material-Übersteuerung bezieht sich immer auf GENAU EIN
+// Trasse-Segment. Ein längerer, mehrsegmentiger Verband bekommt beim
+// Übersteuern entsprechend mehrere Einträge, einen je Segment (siehe
+// handleMaterialUebersteuern in page.tsx).
+export function ermittleMaterialUebersteuerungProSegment(
+  trassePfade: LatLng[][],
+  uebersteuerungen: MaterialUebersteuerung[]
+): Array<MaterialEintrag | null> {
+  const ergebnis: Array<MaterialEintrag | null> = trassePfade.map(() => null)
+  if (uebersteuerungen.length === 0) return ergebnis
+
+  const r = (v: number) => Math.round(v * 100000) / 100000
+  const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+
+  const lookup = new Map<string, MaterialEintrag>()
+  for (const u of uebersteuerungen) {
+    const a = nk(u.von), b = nk(u.nach)
+    lookup.set(a < b ? `${a}|${b}` : `${b}|${a}`, u.material)
+  }
+
+  trassePfade.forEach((pfad, i) => {
+    if (pfad.length < 2) return
+    const a = nk(pfad[0]), b = nk(pfad[pfad.length - 1])
+    const treffer = lookup.get(a < b ? `${a}|${b}` : `${b}|${a}`)
+    if (treffer) ergebnis[i] = treffer
+  })
+
+  return ergebnis
 }
 
 // Liefert die Indizes aller Trasse-Segmente, die zur selben zusammen-

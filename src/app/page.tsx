@@ -5,7 +5,7 @@ import { useState, useCallback } from 'react'
 import Sidebar from '../components/Sidebar'
 import NVTModal from '../components/NVTModal'
 import BestaetigungsModal from '../components/BestaetigungsModal'
-import { Address, LatLng, Hausstich, OrtInfo, WegKind, NvtStandort, SchachtStandort, BackboneVerbindung } from '../lib/types'
+import { Address, LatLng, Hausstich, OrtInfo, WegKind, NvtStandort, SchachtStandort, BackboneVerbindung, MaterialUebersteuerung } from '../lib/types'
 import { MaterialEintrag } from '../lib/materialkatalog'
 import { parseExcelFile } from '../lib/excelParser'
 import { berechneGrenzen, fetchOsmNetz } from '../lib/overpassClient'
@@ -208,6 +208,7 @@ type HistorySnapshot = {
   aussiedlerhofUuids: string[]
   schachtStandorte: SchachtStandort[]
   backboneVerbindungen: BackboneVerbindung[]
+  materialUebersteuerungen: MaterialUebersteuerung[]
 }
 
 export default function Home() {
@@ -273,6 +274,12 @@ export default function Home() {
   const [backboneVerbindungen, setBackboneVerbindungen] = useState<BackboneVerbindung[]>([])
   const [backboneVerbindungLaeuft, setBackboneVerbindungLaeuft] = useState(false)
   const [backboneVerbindungFehler, setBackboneVerbindungFehler] = useState<string | null>(null)
+  // Manuelle Material-Übersteuerungen einzelner Segmente (siehe
+  // MaterialUebersteuerung in types.ts, 2026-08-21, Alex: "im Nachhinein
+  // kann ich aber keinen einzigen Verbund bearbeiten") — je Segment ein
+  // Eintrag, gewinnt in ermittleMaterialProSegment immer gegen die
+  // automatische Stufenwahl.
+  const [materialUebersteuerungen, setMaterialUebersteuerungen] = useState<MaterialUebersteuerung[]>([])
   // Eigenes Bestätigungs-/Info-Modal statt nativer confirm()/alert()-Dialoge —
   // ohne onAbbrechen wird nur ein "OK"-Button gezeigt (reine Info-Meldung).
   const [bestaetigungsModal, setBestaetigungsModal] = useState<{
@@ -288,10 +295,10 @@ export default function Home() {
         label, trassePfade, trasse, hausanschluesse, laengen,
         trasseAdressenUuids: [...trasseAdressenUuids], trassePfadeKinds,
         nvtStandorte, aussiedlerhofUuids: [...aussiedlerhofUuids], schachtStandorte,
-        backboneVerbindungen,
+        backboneVerbindungen, materialUebersteuerungen,
       },
     ])
-  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, backboneVerbindungen])
+  }, [trassePfade, trasse, hausanschluesse, laengen, trasseAdressenUuids, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, backboneVerbindungen, materialUebersteuerungen])
 
   const wendeSnapshotAn = useCallback((snap: HistorySnapshot) => {
     setTrassePfade(snap.trassePfade)
@@ -304,6 +311,7 @@ export default function Home() {
     setAussiedlerhofUuids(new Set(snap.aussiedlerhofUuids))
     setSchachtStandorte(snap.schachtStandorte)
     setBackboneVerbindungen(snap.backboneVerbindungen)
+    setMaterialUebersteuerungen(snap.materialUebersteuerungen)
   }, [])
 
   const handleUndo = useCallback(() => {
@@ -677,6 +685,7 @@ export default function Home() {
     setSchachtSetzenAktiv(false)
     setBackboneVerbindungen([])
     setBackboneVerbindungFehler(null)
+    setMaterialUebersteuerungen([])
     setProjektName('Neues Projekt')
     setBundesfoerderung(false)
   }, [])
@@ -891,6 +900,40 @@ export default function Home() {
 
   const handleBackboneVerbindungFehlerSchliessen = useCallback(() => setBackboneVerbindungFehler(null), [])
 
+  // Manuelle Material-Übersteuerung für einen kompletten Verband (alle
+  // Segment-Indizes aus ermittleVerbandSegmente, siehe MapView.tsx) —
+  // material=null setzt die betroffenen Segmente wieder auf automatische
+  // Wahl zurück (2026-08-21, Alex: "im Nachhinein kann ich aber keinen
+  // einzigen Verbund bearbeiten"). Ersetzt vorhandene Übersteuerungen für
+  // dieselben Segmente statt sie zu duplizieren.
+  const handleMaterialUebersteuern = useCallback((segmentIdxs: number[], material: MaterialEintrag | null) => {
+    const r = (v: number) => Math.round(v * 100000) / 100000
+    const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+    const betroffeneKeys = new Set(
+      segmentIdxs
+        .map((idx) => trassePfade[idx])
+        .filter((pfad): pfad is LatLng[] => !!pfad && pfad.length >= 2)
+        .map((pfad) => {
+          const a = nk(pfad[0]), b = nk(pfad[pfad.length - 1])
+          return a < b ? `${a}|${b}` : `${b}|${a}`
+        })
+    )
+    pushHistory(material ? 'Material übersteuert' : 'Material-Übersteuerung entfernt')
+    setMaterialUebersteuerungen((prev) => {
+      const bleibt = prev.filter((u) => {
+        const a = nk(u.von), b = nk(u.nach)
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`
+        return !betroffeneKeys.has(key)
+      })
+      if (!material) return bleibt
+      const neue = segmentIdxs
+        .map((idx) => trassePfade[idx])
+        .filter((pfad): pfad is LatLng[] => !!pfad && pfad.length >= 2)
+        .map((pfad) => ({ von: pfad[0], nach: pfad[pfad.length - 1], material }))
+      return [...bleibt, ...neue]
+    })
+  }, [trassePfade, pushHistory])
+
   // Ordnet jeden bereits einem NVT zugeordneten Hausanschluss neu dem
   // (Luftlinien-)nächsten der AKTUELLEN NVT-Standorte zu — gedacht als
   // Werkzeug nach dem manuellen Verschieben eines oder mehrerer NVT, damit
@@ -1015,9 +1058,10 @@ export default function Home() {
       nvtStandorte: nvtStandorte.length > 0 ? nvtStandorte : undefined,
       schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
       backboneVerbindungen: backboneVerbindungen.length > 0 ? backboneVerbindungen : undefined,
+      materialUebersteuerungen: materialUebersteuerungen.length > 0 ? materialUebersteuerungen : undefined,
       bundesfoerderung,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, schachtStandorte, backboneVerbindungen, bundesfoerderung])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, schachtStandorte, backboneVerbindungen, materialUebersteuerungen, bundesfoerderung])
 
   const handleProjektSpeichern = useCallback(() => {
     exportProjekt({
@@ -1035,10 +1079,11 @@ export default function Home() {
       aussiedlerhofUuids: aussiedlerhofUuids.size > 0 ? [...aussiedlerhofUuids] : undefined,
       schachtStandorte: schachtStandorte.length > 0 ? schachtStandorte : undefined,
       backboneVerbindungen: backboneVerbindungen.length > 0 ? backboneVerbindungen : undefined,
+      materialUebersteuerungen: materialUebersteuerungen.length > 0 ? materialUebersteuerungen : undefined,
       aktiveOrteKeys,
       bundesfoerderung,
     })
-  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, backboneVerbindungen, aktiveOrteKeys, bundesfoerderung])
+  }, [projektName, adressen, startpunkt, trasse, trassePfade, hausanschluesse, laengen, trassePfadeKinds, nvtStandorte, aussiedlerhofUuids, schachtStandorte, backboneVerbindungen, materialUebersteuerungen, aktiveOrteKeys, bundesfoerderung])
 
   const handleProjektLaden = useCallback(async (file: File) => {
     const projekt = await importProjekt(file)
@@ -1079,6 +1124,7 @@ export default function Home() {
     setSchachtSetzenAktiv(false)
     setBackboneVerbindungen(projekt.backboneVerbindungen ?? [])
     setBackboneVerbindungFehler(null)
+    setMaterialUebersteuerungen(projekt.materialUebersteuerungen ?? [])
   }, [])
 
   const gefilterteAdressenAnzahl =
@@ -1117,6 +1163,7 @@ export default function Home() {
         schachtStandorte={schachtStandorte}
         hausanschluesse={hausanschluesse}
         backboneVerbindungen={backboneVerbindungen}
+        materialUebersteuerungen={materialUebersteuerungen}
         adressenCount={adressen.length}
         gefilterteAdressenAnzahl={gefilterteAdressenAnzahl}
         neueAdressenOhneHsAnzahl={neueAdressenOhneHsAnzahl}
@@ -1194,6 +1241,7 @@ export default function Home() {
           schachtStandorte={schachtStandorte}
           schachtSetzenAktiv={schachtSetzenAktiv}
           backboneVerbindungen={backboneVerbindungen}
+          materialUebersteuerungen={materialUebersteuerungen}
           backboneVerbindungLaeuft={backboneVerbindungLaeuft}
           backboneVerbindungFehler={backboneVerbindungFehler}
           onStartpunktGesetzt={handleStartpunktGesetzt}
@@ -1214,6 +1262,7 @@ export default function Home() {
           onSchachtVerschoben={handleSchachtVerschoben}
           onBackboneVerbindungErstellen={handleBackboneVerbindungErstellen}
           onBackboneVerbindungFehlerSchliessen={handleBackboneVerbindungFehlerSchliessen}
+          onMaterialUebersteuern={handleMaterialUebersteuern}
         />
         {nvtModalOffen && (
           <NVTModal

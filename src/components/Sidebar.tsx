@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { BackboneVerbindung, Hausstich, LatLng, NvtStandort, OrtInfo, SchachtStandort } from '../lib/types'
+import { BackboneVerbindung, Hausstich, LatLng, MaterialUebersteuerung, NvtStandort, OrtInfo, SchachtStandort } from '../lib/types'
 import KalkulationModal from './KalkulationModal'
 import EinstellungenModal from './EinstellungenModal'
 
@@ -18,6 +18,7 @@ interface SidebarProps {
   schachtStandorte: SchachtStandort[]
   hausanschluesse: Hausstich[]
   backboneVerbindungen: BackboneVerbindung[]
+  materialUebersteuerungen: MaterialUebersteuerung[]
   adressenCount: number
   gefilterteAdressenAnzahl: number
   neueAdressenOhneHsAnzahl: number
@@ -225,6 +226,7 @@ export default function Sidebar({
   schachtStandorte,
   hausanschluesse,
   backboneVerbindungen,
+  materialUebersteuerungen,
   adressenCount,
   gefilterteAdressenAnzahl,
   neueAdressenOhneHsAnzahl,
@@ -849,6 +851,7 @@ export default function Sidebar({
           schachtStandorte={schachtStandorte}
           hausanschluesse={hausanschluesse}
           backboneVerbindungen={backboneVerbindungen}
+          materialUebersteuerungen={materialUebersteuerungen}
           onClose={() => setKalkulationOffen(false)}
         />
       )}
