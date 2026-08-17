@@ -77,7 +77,14 @@ export interface MaterialProfil {
 // unterschiedliche Stückzahl), 4x20/2x20 im Backbone/Verteilbereich
 // (20/15-Rohrverband). lr_reserv hier bewusst 0, da euer Standardmaterial
 // nicht nach der 15%-Förderregel bemessen ist, sondern nach eigener Praxis.
+// 2x7 (2026-08-20, Alex) als kleinste Stufe ergänzt — für z.B. genau 2
+// Hausanschlüsse an einer kurzen Stichstraße/Sackgasse: "man braucht für
+// zwei Häuser nicht mit einem 7x7 in eine Stichstraße rein". Die generische
+// Stufenwahl in waehleVerbandMitReserve() greift automatisch, keine
+// Sonderlogik nötig — sie wählt ja ohnehin schon die kleinste ausreichende
+// Stufe.
 const KUNDENANSCHLUSS_STUFEN_DEFAULT: MaterialEintrag[] = [
+  { lrArt: 15, lrAnzahl: 2, anzahl: 1, reserve: 0, bezeichnungFirma: '2x7', preisProMeter: 0, farbe: '#c084fc' },
   { lrArt: 15, lrAnzahl: 7, anzahl: 1, reserve: 0, bezeichnungFirma: '7x7', preisProMeter: 0, farbe: '#22d3ee' },
   { lrArt: 15, lrAnzahl: 12, anzahl: 1, reserve: 0, bezeichnungFirma: '12x7', preisProMeter: 0, farbe: '#eab308' },
   { lrArt: 15, lrAnzahl: 24, anzahl: 1, reserve: 0, bezeichnungFirma: '24x7', preisProMeter: 0, farbe: '#84cc16' },
@@ -133,13 +140,26 @@ const KATALOG_DEFAULT: GespeicherterKatalog = {
 // Geräteweit persistent, gleiches Muster wie Kalkulations-Preise/Firmendaten
 // (ändert sich kaum von Projekt zu Projekt, im Gegensatz zu den eigentlichen
 // Streckendaten).
+// Neue, seit dem letzten Speichern hinzugekommene Standard-Stufen (z.B. das
+// nachträglich eingeführte 2x7) automatisch in einen bereits gespeicherten
+// Katalog einmischen, statt dass sie dort unsichtbar bleiben — Geräte, die
+// den Katalog schon einmal gespeichert haben, sähen die neue Stufe sonst nie
+// (die alte Logik nahm bei vorhandenem Array NUR das gespeicherte, komplett
+// ohne neue Defaults). Abgleich über lrAnzahl, damit eine vom Nutzer bereits
+// umbenannte/umpreiste Stufe nicht dupliziert wird.
+function stufen(gespeichert: unknown, fallback: MaterialEintrag[]): MaterialEintrag[] {
+  const basis = Array.isArray(gespeichert) && gespeichert.length > 0 ? (gespeichert as MaterialEintrag[]) : fallback
+  const vorhandeneGroessen = new Set(basis.map((s) => s.lrAnzahl))
+  const fehlende = fallback.filter((s) => !vorhandeneGroessen.has(s.lrAnzahl))
+  if (fehlende.length === 0) return basis
+  return [...basis, ...fehlende].sort((a, b) => a.lrAnzahl - b.lrAnzahl)
+}
+
 export function ladeMaterialkatalog(): GespeicherterKatalog {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return KATALOG_DEFAULT
     const parsed = JSON.parse(raw)
-    const stufen = (gespeichert: unknown, fallback: MaterialEintrag[]) =>
-      Array.isArray(gespeichert) && gespeichert.length > 0 ? gespeichert : fallback
     return {
       firma: {
         trasse: { ...FIRMA_DEFAULT.trasse, ...parsed.firma?.trasse },
