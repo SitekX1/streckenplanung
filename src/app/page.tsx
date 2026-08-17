@@ -38,13 +38,16 @@ function extractOrte(adressen: Address[]): OrtInfo[] {
 // Promise auflöst. Sieht nach Fortschritt aus, ohne einen falschen exakten
 // Prozentsatz zu behaupten.
 //
-// Zwei Tempi statt einem: schnelle Rampe für die ersten ~60% der Spanne
-// (400ms/%), danach deutlich langsamer weiterkriechen (1800ms/%) bis bisMax.
-// Im Normalfall (Overpass antwortet nach wenigen Sekunden) ist der Balken
-// dadurch die ganze Zeit sichtbar noch in Bewegung, statt schon nach ~4s an
-// der Obergrenze hart stehen zu bleiben. Bei ungewöhnlich langen Wartezeiten
-// (z.B. blockierendes Firmennetzwerk) wird zusätzlich nach 8s ein Hinweis
-// eingeblendet, damit klar ist, dass die App noch arbeitet und nicht hängt.
+// Drei Tempi statt einem: schnelle Rampe für die ersten ~60% der Spanne
+// (400ms/%), danach langsamer bis bisMax (1800ms/%). WICHTIG (2026-08-20,
+// Alex-Korrektur): bisMax ist NICHT mehr die harte Obergrenze — bleibt
+// Overpass länger aus, kriecht der Balken darüber hinaus unbegrenzt weiter
+// (immer langsamer werdendes Intervall) bis zu einer hohen, in der Praxis
+// nie erreichten Obergrenze. Vorher blieb die Anzeige exakt bei bisMax
+// hart stehen, was nach einem Hänger aussah, obwohl die App noch arbeitete
+// — und sprang beim tatsächlichen Fertigwerden sichtbar in einem Satz nach
+// oben. Bei ungewöhnlich langen Wartezeiten wird zusätzlich nach 8s ein
+// Hinweis eingeblendet.
 function mitTrickleFortschritt<T>(
   promise: Promise<T>,
   von: number,
@@ -54,13 +57,15 @@ function mitTrickleFortschritt<T>(
 ): Promise<T> {
   const start = Date.now()
   const schnellBis = von + Math.round((bisMax - von) * 0.6)
+  const KRIECH_OBERGRENZE = 90
   const LANGSAM_SCHWELLE_MS = 8000
   let aktuell = von
   let langsamHinweisGezeigt = false
+  let kriechIntervallMs = 1800
   let timeoutId: ReturnType<typeof setTimeout>
 
   function tick() {
-    if (aktuell < bisMax) {
+    if (aktuell < KRIECH_OBERGRENZE) {
       aktuell += 1
       setProgress(aktuell)
     }
@@ -68,8 +73,15 @@ function mitTrickleFortschritt<T>(
       langsamHinweisGezeigt = true
       setLangsamHinweis?.(true)
     }
-    if (aktuell < bisMax) {
-      timeoutId = setTimeout(tick, aktuell < schnellBis ? 400 : 1800)
+    if (aktuell < KRIECH_OBERGRENZE) {
+      let intervall: number
+      if (aktuell < schnellBis) intervall = 400
+      else if (aktuell < bisMax) intervall = 1800
+      else {
+        kriechIntervallMs = Math.min(kriechIntervallMs * 1.25, 6000)
+        intervall = kriechIntervallMs
+      }
+      timeoutId = setTimeout(tick, intervall)
     }
   }
   timeoutId = setTimeout(tick, 400)
@@ -78,6 +90,15 @@ function mitTrickleFortschritt<T>(
     clearTimeout(timeoutId)
     setLangsamHinweis?.(false)
   })
+}
+
+// Setzt den Fortschritt nur vorwärts — schützt den Übergang von
+// mitTrickleFortschritt() (die jetzt beliebig weit über bisMax kriechen
+// kann, s.o.) zum nächsten fest verdrahteten Fortschrittswert der Pipeline:
+// ohne das könnte die Anzeige sichtbar zurückspringen, wenn Overpass
+// ungewöhnlich lange gebraucht hat.
+function setzeFortschrittVorwaerts(setProgress: (updater: (prev: number) => number) => void, ziel: number) {
+  setProgress((prev) => Math.max(prev, ziel))
 }
 
 // Reduziert eine Punktliste auf max. maxCount Punkte (gleichmäßig verteilt,
@@ -369,7 +390,7 @@ export default function Home() {
       setTrasseProgress(5)
       const bounds = berechneGrenzen(gefilterteAdressen, startpunkt)
       const osmNetz = await mitTrickleFortschritt(fetchOsmNetz(bounds), 5, 16, setTrasseProgress, setTrasseLangsam)
-      setTrasseProgress(18)
+      setzeFortschrittVorwaerts(setTrasseProgress, 18)
 
       const graph = buildRoadGraph(osmNetz, gefilterteAdressen.map((a) => ({ lat: a.lat, lng: a.lon })))
       if (graph.coordinates.size === 0) throw new Error('Leerer Graph')
@@ -462,7 +483,7 @@ export default function Home() {
       // ggf. die Straßendaten zwischen altem und neuem Dorf.
       const bounds = berechneGrenzen(gefilterteNeue, startpunkt, 0.008, vorhandenePfade.flat())
       const osmNetz = await mitTrickleFortschritt(fetchOsmNetz(bounds), 5, 16, setTrasseProgress, setTrasseLangsam)
-      setTrasseProgress(18)
+      setzeFortschrittVorwaerts(setTrasseProgress, 18)
 
       const graph = buildRoadGraph(osmNetz, gefilterteNeue.map((a) => ({ lat: a.lat, lng: a.lon })))
       if (graph.coordinates.size === 0) throw new Error('Leerer Graph')

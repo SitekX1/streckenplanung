@@ -639,7 +639,7 @@ export default function Sidebar({
                   <p className="text-xs text-right" style={{ color: 'var(--text-tertiary)' }}>{trasseProgress}%</p>
                   {trasseLangsam && (
                     <p className="text-xs text-right" style={{ color: 'var(--accent-amber-bright)' }}>
-                      Straßendaten werden geladen – bei langsamer Verbindung kann das länger dauern …
+                      Straßendaten werden geladen – der Kartendienst antwortet gerade langsamer als sonst …
                     </p>
                   )}
                 </div>
