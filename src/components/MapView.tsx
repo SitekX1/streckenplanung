@@ -9,7 +9,7 @@ import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
 import { Address, BackboneVerbindung, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
-import { ermittleHausanschluesseProSegment, ermittleMaterialProSegment } from '../lib/faserdimensionierung'
+import { ermittleHausanschluesseProSegment, ermittleMaterialProSegment, ermittleVerbandSegmente } from '../lib/faserdimensionierung'
 import { aktivesMaterialProfil, lrArtLabel, MaterialEintrag } from '../lib/materialkatalog'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -271,9 +271,12 @@ function TrasseNetzwerk({ pfade, farbe, opacity = 0.9, weight = 4 }: { pfade: La
 // Canvas-Rendering dort unangetastet bleibt. Das ausgewählte Segment bekommt
 // zusätzlich eine echte gelbe Overlay-Polyline (nur eine gleichzeitig, daher
 // keine Performance-Sorge trotz react-leaflet statt Canvas).
-function TrasseKlickbar({ pfade, ausgewaehlterIdx, onKlick }: {
+function TrasseKlickbar({ pfade, ausgewaehlteIdxs, onKlick }: {
   pfade: LatLng[][]
-  ausgewaehlterIdx: number | null
+  // Mehrere Indizes = kompletter Verband-Verlauf wird hervorgehoben, nicht
+  // nur das einzeln angeklickte Segment (2026-08-21, Alex: "möchte den
+  // Verlauf des Verbands sehen").
+  ausgewaehlteIdxs: number[]
   onKlick: (idx: number) => void
 }) {
   const map = useMap()
@@ -292,13 +295,21 @@ function TrasseKlickbar({ pfade, ausgewaehlterIdx, onKlick }: {
     return () => { map.removeLayer(gruppe) }
   }, [pfade, onKlick, map])
 
-  const ausgewaehltesPfad = ausgewaehlterIdx !== null ? pfade[ausgewaehlterIdx] : null
-  if (!ausgewaehltesPfad || ausgewaehltesPfad.length < 2) return null
+  const ausgewaehltePfade = ausgewaehlteIdxs
+    .map((idx) => pfade[idx])
+    .filter((pfad): pfad is LatLng[] => !!pfad && pfad.length >= 2)
+    .map((pfad) => pfad.map((p) => [p.lat, p.lng] as [number, number]))
+  if (ausgewaehltePfade.length === 0) return null
   return (
     <Polyline
-      positions={ausgewaehltesPfad.map((p) => [p.lat, p.lng] as [number, number])}
+      positions={ausgewaehltePfade}
       interactive={false}
-      pathOptions={{ color: GELB, weight: 6, opacity: 1 }} />
+      // Weiß statt Gelb (2026-08-21) — Gelb kollidierte optisch mit der
+      // 12x7-Materialfarbe (#eab308, fast identischer Ton), sobald ein
+      // Verband über mehrere Segmente hinweg markiert wird und dabei neben
+      // 12x7-Strecken verläuft. Passt zusätzlich zur bereits weißen
+      // Hausanschluss-Hervorhebung (SEGMENT_HERVORHEBUNG_FARBE).
+      pathOptions={{ color: SEGMENT_HERVORHEBUNG_FARBE, weight: 6, opacity: 1 }} />
   )
 }
 
@@ -406,25 +417,11 @@ const MapView = memo(function MapView({
   const hausanschluesseProSegment = useMemo(
     () =>
       startpunkt && trassePfade.length > 0
-        ? ermittleHausanschluesseProSegment(trassePfade, startpunkt, hausanschluesse)
+        ? ermittleHausanschluesseProSegment(trassePfade, startpunkt, hausanschluesse, nvtStandorte, schachtStandorte)
         : trassePfade.map(() => [] as string[]),
-    [trassePfade, startpunkt, hausanschluesse]
+    [trassePfade, startpunkt, hausanschluesse, nvtStandorte, schachtStandorte]
   )
 
-  const hausIdZuFarbe = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const nvtIdx of ausgewaehlteNvtIdxs) {
-      const farbe = NVT_MARKIER_FARBEN[nvtIdx % NVT_MARKIER_FARBEN.length]
-      for (const hausId of nvtStandorte[nvtIdx]?.hausanschlussIds ?? []) map.set(hausId, farbe)
-    }
-    if (ausgewaehltesSchachtIdx !== null) {
-      for (const hausId of schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? []) map.set(hausId, SCHACHT_MARKIER_FARBE)
-    }
-    if (ausgewaehltesSegmentNormal !== null) {
-      for (const hausId of hausanschluesseProSegment[ausgewaehltesSegmentNormal] ?? []) map.set(hausId, SEGMENT_HERVORHEBUNG_FARBE)
-    }
-    return map
-  }, [ausgewaehlteNvtIdxs, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte, ausgewaehltesSegmentNormal, hausanschluesseProSegment])
   // "Hausanschlüsse zuweisen" braucht genau EIN Ziel-NVT — der Zuweisen-Modus
   // setzt die Auswahl beim Aktivieren bewusst auf ein Einzelelement (siehe
   // Kontextmenü-Aktion der NVT-Marker), daher reicht hier size === 1.
@@ -468,6 +465,40 @@ const MapView = memo(function MapView({
     () => ermittleMaterialProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen),
     [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen]
   )
+  // Kompletter Verlauf des Verbands, zu dem das angeklickte Segment gehört
+  // (2026-08-21, Alex: "möchte den Verlauf des Verbands sehen, auch bei einer
+  // Gabelung") — nicht nur das eine angeklickte Segment, sondern die ganze
+  // zusammenhängende Kette gleichen Materials bis zur Gabelung/zum NVT.
+  const verbandSegmentIdxs = useMemo(
+    () =>
+      ausgewaehltesSegmentNormal !== null
+        ? ermittleVerbandSegmente(trassePfade, materialProSegment, hausanschluesseProSegment, ausgewaehltesSegmentNormal)
+        : [],
+    [trassePfade, materialProSegment, hausanschluesseProSegment, ausgewaehltesSegmentNormal]
+  )
+  // Hausanschlüsse, die irgendwo auf dem kompletten Verband-Verlauf hängen —
+  // Vereinigung über alle Segmente der Instanz (durch die Verteiler-
+  // stoppende Akkumulation trägt ohnehin meist schon das NVT-nächste Segment
+  // die volle Menge, die Vereinigung ist hier nur ein Sicherheitsnetz).
+  const verbandHausIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const idx of verbandSegmentIdxs) for (const id of hausanschluesseProSegment[idx] ?? []) ids.add(id)
+    return ids
+  }, [verbandSegmentIdxs, hausanschluesseProSegment])
+  const hausIdZuFarbe = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const nvtIdx of ausgewaehlteNvtIdxs) {
+      const farbe = NVT_MARKIER_FARBEN[nvtIdx % NVT_MARKIER_FARBEN.length]
+      for (const hausId of nvtStandorte[nvtIdx]?.hausanschlussIds ?? []) map.set(hausId, farbe)
+    }
+    if (ausgewaehltesSchachtIdx !== null) {
+      for (const hausId of schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? []) map.set(hausId, SCHACHT_MARKIER_FARBE)
+    }
+    if (ausgewaehltesSegmentNormal !== null) {
+      for (const hausId of verbandHausIds) map.set(hausId, SEGMENT_HERVORHEBUNG_FARBE)
+    }
+    return map
+  }, [ausgewaehlteNvtIdxs, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte, ausgewaehltesSegmentNormal, verbandHausIds])
   const farbeProSegment = useMemo(
     () => materialProSegment.map((m) => m?.haupt.farbe ?? trasseFarbe),
     [materialProSegment, trasseFarbe]
@@ -1188,7 +1219,7 @@ const MapView = memo(function MapView({
           der Karte hervorgehoben (siehe hausIdZuFarbe). */}
       {trasseSichtbar && !editierbarAktiv && ausgewaehltesSegmentNormal !== null && (() => {
         const material = materialProSegment[ausgewaehltesSegmentNormal]
-        const hausIds = hausanschluesseProSegment[ausgewaehltesSegmentNormal] ?? []
+        const hausIds = [...verbandHausIds]
         const adressenHier = hausIds
           .map((id) => hausanschluesse.find((h) => h.id === id))
           .filter((h): h is Hausstich => !!h)
@@ -1210,7 +1241,9 @@ const MapView = memo(function MapView({
           <div className="absolute bottom-3 left-64 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
             style={{ backgroundColor: 'var(--surface-1)', border: `1px solid ${GELB}` }}>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Segment {ausgewaehltesSegmentNormal + 1}</span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">
+                {verbandSegmentIdxs.length > 1 ? `Verband über ${verbandSegmentIdxs.length} Segmente` : `Segment ${ausgewaehltesSegmentNormal + 1}`}
+              </span>
               <button onClick={() => setAusgewaehltesSegmentNormal(null)} className="text-xs" style={{ color: 'var(--text-secondary)' }}>✕</button>
             </div>
             {material ? (
@@ -1252,7 +1285,12 @@ const MapView = memo(function MapView({
           .filter((h): h is Hausstich => !!h)
           .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
           .filter((a): a is Address => !!a)
-        const verbaende = new Map<string, { material: MaterialEintrag; anzahl: number }>()
+        // beispielSegmentIdx: EIN Segment dieses Materials an diesem NVT —
+        // reicht als Startpunkt für ermittleVerbandSegmente() (2026-08-21,
+        // Alex: "möchte den Verband markieren komplett, dass ich den
+        // Verlauf seh"), das von dort aus selbst den kompletten
+        // zusammenhängenden Verlauf ermittelt.
+        const verbaende = new Map<string, { material: MaterialEintrag; anzahl: number; beispielSegmentIdx: number }>()
         trassePfade.forEach((_, i) => {
           const ids = hausanschluesseProSegment[i] ?? []
           if (ids.length === 0 || !ids.every((id) => nvt.hausanschlussIds.includes(id))) return
@@ -1261,12 +1299,17 @@ const MapView = memo(function MapView({
           const key = m.bezeichnungFirma || lrArtLabel(m.lrArt)
           const eintrag = verbaende.get(key)
           if (eintrag) eintrag.anzahl++
-          else verbaende.set(key, { material: m, anzahl: 1 })
+          else verbaende.set(key, { material: m, anzahl: 1, beispielSegmentIdx: i })
         })
         const ANZEIGE_LIMIT = 6
         return (
           <div className="absolute bottom-3 right-3 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
-            style={{ backgroundColor: 'var(--surface-1)', border: `1px solid ${istUeberlastet ? '#f87171' : '#3b82f6'}` }}>
+            style={{ backgroundColor: 'var(--surface-1)', border: `1px solid ${istUeberlastet ? '#f87171' : '#3b82f6'}` }}
+            // Hover bleibt beim Wechsel von Marker zu Panel bestehen, sonst
+            // schließt sich das Panel per mouseout am Marker, bevor man
+            // einen Verband-Eintrag überhaupt anklicken kann.
+            onMouseEnter={() => setHoverNvtIdx(hoverNvtIdx)}
+            onMouseLeave={() => setHoverNvtIdx(null)}>
             <span className="text-[10px] text-gray-500 uppercase tracking-wider">NVT {hoverNvtIdx + 1}</span>
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-300">Belegung</span>
@@ -1276,12 +1319,16 @@ const MapView = memo(function MapView({
             </div>
             {verbaende.size > 0 && (
               <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] text-gray-500">Verbände auf Zuführung:</span>
-                {[...verbaende.values()].map(({ material, anzahl }) => (
-                  <div key={material.bezeichnungFirma || material.lrArt} className="flex items-center gap-1.5">
+                <span className="text-[10px] text-gray-500">Verbände auf Zuführung (anklicken für Verlauf):</span>
+                {[...verbaende.values()].map(({ material, anzahl, beispielSegmentIdx }) => (
+                  <button
+                    key={material.bezeichnungFirma || material.lrArt}
+                    onClick={() => setAusgewaehltesSegmentNormal(beispielSegmentIdx)}
+                    className="flex items-center gap-1.5 text-left transition-colors hover:brightness-125"
+                  >
                     <span style={{ width: 12, height: 3, borderRadius: 2, background: material.farbe, display: 'inline-block', flexShrink: 0 }} />
                     <span className="text-[10px] text-gray-300">{anzahl}× {material.bezeichnungFirma || lrArtLabel(material.lrArt)}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -1377,7 +1424,7 @@ const MapView = memo(function MapView({
                   </Fragment>
                 ))}
                 <TrasseNetzwerk pfade={trassePfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.9} />
-                <TrasseKlickbar pfade={trassePfade} ausgewaehlterIdx={ausgewaehltesSegmentNormal}
+                <TrasseKlickbar pfade={trassePfade} ausgewaehlteIdxs={verbandSegmentIdxs}
                   onKlick={handleSegmentNormalKlick} />
               </>
             )

@@ -209,10 +209,20 @@ export function berechneNvtKapazitaetsbedarfProSegment(
 // möchte sehen, auf welchem Segment welche Kunden hängen"). Analog zu
 // berechneLastProSegment(), aber mit ID-Mengen statt Zahlen, damit man nicht
 // nur die Anzahl, sondern die konkreten Adressen anzeigen/hervorheben kann.
+//
+// WICHTIG (2026-08-21, dieselbe Korrektur wie bei berechneHausanschlussAnzahlProSegment):
+// stoppt am jeweils ERSTEN Verteiler (NVT/Schacht) Richtung Start — sonst
+// tauchte ein Hausanschluss auch auf der reinen Backbone-Zuführung hinter
+// seinem eigenen NVT wieder in der Liste auf, obwohl dort physisch gar kein
+// Kundenanschluss-Kabel mehr liegt (nur noch Backbone). Wird u.a. für die
+// Verband-Hervorhebung gebraucht (ermittleVerbandSegmente) — die Hausliste
+// muss exakt zum tatsächlich dort verlegten Material passen.
 export function ermittleHausanschluesseProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
-  hausanschluesse: Hausstich[]
+  hausanschluesse: Hausstich[],
+  nvtStandorte: NvtStandort[] = [],
+  schachtStandorte: SchachtStandort[] = []
 ): string[][] {
   const leer = trassePfade.map(() => [] as string[])
   if (trassePfade.length === 0) return leer
@@ -222,6 +232,16 @@ export function ermittleHausanschluesseProSegment(
   if (!startKnoten) return leer
 
   const { dist: distVomStart, prev } = dijkstraVon(graph, startKnoten)
+
+  const verteilerKnoten = new Set<string>()
+  for (const nvt of nvtStandorte) {
+    const k = naechsterKnoten(graph, nvt.position)
+    if (k) verteilerKnoten.add(k)
+  }
+  for (const schacht of schachtStandorte) {
+    const k = naechsterKnoten(graph, schacht.position)
+    if (k) verteilerKnoten.add(k)
+  }
 
   const kantenHausIds = new Map<string, Set<string>>()
   for (const h of hausanschluesse) {
@@ -233,6 +253,7 @@ export function ermittleHausanschluesseProSegment(
       const key = cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`
       if (!kantenHausIds.has(key)) kantenHausIds.set(key, new Set())
       kantenHausIds.get(key)!.add(h.id)
+      if (verteilerKnoten.has(vor)) break
       cur = vor
     }
   }
@@ -433,4 +454,67 @@ export function ermittleMaterialProSegment(
     if (back) return { haupt: back, zusatz: null }
     return null
   })
+}
+
+// Liefert die Indizes aller Trasse-Segmente, die zur selben zusammen-
+// hängenden Kundenanschluss-Sammelverband-Instanz gehören wie das übergebene
+// Start-Segment — Grundlage für die Karten-Hervorhebung "kompletter Verlauf
+// dieses Verbands" (2026-08-21, Alex: "möchte den Verlauf des Verbands
+// sehen, auch bei einer Gabelung, wo sich z.B. ein 24x7 in zwei 12x7
+// aufteilt"). Zwei benachbarte Segmente (teilen sich einen Endpunkt) gehören
+// zur selben Instanz, solange beide DASSELBE Material tragen UND tatsächlich
+// eigene Hausanschlüsse darauf hängen — ein reines Backbone-Segment ohne
+// Kundenanschluss-Bedarf (z.B. hinter dem letzten Verteiler Richtung Start)
+// zählt nicht dazu und bildet automatisch die Grenze, ebenso wie die Stelle,
+// an der sich ein Verband durch eine Gabelung in eine kleinere Stufe
+// aufteilt. `hausanschluesseProSegment` muss aus derselben (verteiler-
+// stoppenden) Berechnung wie `materialProSegment` stammen, sonst passt die
+// "hat Hausanschlüsse"-Grenzbedingung nicht zur tatsächlichen Material-Logik.
+export function ermittleVerbandSegmente(
+  trassePfade: LatLng[][],
+  materialProSegment: Array<SegmentMaterial | null>,
+  hausanschluesseProSegment: string[][],
+  startSegmentIdx: number
+): number[] {
+  const zielMaterial = materialProSegment[startSegmentIdx]?.haupt
+  if (!zielMaterial || (hausanschluesseProSegment[startSegmentIdx]?.length ?? 0) === 0) {
+    return [startSegmentIdx]
+  }
+  const zielKey = zielMaterial.bezeichnungFirma || `${zielMaterial.lrArt}-${zielMaterial.lrAnzahl}`
+
+  const r = (v: number) => Math.round(v * 100000) / 100000
+  const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+  const endpunkte = trassePfade.map((pfad) => (pfad.length >= 2 ? [nk(pfad[0]), nk(pfad[pfad.length - 1])] : null))
+
+  const anKnoten = new Map<string, number[]>()
+  endpunkte.forEach((eps, i) => {
+    if (!eps) return
+    for (const k of eps) {
+      if (!anKnoten.has(k)) anKnoten.set(k, [])
+      anKnoten.get(k)!.push(i)
+    }
+  })
+
+  function gehoertZurInstanz(i: number): boolean {
+    if ((hausanschluesseProSegment[i]?.length ?? 0) === 0) return false
+    const m = materialProSegment[i]?.haupt
+    if (!m) return false
+    return (m.bezeichnungFirma || `${m.lrArt}-${m.lrAnzahl}`) === zielKey
+  }
+
+  const besucht = new Set<number>([startSegmentIdx])
+  const stapel = [startSegmentIdx]
+  while (stapel.length > 0) {
+    const cur = stapel.pop()!
+    const eps = endpunkte[cur]
+    if (!eps) continue
+    for (const k of eps) {
+      for (const nachbar of anKnoten.get(k) ?? []) {
+        if (besucht.has(nachbar) || !gehoertZurInstanz(nachbar)) continue
+        besucht.add(nachbar)
+        stapel.push(nachbar)
+      }
+    }
+  }
+  return [...besucht]
 }
