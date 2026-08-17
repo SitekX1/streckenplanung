@@ -61,7 +61,10 @@ export function passendesKabel(benoetigteFasern: number): { fasern: number; code
 function berechneLastProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
-  quellen: { position: LatLng; gewicht: number }[]
+  quellen: { position: LatLng; gewicht: number }[],
+  // Wird die Last NUR bis zum ersten Verteiler (NVT/Schacht) Richtung Start
+  // gezählt statt bis ganz zum Startpunkt? Siehe berechneHausanschlussAnzahlProSegment.
+  stopAnKnoten?: Set<string>
 ): number[] {
   const leer = trassePfade.map(() => 0)
   if (trassePfade.length === 0) return leer
@@ -80,6 +83,10 @@ function berechneLastProSegment(
       const vor = prev.get(cur)!
       const key = cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`
       kantenLast.set(key, (kantenLast.get(key) ?? 0) + last)
+      // Die letzte Teilstrecke BIS ZUM Verteiler zählt noch (Kundenanschluss-
+      // Kabel läuft ja tatsächlich bis in dessen Box), dahinter (Richtung
+      // Start) nicht mehr — dort übernimmt der Backbone.
+      if (stopAnKnoten?.has(vor)) break
       cur = vor
     }
   }
@@ -145,13 +152,36 @@ export function berechneFaserbedarfProSegment(
 // trägt ein Segment die Summe aller Hausanschlüsse dahinter (z.B. 13 = 5+8),
 // auf dem Stich hinter der Gabelung nur noch die des jeweiligen Astes (5
 // oder 8) — ergibt automatisch kleinere Verbände Richtung Stichende.
+//
+// WICHTIG (2026-08-17, Alex-Korrektur: "zwischen Dorf und Dorf brauch ich
+// keinen 24x7 mitverlegen, weil jedes Dorf seinen eigenen NVT hat"): die
+// Zählung läuft NICHT bis zum Startpunkt durch, sondern stoppt am jeweils
+// ERSTEN Verteiler (NVT/Schacht), den ein Hausanschluss auf seinem Weg
+// Richtung Start passiert — dort wird das Kundenanschluss-Kabel ja
+// tatsächlich physisch aufgesplittet/terminiert. Ohne diesen Stopp wurde
+// z.B. die gesamte Hausanschluss-Anzahl von Dorf B fälschlich auch auf der
+// reinen Backbone-Zuführung zwischen Dorf A und Dorf B mitgezählt, was dort
+// zusätzlich zum Backbone einen (unnötigen) Kundenanschluss-Sammelverband
+// ausgelöst hat (Doppelbelegung, siehe ermittleMaterialProSegment).
 export function berechneHausanschlussAnzahlProSegment(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
-  hausanschluesse: Hausstich[]
+  hausanschluesse: Hausstich[],
+  nvtStandorte: NvtStandort[],
+  schachtStandorte: SchachtStandort[]
 ): number[] {
   const quellen = hausanschluesse.map((h) => ({ position: h.trassenPunkt, gewicht: 1 }))
-  return berechneLastProSegment(trassePfade, startpunkt, quellen)
+  const graph = baueGraph(trassePfade)
+  const verteilerKnoten = new Set<string>()
+  for (const nvt of nvtStandorte) {
+    const k = naechsterKnoten(graph, nvt.position)
+    if (k) verteilerKnoten.add(k)
+  }
+  for (const schacht of schachtStandorte) {
+    const k = naechsterKnoten(graph, schacht.position)
+    if (k) verteilerKnoten.add(k)
+  }
+  return berechneLastProSegment(trassePfade, startpunkt, quellen, verteilerKnoten)
 }
 
 // Physische NVT-Kapazität als Obergrenze je Segment — HIER ist die
@@ -390,7 +420,7 @@ export function ermittleMaterialProSegment(
     return trassePfade.map(() => null)
   }
   const backbone = ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
-  const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse)
+  const bedarfProSegment = berechneHausanschlussAnzahlProSegment(trassePfade, startpunkt, hausanschluesse, nvtStandorte, schachtStandorte)
   const kapazitaetsObergrenzeProSegment = berechneNvtKapazitaetsbedarfProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte)
   const ueberschriebenProSegment = ermittleUeberschriebenesMaterialProSegment(trassePfade, backboneVerbindungen)
 

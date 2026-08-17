@@ -150,7 +150,7 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
   const schachtStandorte = projekt.schachtStandorte ?? []
   const bedarfProSegment =
     projekt.startpunkt != null
-      ? berechneHausanschlussAnzahlProSegment(trassePfade, projekt.startpunkt, projekt.hausanschluesse)
+      ? berechneHausanschlussAnzahlProSegment(trassePfade, projekt.startpunkt, projekt.hausanschluesse, nvtStandorte, schachtStandorte)
       : trassePfade.map(() => 0)
   // Physische NVT-Kapazität als harte Obergrenze je Segment ("der Kasten hat
   // nur 120 Plätze, mehr geht nicht") — separat vom tatsächlichen Bedarf.
