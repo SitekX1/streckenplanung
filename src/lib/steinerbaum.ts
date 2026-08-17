@@ -12,9 +12,11 @@ export interface SteinerErgebnis {
 }
 
 // Ab welcher Länge eine Ringschluss-Kante (s.u.) gar nicht erst in Betracht
-// gezogen wird — bewusst klein, das soll nur die "letzten paar Meter"
-// schließen, kein zweites Straßenstück parallel bauen.
-const RINGSCHLUSS_MAX_METER = 50
+// gezogen wird. 2026-08-20, Alex (zweite Korrektur anhand Brunnen-Daten):
+// 50m hat einen echten Fall (65m-Lücke, deutlich verkürzender Umweg) noch
+// knapp verpasst — auf 120m angehoben. Der Faktor-Filter (s.u.) ist die
+// eigentliche Sicherung gegen sinnloses Verbinden, nicht diese Obergrenze.
+const RINGSCHLUSS_MAX_METER = 120
 // Ein Ringschluss wird nur tatsächlich gebaut, wenn er den bisherigen
 // Baum-Umweg zwischen den beiden Punkten um mindestens diesen Faktor
 // verkürzt — sonst würden auch zwei zufällig benachbarte, aber inhaltlich
