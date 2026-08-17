@@ -392,6 +392,37 @@ function zeigeSchnappZiel(layerRef: React.MutableRefObject<L.CircleMarker | null
   }
 }
 
+// Live-Linie beim Ziehen eines Punkt-Handles (2026-08-21, Alex: "wenn ich
+// einen Punkt verziehen will ... würd gern, dass der Punkt gleich mitgeht
+// und mit Linie mitgeht", statt nur der grüne Schnapp-Kreis) — genau wie
+// SchnappZielLayer oben ein einziger, dauerhaft vorhandener Layer, der pro
+// drag-Tick imperativ per setLatLngs() aktualisiert wird, damit KEIN
+// Re-Rendern von MapView ausgelöst wird (das würde den gerade gezogenen
+// Marker auf seine alte Position zurückreißen, siehe Kommentar oben).
+function LiveLinienLayer({ layerRef }: { layerRef: React.MutableRefObject<L.Polyline | null> }) {
+  const map = useMap()
+  useEffect(() => {
+    const linie = L.polyline([], {
+      color: GELB, weight: 5, opacity: 0, interactive: false,
+    }).addTo(map)
+    layerRef.current = linie
+    return () => { linie.remove(); layerRef.current = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map])
+  return null
+}
+
+function zeigeLiveLinie(layerRef: React.MutableRefObject<L.Polyline | null>, pfad: LatLng[] | null) {
+  const layer = layerRef.current
+  if (!layer) return
+  if (pfad && pfad.length >= 2) {
+    layer.setLatLngs(pfad.map((p) => [p.lat, p.lng] as [number, number]))
+    layer.setStyle({ opacity: 1 })
+  } else {
+    layer.setStyle({ opacity: 0 })
+  }
+}
+
 type TileVariante = 'satellit' | 'osm'
 
 const MapView = memo(function MapView({
@@ -673,6 +704,7 @@ const MapView = memo(function MapView({
   // Marker zurück auf seine alte Position (react-leaflet vergleicht die
   // position-Prop nur per Referenz).
   const schnappZielLayerRef = useRef<L.CircleMarker | null>(null)
+  const liveLinienLayerRef = useRef<L.Polyline | null>(null)
   const [aktivMenu, setAktivMenu] = useState<AktivMenu>(null)
   const [neuerHsStart, setNeuerHsStart] = useState<NeuerHsStart>(null)
   const [aktivesSegment, setAktivesSegment] = useState<string | null>(null)
@@ -1691,7 +1723,10 @@ const MapView = memo(function MapView({
                     drag: (e) => {
                       const ll = (e.target as L.Marker).getLatLng()
                       const linienLive = localPfadeRef.current.map((pf, idx) => (idx === editSegmentIdx ? editPunkteRef.current : pf))
-                      zeigeSchnappZiel(schnappZielLayerRef, findeSchnappziel({ lat: ll.lat, lng: ll.lng }, linienLive, editSegmentIdx ?? -1, i))
+                      const ziel = findeSchnappziel({ lat: ll.lat, lng: ll.lng }, linienLive, editSegmentIdx ?? -1, i)
+                      zeigeSchnappZiel(schnappZielLayerRef, ziel)
+                      const zielPos = ziel ?? { lat: ll.lat, lng: ll.lng }
+                      zeigeLiveLinie(liveLinienLayerRef, editPunkteRef.current.map((p, idx) => (idx === i ? zielPos : p)))
                     },
                     dragend: (e) => {
                       const ll = (e.target as L.Marker).getLatLng()
@@ -1700,6 +1735,7 @@ const MapView = memo(function MapView({
                       const ziel = findeSchnappziel(pos, linienLive, editSegmentIdx ?? -1, i)
                       handleEditPunktBewegt(i, ziel ?? pos)
                       zeigeSchnappZiel(schnappZielLayerRef, null)
+                      zeigeLiveLinie(liveLinienLayerRef, null)
                     },
                   }}>
                   {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
@@ -1774,13 +1810,18 @@ const MapView = memo(function MapView({
                   dragstart: () => setAktivMenu(null),
                   drag: (e) => {
                     const ll = (e.target as L.Marker).getLatLng()
-                    zeigeSchnappZiel(schnappZielLayerRef, findeSchnappziel({ lat: ll.lat, lng: ll.lng }, localPfadeRef.current, pi, i))
+                    const ziel = findeSchnappziel({ lat: ll.lat, lng: ll.lng }, localPfadeRef.current, pi, i)
+                    zeigeSchnappZiel(schnappZielLayerRef, ziel)
+                    const zielPos = ziel ?? { lat: ll.lat, lng: ll.lng }
+                    const aktuellerPfad = localPfadeRef.current[pi] ?? []
+                    zeigeLiveLinie(liveLinienLayerRef, aktuellerPfad.map((p2, idx) => (idx === i ? zielPos : p2)))
                   },
                   dragend: (e) => {
                     const ll = (e.target as L.Marker).getLatLng()
                     const pos = { lat: ll.lat, lng: ll.lng }
                     const ziel = findeSchnappziel(pos, localPfadeRef.current, pi, i)
                     handleKleinPunktBewegt(pi, i, ziel ?? pos)
+                    zeigeLiveLinie(liveLinienLayerRef, null)
                     zeigeSchnappZiel(schnappZielLayerRef, null)
                   },
                 }}>
@@ -1793,6 +1834,7 @@ const MapView = memo(function MapView({
         {/* Schnapp-Ziel beim Ziehen eines Punkts — zeigt live, wo genau
             gelandet wird, wenn jetzt losgelassen wird. */}
         <SchnappZielLayer layerRef={schnappZielLayerRef} />
+        <LiveLinienLayer layerRef={liveLinienLayerRef} />
 
         {/* Mehrpunkt-Linie: live wachsende Vorschau während des Zeichnens */}
         {mehrpunktModus && mehrpunktPunkte.length >= 2 && (
