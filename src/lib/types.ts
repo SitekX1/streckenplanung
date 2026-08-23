@@ -83,10 +83,13 @@ export interface BackboneVerbindung {
 // aufteilen kann. Ein längerer Verband (mehrere Trasse-Segmente) bekommt
 // entsprechend mehrere Einträge, einen je Segment — siehe
 // ermittleMaterialUebersteuerungProSegment in faserdimensionierung.ts.
+// material=null (2026-08-20, Alex: "Verbund löschen") bedeutet explizit
+// "kein Material auf diesem Segment" — anders als KEIN Eintrag (dann greift
+// die automatische Stufenwahl).
 export interface MaterialUebersteuerung {
   von: LatLng
   nach: LatLng
-  material: MaterialEintrag
+  material: MaterialEintrag | null
 }
 
 export interface Projekt {

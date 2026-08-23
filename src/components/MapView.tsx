@@ -11,6 +11,8 @@ import 'leaflet/dist/leaflet.css'
 import { Address, BackboneVerbindung, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort, MaterialUebersteuerung } from '../lib/types'
 import { ermittleHausanschluesseProSegment, ermittleMaterialProSegment, ermittleMaterialUebersteuerungProSegment, ermittleVerbandSegmente } from '../lib/faserdimensionierung'
 import { aktivesMaterialProfil, lrArtLabel, MaterialEintrag } from '../lib/materialkatalog'
+import { rohrFarbeFuerRohrNr } from '../lib/rohrFarbschema'
+import { ladeFirmendaten } from '../lib/firmendaten'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -54,6 +56,19 @@ const schachtIcon = new L.DivIcon({
   html: '<div style="width:14px;height:14px;background:#f97316;border:2px solid white;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.8)"></div>',
   iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9],
 })
+// Trassenknoten (2026-08-20, Alex: Tiefbau-Konvention für Spleiß-/Übergabe-
+// punkte, wo sich das Material ändert) — NUR roter Kreisring + rotes X,
+// kein Hintergrund (2026-08-21, Alex: "der weiße Hintergrund soll weg, nur
+// der rote Kreis und das rote X").
+const trassenknotenIcon = new L.DivIcon({
+  className: '',
+  html: `<svg width="22" height="22" viewBox="0 0 22 22" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,0.9))">
+    <circle cx="11" cy="11" r="8.5" fill="none" stroke="#dc2626" stroke-width="2.2"/>
+    <line x1="7" y1="7" x2="15" y2="15" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="15" y1="7" x2="7" y2="15" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round"/>
+  </svg>`,
+  iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -12],
+})
 
 function berechneLinieLaenge(wp: LatLng[]): number {
   let total = 0
@@ -80,6 +95,18 @@ const SCHACHT_MARKIER_FARBE = '#22d3ee'
 // klar von den NVT-Markier-Farben und dem gelben Segment-Highlight (GELB)
 // abzusetzen.
 const SEGMENT_HERVORHEBUNG_FARBE = '#ffffff'
+// Linienfarbe für explizit gelöschte Verbund-Segmente (2026-08-20, Alex:
+// "Verbund löschen") — dieselbe Warnfarbe wie überall sonst im Löschen-/
+// Fehler-Kontext (siehe z.B. istUeberlastet, "🗑️ … löschen"-Menüeinträge),
+// damit sich das Segment sichtbar von "nie beplant" (fällt sonst unauffällig
+// auf trasseFarbe zurück) abhebt, ohne ein neues Linienmuster einzuführen.
+const VERBUND_GELOESCHT_FARBE = '#f87171'
+// Senkrechter Versatz der beiden Doppelbelegungs-Linien (siehe
+// trassePfadeDoppelbelegungHaupt/-Zusatz weiter unten) — auf Modul-Ebene,
+// damit TrasseKlickbar (eigene Komponente) denselben Wert für die
+// Klick-Trefferflächen kennt (siehe Fix 2026-08-21, Alex: "zwischen den 2
+// parallelen Verbünden ist weiß, nur das weiße kann ich anklicken").
+const DOPPELBELEGUNG_VERSATZ_METER = 1.6
 const MAX_HANDLES = 80
 // Schwellenwert: ≤ 1000 Punkte → Klein-Projekt (alle Handles sofort sichtbar)
 const KLEIN_PROJEKT_SCHWELLE = 1000
@@ -205,6 +232,7 @@ interface MapViewProps {
   onBackboneVerbindungErstellen?: (quelle: LatLng, ziel: LatLng, material: MaterialEintrag) => void
   onBackboneVerbindungFehlerSchliessen?: () => void
   onMaterialUebersteuern?: (segmentIdxs: number[], material: MaterialEintrag | null) => void
+  onVerbundLoeschen?: (segmentIdxs: number[]) => void
 }
 
 function KlickHandler({
@@ -316,8 +344,17 @@ function TrasseNetzwerk({ pfade, farbe, opacity = 0.9, weight = 4 }: { pfade: La
 // Canvas-Rendering dort unangetastet bleibt. Das ausgewählte Segment bekommt
 // zusätzlich eine echte gelbe Overlay-Polyline (nur eine gleichzeitig, daher
 // keine Performance-Sorge trotz react-leaflet statt Canvas).
-function TrasseKlickbar({ pfade, ausgewaehlteIdxs, onKlick }: {
+function TrasseKlickbar({ pfade, doppelbelegungIdxs, ausgewaehlteIdxs, onKlick }: {
   pfade: LatLng[][]
+  // Segmente mit zwei parallel versetzten Materialien (siehe
+  // trassePfadeDoppelbelegungHaupt/-Zusatz) — dort liegt die Original-
+  // Mittellinie (pfade[i]) im sichtbar LEEREN Zwischenraum zwischen den
+  // beiden farbigen Linien, eine zentrierte Trefferfläche würde also genau
+  // die unsichtbare Lücke statt der Linien selbst treffbar machen
+  // (2026-08-21, Alex: "zwischen den 2 parallelen Verbünden ist weiß, nur
+  // das weiße kann ich anklicken") — für diese Segmente kommen zusätzlich
+  // zwei versetzte Trefferflächen an den tatsächlichen Linienpositionen dazu.
+  doppelbelegungIdxs?: Set<number>
   // Mehrere Indizes = kompletter Verband-Verlauf wird hervorgehoben, nicht
   // nur das einzeln angeklickte Segment (2026-08-21, Alex: "möchte den
   // Verlauf des Verbands sehen").
@@ -328,17 +365,25 @@ function TrasseKlickbar({ pfade, ausgewaehlteIdxs, onKlick }: {
   useEffect(() => {
     const renderer = L.canvas({ padding: 0.1 })
     const linien: L.Polyline[] = []
-    pfade.forEach((pfad, i) => {
-      if (pfad.length < 2) return
-      const linie = L.polyline(pfad.map((p) => [p.lat, p.lng] as [number, number]), {
+    function fuegeTrefferflaecheHinzu(punkte: LatLng[], i: number) {
+      const linie = L.polyline(punkte.map((p) => [p.lat, p.lng] as [number, number]), {
         color: '#000', weight: 16, opacity: 0.01, renderer,
       } as L.PolylineOptions)
       linie.on('click', (e) => { L.DomEvent.stopPropagation(e); onKlick(i) })
       linien.push(linie)
+    }
+    pfade.forEach((pfad, i) => {
+      if (pfad.length < 2) return
+      if (doppelbelegungIdxs?.has(i)) {
+        fuegeTrefferflaecheHinzu(versetzePfadSenkrecht(pfad, DOPPELBELEGUNG_VERSATZ_METER), i)
+        fuegeTrefferflaecheHinzu(versetzePfadSenkrecht(pfad, -DOPPELBELEGUNG_VERSATZ_METER), i)
+        return
+      }
+      fuegeTrefferflaecheHinzu(pfad, i)
     })
     const gruppe = L.layerGroup(linien).addTo(map)
     return () => { map.removeLayer(gruppe) }
-  }, [pfade, onKlick, map])
+  }, [pfade, doppelbelegungIdxs, onKlick, map])
 
   const ausgewaehltePfade = ausgewaehlteIdxs
     .map((idx) => pfade[idx])
@@ -438,7 +483,7 @@ const MapView = memo(function MapView({
   onAussiedlerhofToggle, onAussiedlerhofMarkierenFertig,
   onNvtManuellHinzufuegen, onNvtManuellSetzenAbbrechen, onNvtLoeschen, onNvtHausanschlussToggle, onNvtVerschoben,
   onSchachtGesetzt, onSchachtSetzenAbbrechen, onSchachtLoeschen, onSchachtHausanschlussToggle, onSchachtVerschoben,
-  onBackboneVerbindungErstellen, onBackboneVerbindungFehlerSchliessen, onMaterialUebersteuern,
+  onBackboneVerbindungErstellen, onBackboneVerbindungFehlerSchliessen, onMaterialUebersteuern, onVerbundLoeschen,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -457,6 +502,9 @@ const MapView = memo(function MapView({
   // Material-Auswahl im Klick-Panel ein-/ausgeklappt (2026-08-21, Alex:
   // "im Nachhinein kann ich aber keinen einzigen Verbund bearbeiten").
   const [materialAuswahlOffen, setMaterialAuswahlOffen] = useState(false)
+  // Ausgewählter Trassenknoten (2026-08-20, Alex: Klick zeigt an, welche
+  // Materialien/Rohre sich hier treffen) — Index in trassenKnotenPunkte.
+  const [ausgewaehlterTrassenknotenIdx, setAusgewaehlterTrassenknotenIdx] = useState<number | null>(null)
   const [warnModalOffen, setWarnModalOffen] = useState(false)
   // Referenz der zuletzt gesehenen Liste — erlaubt, das Warnmodal direkt beim
   // Render zu öffnen sobald eine NEUE (andere Referenz) Liste ankommt, ohne
@@ -558,10 +606,10 @@ const MapView = memo(function MapView({
   // zusammenhängende Kette gleichen Materials bis zur Gabelung/zum NVT.
   const verbandSegmentIdxs = useMemo(
     () =>
-      ausgewaehltesSegmentNormal !== null
-        ? ermittleVerbandSegmente(trassePfade, materialProSegment, hausanschluesseProSegment, ausgewaehltesSegmentNormal)
-        : [],
-    [trassePfade, materialProSegment, hausanschluesseProSegment, ausgewaehltesSegmentNormal]
+      ausgewaehltesSegmentNormal !== null && startpunkt
+        ? ermittleVerbandSegmente(trassePfade, startpunkt, materialProSegment, hausanschluesseProSegment, ausgewaehltesSegmentNormal)
+        : ausgewaehltesSegmentNormal !== null ? [ausgewaehltesSegmentNormal] : [],
+    [trassePfade, startpunkt, materialProSegment, hausanschluesseProSegment, ausgewaehltesSegmentNormal]
   )
   // Hausanschlüsse, die irgendwo auf dem kompletten Verband-Verlauf hängen —
   // Vereinigung über alle Segmente der Instanz (durch die Verteiler-
@@ -587,9 +635,48 @@ const MapView = memo(function MapView({
     return map
   }, [ausgewaehlteNvtIdxs, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte, ausgewaehltesSegmentNormal, verbandHausIds])
   const farbeProSegment = useMemo(
-    () => materialProSegment.map((m) => m?.haupt.farbe ?? trasseFarbe),
-    [materialProSegment, trasseFarbe]
+    () => materialProSegment.map((m, i) => {
+      if (m) return m.haupt.farbe
+      // Explizit gelöschter Verbund (manuellUebersteuertProSegment[i] === null)
+      // ohne verbleibendes Backbone-Material (sonst würde m oben schon greifen)
+      // -> deutlich als "hier fehlt Material" markieren statt unauffällig auf
+      // trasseFarbe zurückzufallen.
+      if (manuellUebersteuertProSegment[i] === null) return VERBUND_GELOESCHT_FARBE
+      return trasseFarbe
+    }),
+    [materialProSegment, manuellUebersteuertProSegment, trasseFarbe]
   )
+
+  // Trassenknoten (2026-08-20, Alex: "überall wo sich Verbunde ändern ist im
+  // Trassenbau ein Trassenknoten, das könnten wir auch implementieren") —
+  // jeder gemeinsame Endpunkt von ≥2 Segmenten, an dem sich das Hauptmaterial
+  // unterscheidet (Gabelung mit Stufenwechsel, Übergang zu/von Backbone,
+  // Start/Ende eines Verbands). Rein abgeleitet wie farbeProSegment, kein
+  // gespeicherter Zustand.
+  const trassenKnotenPunkte = useMemo(() => {
+    const r = (v: number) => Math.round(v * 100000) / 100000
+    const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+    const materialKeyVon = (i: number): string => {
+      const m = materialProSegment[i]?.haupt
+      return m ? (m.bezeichnungFirma || `${m.lrArt}-${m.lrAnzahl}`) : ''
+    }
+    const anKnoten = new Map<string, { position: LatLng; segmentIdxs: number[] }>()
+    trassePfade.forEach((pfad, i) => {
+      if (pfad.length < 2) return
+      for (const punkt of [pfad[0], pfad[pfad.length - 1]]) {
+        const key = nk(punkt)
+        if (!anKnoten.has(key)) anKnoten.set(key, { position: punkt, segmentIdxs: [] })
+        anKnoten.get(key)!.segmentIdxs.push(i)
+      }
+    })
+    const ergebnis: Array<{ position: LatLng; segmentIdxs: number[] }> = []
+    for (const eintrag of anKnoten.values()) {
+      if (eintrag.segmentIdxs.length < 2) continue
+      const keys = new Set(eintrag.segmentIdxs.map(materialKeyVon))
+      if (keys.size > 1) ergebnis.push(eintrag)
+    }
+    return ergebnis
+  }, [trassePfade, materialProSegment])
 
   // Einfarbige Segmente (kein Doppelbelegung) — normales, Canvas-optimiertes
   // Rendering, gruppiert nach Farbe wie bisher.
@@ -611,7 +698,6 @@ const MapView = memo(function MapView({
   // Farbe für performantes Canvas-Rendering (wie die einfarbigen Segmente).
   // Bewusst KEINE gestrichelte/Punkt-Strich-Symbolik (von Alex explizit
   // abgelehnt), nur Farbe + räumlicher Versatz.
-  const DOPPELBELEGUNG_VERSATZ_METER = 1.6
   const trassePfadeDoppelbelegungHaupt = useMemo(() => {
     const gruppen = new Map<string, LatLng[][]>()
     trassePfade.forEach((pfad, i) => {
@@ -640,9 +726,17 @@ const MapView = memo(function MapView({
     () => trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track'),
     [trassePfade, trassePfadeKinds]
   )
+  // Für TrasseKlickbar: welche Segment-Indizes sind visuell versetzt
+  // dargestellt (siehe trassePfadeDoppelbelegungHaupt/-Zusatz oben) —
+  // dieselbe Bedingung (kein Feldweg + zusatz vorhanden).
+  const doppelbelegungIdxs = useMemo(
+    () => new Set(trassePfade.map((_, i) => i).filter((i) => trassePfadeKinds[i] !== 'track' && !!materialProSegment[i]?.zusatz)),
+    [trassePfade, trassePfadeKinds, materialProSegment]
+  )
   const handleSegmentNormalKlick = useCallback((i: number) => {
     setAusgewaehltesSegmentNormal((prev) => (prev === i ? null : i))
     setMaterialAuswahlOffen(false)
+    setAusgewaehlterTrassenknotenIdx(null)
   }, [])
 
   // Manuelles NVT setzen: nach Klick auf die Karte erst Kapazität abfragen,
@@ -1423,45 +1517,143 @@ const MapView = memo(function MapView({
             {/* Manuelle Material-Übersteuerung (2026-08-21, Alex: "im
                 Nachhinein kann ich aber keinen einzigen Verbund
                 bearbeiten") — wirkt auf den KOMPLETTEN Verband-Verlauf
-                (verbandSegmentIdxs), nicht nur das angeklickte Einzelsegment. */}
-            {onMaterialUebersteuern && (
-              <div className="flex flex-col gap-1 pt-1" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                {manuellUebersteuertProSegment[ausgewaehltesSegmentNormal] && (
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px]" style={{ color: '#c084fc' }}>✏️ manuell gesetzt</span>
-                    <button
-                      onClick={() => { onMaterialUebersteuern(verbandSegmentIdxs, null); setMaterialAuswahlOffen(false) }}
-                      className="text-[10px] underline"
-                      style={{ color: 'var(--text-secondary)' }}>
-                      ↺ Automatisch
-                    </button>
-                  </div>
-                )}
-                {materialAuswahlOffen ? (
-                  <div className="flex flex-col gap-0.5">
-                    {[...materialProfil.kundenanschlussStufen]
-                      .sort((a, b) => a.lrAnzahl - b.lrAnzahl)
-                      .map((m) => (
+                (verbandSegmentIdxs), nicht nur das angeklickte Einzelsegment.
+                Drei Zustände: kein Eintrag = automatisch, Eintrag mit echtem
+                Material = ersetzt, Eintrag mit material=null = gelöscht
+                (2026-08-20, Alex: "Verbund löschen"). */}
+            {(onMaterialUebersteuern || onVerbundLoeschen) && (() => {
+              const uebersteuerung = manuellUebersteuertProSegment[ausgewaehltesSegmentNormal]
+              const istGeloescht = uebersteuerung === null
+              const istErsetzt = uebersteuerung !== undefined && uebersteuerung !== null
+              return (
+                <div className="flex flex-col gap-1 pt-1" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                  {istGeloescht && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px]" style={{ color: VERBUND_GELOESCHT_FARBE }}>🗑️ Verbund gelöscht</span>
+                      {onMaterialUebersteuern && (
                         <button
-                          key={m.bezeichnungFirma || m.lrArt}
-                          onClick={() => { onMaterialUebersteuern(verbandSegmentIdxs, m); setMaterialAuswahlOffen(false) }}
-                          className="flex items-center gap-1.5 px-1.5 py-1 rounded text-left transition-colors hover:brightness-125"
-                          style={{ backgroundColor: 'var(--surface-2)' }}>
-                          <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
-                          <span className="text-[10px] text-gray-200">{m.bezeichnungFirma || lrArtLabel(m.lrArt)}</span>
+                          onClick={() => { onMaterialUebersteuern(verbandSegmentIdxs, null); setMaterialAuswahlOffen(false) }}
+                          className="text-[10px] underline"
+                          style={{ color: 'var(--text-secondary)' }}>
+                          ↺ Wiederherstellen
                         </button>
-                      ))}
-                    <button onClick={() => setMaterialAuswahlOffen(false)} className="text-[10px] text-left" style={{ color: 'var(--text-secondary)' }}>
-                      ✕ Abbrechen
-                    </button>
-                  </div>
-                ) : (
-                  <button onClick={() => setMaterialAuswahlOffen(true)} className="text-[10px] text-left underline" style={{ color: '#93c5fd' }}>
-                    ✏️ Material ändern
-                  </button>
+                      )}
+                    </div>
+                  )}
+                  {istErsetzt && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px]" style={{ color: '#c084fc' }}>✏️ manuell gesetzt</span>
+                      {onMaterialUebersteuern && (
+                        <button
+                          onClick={() => { onMaterialUebersteuern(verbandSegmentIdxs, null); setMaterialAuswahlOffen(false) }}
+                          className="text-[10px] underline"
+                          style={{ color: 'var(--text-secondary)' }}>
+                          ↺ Automatisch
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {materialAuswahlOffen ? (
+                    <div className="flex flex-col gap-0.5">
+                      {[...materialProfil.kundenanschlussStufen]
+                        .sort((a, b) => a.lrAnzahl - b.lrAnzahl)
+                        .map((m) => (
+                          <button
+                            key={m.bezeichnungFirma || m.lrArt}
+                            onClick={() => { onMaterialUebersteuern?.(verbandSegmentIdxs, m); setMaterialAuswahlOffen(false) }}
+                            className="flex items-center gap-1.5 px-1.5 py-1 rounded text-left transition-colors hover:brightness-125"
+                            style={{ backgroundColor: 'var(--surface-2)' }}>
+                            <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+                            <span className="text-[10px] text-gray-200">{m.bezeichnungFirma || lrArtLabel(m.lrArt)}</span>
+                          </button>
+                        ))}
+                      <button onClick={() => setMaterialAuswahlOffen(false)} className="text-[10px] text-left" style={{ color: 'var(--text-secondary)' }}>
+                        ✕ Abbrechen
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      {onMaterialUebersteuern && (
+                        <button onClick={() => setMaterialAuswahlOffen(true)} className="text-[10px] text-left underline" style={{ color: '#93c5fd' }}>
+                          ✏️ {istErsetzt || istGeloescht ? 'Ersetzen' : 'Material ändern'}
+                        </button>
+                      )}
+                      {onVerbundLoeschen && !istGeloescht && (
+                        <button onClick={() => { onVerbundLoeschen(verbandSegmentIdxs); setMaterialAuswahlOffen(false) }} className="text-[10px] text-left underline" style={{ color: VERBUND_GELOESCHT_FARBE }}>
+                          🗑️ Löschen
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+        )
+      })()}
+
+      {/* Klick-Info für den angeklickten Trassenknoten (2026-08-20, Alex:
+          "man könnte den Trassenknoten anklicken und man sieht wie was
+          verbunden ist, Rohr Farben") — listet jedes hier angrenzende
+          Segment mit Material + Gabo-Rohr-Farben-Aufschlüsselung. */}
+      {!editierbarAktiv && ausgewaehlterTrassenknotenIdx !== null && trassenKnotenPunkte[ausgewaehlterTrassenknotenIdx] && (() => {
+        const knoten = trassenKnotenPunkte[ausgewaehlterTrassenknotenIdx]
+        // Geräteweite Einstellung (siehe EinstellungenModal, 2026-08-21,
+        // Alex: "darf nicht allgemein aktiv sein, sondern in Einstellungen
+        // auswählbar") — bewusst frisch aus localStorage gelesen statt in
+        // State gehalten, da sich das Farbschema selten ändert und dieser
+        // Panel-Render nur bei explizitem Klick auf einen Trassenknoten
+        // passiert (kein Performance-Problem, aber immer aktuell).
+        const rohrFarbschema = ladeFirmendaten().rohrFarbschema
+        const ANZEIGE_LIMIT = 12
+        const materialMitRohrfarben = (m: MaterialEintrag) => {
+          const positionen = Array.from({ length: Math.min(m.lrAnzahl, ANZEIGE_LIMIT) }, (_, idx) => idx + 1)
+          return (
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-1.5">
+                <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+                <span className="text-xs text-gray-200">{m.bezeichnungFirma || lrArtLabel(m.lrArt)}</span>
+              </div>
+              <div className="flex flex-wrap gap-x-2 gap-y-0.5 ml-4.5">
+                {positionen.map((nr) => (
+                  <span key={nr} className="text-[10px] text-gray-500">{nr}: {rohrFarbeFuerRohrNr(rohrFarbschema, m.lrAnzahl, nr)}</span>
+                ))}
+                {m.lrAnzahl > ANZEIGE_LIMIT && (
+                  <span className="text-[10px] text-gray-600">… und {m.lrAnzahl - ANZEIGE_LIMIT} weitere</span>
                 )}
               </div>
-            )}
+            </div>
+          )
+        }
+        return (
+          <div className="absolute bottom-3 left-64 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-2 max-w-72"
+            style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #dc2626' }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">✕ Trassenknoten — {knoten.segmentIdxs.length} Segmente treffen sich hier</span>
+              <button onClick={() => setAusgewaehlterTrassenknotenIdx(null)} className="text-xs" style={{ color: 'var(--text-secondary)' }}>✕</button>
+            </div>
+            <div className="flex flex-col gap-2" style={{ maxHeight: 260, overflowY: 'auto' }}>
+              {knoten.segmentIdxs.map((segIdx) => {
+                const material = materialProSegment[segIdx]
+                return (
+                  <div key={segIdx} className="flex flex-col gap-1 pb-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <span className="text-[10px] text-gray-600">Segment {segIdx + 1}</span>
+                    {material ? (
+                      <>
+                        {materialMitRohrfarben(material.haupt)}
+                        {material.zusatz && materialMitRohrfarben(material.zusatz)}
+                      </>
+                    ) : (
+                      <span className="text-xs text-gray-500">Kein Material zugewiesen</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <span className="text-[9px] leading-tight" style={{ color: 'var(--text-tertiary)' }}>
+              Rohr-Farben nach {rohrFarbschema === 'din' ? 'DIN EN 60794' : 'gabocom'} (⚙️ Einstellungen → Rohr-Farbschema änderbar).
+              {rohrFarbschema === 'gabocom' && ' Backbone-Rohrtypen (4x20/7x14) nicht durch Diagramm bestätigt, bitte gegenchecken.'}
+            </span>
           </div>
         )
       })()}
@@ -1472,9 +1664,14 @@ const MapView = memo(function MapView({
           Kundenanschluss-Verbände auf den Zuführungssegmenten, die
           ausschließlich diesem NVT zugeordnet sind (bei geteilten
           Backbone-Segmenten also nicht mitgezählt, da die dort mehreren
-          NVTs gleichzeitig dienen). */}
-      {hoverNvtIdx !== null && nvtStandorte[hoverNvtIdx] && (() => {
-        const nvt = nvtStandorte[hoverNvtIdx]
+          NVTs gleichzeitig dienen). Zeigt sich jetzt auch bei einem einzeln
+          angeklickten (nicht nur gehovertem) NVT (2026-08-21, Alex: "wenn
+          ich draufklick, seh ich nur die Hausanschlüsse" — der Verband-
+          Verlauf war bisher nur per Hover erreichbar). */}
+      {(hoverNvtIdx ?? (ausgewaehlteNvtIdxs.size === 1 ? [...ausgewaehlteNvtIdxs][0] : null)) !== null && (() => {
+        const angezeigterNvtIdx = (hoverNvtIdx ?? [...ausgewaehlteNvtIdxs][0])!
+        if (!nvtStandorte[angezeigterNvtIdx]) return null
+        const nvt = nvtStandorte[angezeigterNvtIdx]
         const istUeberlastet = nvt.belegung > nvt.kapazitaet
         const auslastung = nvt.kapazitaet > 0 ? Math.round((nvt.belegung / nvt.kapazitaet) * 100) : 0
         const adressenHier = nvt.hausanschlussIds
@@ -1482,22 +1679,30 @@ const MapView = memo(function MapView({
           .filter((h): h is Hausstich => !!h)
           .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
           .filter((a): a is Address => !!a)
-        // beispielSegmentIdx: EIN Segment dieses Materials an diesem NVT —
-        // reicht als Startpunkt für ermittleVerbandSegmente() (2026-08-21,
-        // Alex: "möchte den Verband markieren komplett, dass ich den
-        // Verlauf seh"), das von dort aus selbst den kompletten
-        // zusammenhängenden Verlauf ermittelt.
-        const verbaende = new Map<string, { material: MaterialEintrag; anzahl: number; beispielSegmentIdx: number }>()
-        trassePfade.forEach((_, i) => {
-          const ids = hausanschluesseProSegment[i] ?? []
-          if (ids.length === 0 || !ids.every((id) => nvt.hausanschlussIds.includes(id))) return
-          const m = materialProSegment[i]?.haupt
-          if (!m) return
-          const key = m.bezeichnungFirma || lrArtLabel(m.lrArt)
-          const eintrag = verbaende.get(key)
-          if (eintrag) eintrag.anzahl++
-          else verbaende.set(key, { material: m, anzahl: 1, beispielSegmentIdx: i })
-        })
+        // Jede eigenständige Verband-INSTANZ einzeln auflisten, nicht nach
+        // Material zusammengefasst (2026-08-21, Alex: "seh nicht den
+        // Verbundverlauf" / "drei verschiedene Straßen ... müssen drei
+        // einzelne 12x7-Verbünde sein" — vorher wurden mehrere unabhängige
+        // Straßen mit zufällig gleicher Stufe zu EINEM Listeneintrag mit nur
+        // einem klickbaren Beispiel zusammengefasst, die anderen Äste waren
+        // aus dieser Liste heraus gar nicht erreichbar). Nutzt dieselbe
+        // richtungsbewusste ermittleVerbandSegmente()-Logik wie das
+        // Klick-Panel, um pro Segment die volle Instanz zu ermitteln und
+        // bereits erfasste Segmente nicht doppelt zu listen.
+        const verwendeteSegmente = new Set<number>()
+        const verbaende: Array<{ material: MaterialEintrag; segmentAnzahl: number; beispielSegmentIdx: number }> = []
+        if (startpunkt) {
+          trassePfade.forEach((_, i) => {
+            if (verwendeteSegmente.has(i)) return
+            const ids = hausanschluesseProSegment[i] ?? []
+            if (ids.length === 0 || !ids.every((id) => nvt.hausanschlussIds.includes(id))) return
+            const m = materialProSegment[i]?.haupt
+            if (!m) return
+            const instanz = ermittleVerbandSegmente(trassePfade, startpunkt, materialProSegment, hausanschluesseProSegment, i)
+            instanz.forEach((idx) => verwendeteSegmente.add(idx))
+            verbaende.push({ material: m, segmentAnzahl: instanz.length, beispielSegmentIdx: i })
+          })
+        }
         const ANZEIGE_LIMIT = 6
         return (
           <div className="absolute bottom-3 right-3 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
@@ -1507,24 +1712,24 @@ const MapView = memo(function MapView({
             // einen Verband-Eintrag überhaupt anklicken kann.
             onMouseEnter={() => setHoverNvtIdx(hoverNvtIdx)}
             onMouseLeave={() => setHoverNvtIdx(null)}>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider">NVT {hoverNvtIdx + 1}</span>
+            <span className="text-[10px] text-gray-500 uppercase tracking-wider">NVT {angezeigterNvtIdx + 1}</span>
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-300">Belegung</span>
               <span className="text-xs font-medium" style={{ color: istUeberlastet ? '#f87171' : '#93c5fd' }}>
                 {nvt.belegung}/{nvt.kapazitaet} ({auslastung}%){istUeberlastet ? ' ⚠️' : ''}
               </span>
             </div>
-            {verbaende.size > 0 && (
+            {verbaende.length > 0 && (
               <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] text-gray-500">Verbände auf Zuführung (anklicken für Verlauf):</span>
-                {[...verbaende.values()].map(({ material, anzahl, beispielSegmentIdx }) => (
+                <span className="text-[10px] text-gray-500">Verbände auf Zuführung (je einzeln anklickbar für Verlauf):</span>
+                {verbaende.map(({ material, segmentAnzahl, beispielSegmentIdx }) => (
                   <button
-                    key={material.bezeichnungFirma || material.lrArt}
+                    key={beispielSegmentIdx}
                     onClick={() => { setAusgewaehltesSegmentNormal(beispielSegmentIdx); setMaterialAuswahlOffen(false) }}
                     className="flex items-center gap-1.5 text-left transition-colors hover:brightness-125"
                   >
                     <span style={{ width: 12, height: 3, borderRadius: 2, background: material.farbe, display: 'inline-block', flexShrink: 0 }} />
-                    <span className="text-[10px] text-gray-300">{anzahl}× {material.bezeichnungFirma || lrArtLabel(material.lrArt)}</span>
+                    <span className="text-[10px] text-gray-300">{material.bezeichnungFirma || lrArtLabel(material.lrArt)} ({segmentAnzahl} Segment{segmentAnzahl === 1 ? '' : 'e'})</span>
                   </button>
                 ))}
               </div>
@@ -1598,6 +1803,7 @@ const MapView = memo(function MapView({
           onMapKlick={() => {
             if (editierbarAktiv && !kleinProjekt) handleDeselect()
             setAusgewaehltesSegmentNormal(null)
+            setAusgewaehlterTrassenknotenIdx(null)
           }} />
         <AutoZoom adressen={adressen} />
         <TopographieWMS sichtbar={topoSichtbar} />
@@ -1623,7 +1829,7 @@ const MapView = memo(function MapView({
                   <TrasseNetzwerk key={`db-haupt-${farbe}`} pfade={pfade} farbe={farbe} opacity={0.9} weight={4} />
                 ))}
                 <TrasseNetzwerk pfade={trassePfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.9} />
-                <TrasseKlickbar pfade={trassePfade} ausgewaehlteIdxs={verbandSegmentIdxs}
+                <TrasseKlickbar pfade={trassePfade} doppelbelegungIdxs={doppelbelegungIdxs} ausgewaehlteIdxs={verbandSegmentIdxs}
                   onKlick={handleSegmentNormalKlick} />
               </>
             )
@@ -1909,6 +2115,20 @@ const MapView = memo(function MapView({
             </CircleMarker>
           )
         })}
+
+        {/* Trassenknoten (2026-08-20, Alex: rotes X-Symbol wo sich Material
+            ändert) — nur außerhalb des Bearbeitungsmodus sichtbar, analog
+            zu TrasseKlickbar, damit sie beim Editieren nicht im Weg stehen. */}
+        {!editierbarAktiv && trassenKnotenPunkte.map((knoten, i) => (
+          <Marker key={`trassenknoten-${i}`} position={[knoten.position.lat, knoten.position.lng]} icon={trassenknotenIcon}
+            eventHandlers={{
+              click: (e) => {
+                if (e.originalEvent) L.DomEvent.stopPropagation(e as L.LeafletMouseEvent)
+                setAusgewaehltesSegmentNormal(null)
+                setAusgewaehlterTrassenknotenIdx((prev) => (prev === i ? null : i))
+              },
+            }} />
+        ))}
 
         {/* NVT-Standorte */}
         {nvtSichtbar && nvtStandorte.map((nvt, i) => {

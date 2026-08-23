@@ -278,20 +278,34 @@ export function ermittleHausanschluesseProSegment(
 }
 
 // Bestimmt pro Trasse-Segment, ob es eine echte Backbone-Verbindung
-// darstellt (Startpunkt-zu-Verteiler oder Verteiler-zu-Verteiler) — nur dort
-// gehört das feste Backbone-Material hin (2026-08-12, Alex: "nicht jede
-// Trasse braucht zwei Leerrohrsegmente, es kommt darauf an ob eine
-// SV/NVT-zu-NVT-Verbindung da ist"; klargestellt: "vom Startpunkt bis zum
-// nächstliegenden NVT ist immer Backbone", der Startpunkt zählt hier also
-// selbst als Verteiler-Ende — daher unten mit in verteilerKnoten
-// aufgenommen). Ein Segment gilt als Backbone, wenn auf dem Pfad vom
-// Startpunkt aus VOR diesem Segment bereits ein Verteiler (Start, NVT oder
-// Schacht) liegt UND HINTER diesem Segment (im Teilbaum) noch mindestens ein
-// weiterer NVT/Schacht folgt — nur Stiche HINTER dem letzten Verteiler (nur
-// noch Hausanschlüsse, kein weiterer Verteiler mehr) zählen NICHT als
-// Backbone, dort läuft nur noch der Kundenanschluss-Sammelverband (siehe
-// berechneHausanschlussAnzahlProSegment) — ggf. überlagert mit dem Backbone
+// darstellt (Startpunkt-zu-Verteiler, Verteiler-zu-Verteiler, oder ein
+// Ringschluss zwischen zwei bereits erschlossenen Punkten) — nur dort gehört
+// das feste Backbone-Material hin (2026-08-12, Alex: "nicht jede Trasse
+// braucht zwei Leerrohrsegmente, es kommt darauf an ob eine SV/NVT-zu-NVT-
+// Verbindung da ist"; klargestellt: "vom Startpunkt bis zum nächstliegenden
+// NVT ist immer Backbone", der Startpunkt zählt hier also selbst als
+// Verteiler-Ende — daher unten mit in verteilerKnoten aufgenommen).
+//
+// Algorithmus: "Leaf Pruning" statt reiner Dijkstra-Baum-Herleitung — iterativ
+// werden alle Nicht-Verteiler-Knoten mit Grad ≤ 1 entfernt (samt ihrer
+// Kanten), bis nichts mehr entfernbar ist. Übrig bleibt der minimale
+// zusammenhängende Kern-Teilgraph, der alle Verteiler (inkl. Start)
+// verbindet — ein Segment ist Backbone, wenn BEIDE Endpunkte im Kern liegen.
+// Reine Kundenanschluss-Stiche (Sackgassen ohne weiteren Verteiler) enden
+// zwangsläufig in einem entfernten Blatt und bleiben damit korrekt
+// ausgeschlossen — läuft nur noch der Kundenanschluss-Sammelverband (siehe
+// berechneHausanschlussAnzahlProSegment), ggf. überlagert mit dem Backbone
 // auf Segmenten, wo beides zutrifft (Doppelbelegung).
+//
+// WICHTIG (2026-08-20, Alex: "Backbone-Bereich hat überall Lücken, die
+// Striche enden einfach"): die frühere Implementierung leitete Backbone rein
+// aus EINEM Dijkstra-Kürzeste-Wege-Baum ab (ein Elternteil pro Knoten) — eine
+// echte Schleife (siehe fuegeKurzeRingschluesseHinzu in steinerbaum.ts, fügt
+// bewusst eine zweite, redundante Verbindung zwischen zwei Stichstraßen-Enden
+// ein) hat aber zwangsläufig eine Kante, die auf KEINEM Kürzeste-Wege-Baum
+// liegt — die bekam dadurch nie Material, obwohl real verlegtes Kabel. Ein
+// Knoten auf einer Schleife hat nie Grad 1 und wird beim Leaf-Pruning nie
+// entfernt, die Schleife bleibt also korrekt vollständig im Kern erhalten.
 export function ermittleBackboneSegmente(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
@@ -304,8 +318,6 @@ export function ermittleBackboneSegmente(
   const graph = baueGraph(trassePfade)
   const startKnoten = naechsterKnoten(graph, startpunkt)
   if (!startKnoten) return leer
-
-  const { dist: distVomStart, prev } = dijkstraVon(graph, startKnoten)
 
   // Startpunkt zählt selbst als Verteiler-Ende (siehe Erklärung oben) —
   // dadurch ist automatisch jede Zuführung vom Start zum jeweils
@@ -320,30 +332,25 @@ export function ermittleBackboneSegmente(
     if (k) verteilerKnoten.add(k)
   }
 
-  // Bottom-up: welche Kanten haben mindestens einen Verteiler in ihrem
-  // Teilbaum (= "danach kommt noch ein NVT/Schacht")?
-  const kanteHatVerteilerDahinter = new Set<string>()
-  for (const verteiler of verteilerKnoten) {
-    if (!distVomStart.has(verteiler)) continue
-    let cur = verteiler
-    while (prev.has(cur)) {
-      const vor = prev.get(cur)!
-      kanteHatVerteilerDahinter.add(cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`)
-      cur = vor
+  const grad = new Map<string, number>()
+  for (const [knoten, info] of graph) grad.set(knoten, info.nachbarn.length)
+
+  const entfernt = new Set<string>()
+  const queue: string[] = [...grad.entries()]
+    .filter(([knoten, g]) => g <= 1 && !verteilerKnoten.has(knoten))
+    .map(([knoten]) => knoten)
+  while (queue.length > 0) {
+    const knoten = queue.pop()!
+    if (entfernt.has(knoten) || verteilerKnoten.has(knoten)) continue
+    entfernt.add(knoten)
+    for (const nachbar of graph.get(knoten)?.nachbarn ?? []) {
+      if (entfernt.has(nachbar.zu) || verteilerKnoten.has(nachbar.zu)) continue
+      const neuerGrad = (grad.get(nachbar.zu) ?? 0) - 1
+      grad.set(nachbar.zu, neuerGrad)
+      if (neuerGrad <= 1) queue.push(nachbar.zu)
     }
   }
-
-  // Top-down: liegt vor einem Knoten (Richtung Start) bereits ein Verteiler?
-  const vorgelagerterVerteiler = new Map<string, boolean>([[startKnoten, false]])
-  const knotenNachDistanzSortiert = [...distVomStart.keys()].sort(
-    (a, b) => (distVomStart.get(a) ?? 0) - (distVomStart.get(b) ?? 0)
-  )
-  for (const knoten of knotenNachDistanzSortiert) {
-    if (knoten === startKnoten) continue
-    const vor = prev.get(knoten)
-    if (vor === undefined) continue
-    vorgelagerterVerteiler.set(knoten, (vorgelagerterVerteiler.get(vor) ?? false) || verteilerKnoten.has(vor))
-  }
+  const kernKnoten = new Set([...grad.keys()].filter((k) => !entfernt.has(k)))
 
   const r = (v: number) => Math.round(v * 100000) / 100000
   const knotenKeyVon = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
@@ -353,13 +360,7 @@ export function ermittleBackboneSegmente(
     for (let i = 0; i < pfad.length - 1; i++) {
       const a = knotenKeyVon(pfad[i])
       const b = knotenKeyVon(pfad[i + 1])
-      const distA = distVomStart.get(a) ?? 0
-      const distB = distVomStart.get(b) ?? 0
-      const vorKnoten = distA <= distB ? a : b
-      const key = a < b ? `${a}|${b}` : `${b}|${a}`
-      const nvtVor = (vorgelagerterVerteiler.get(vorKnoten) ?? false) || verteilerKnoten.has(vorKnoten)
-      const nvtNach = kanteHatVerteilerDahinter.has(key)
-      if (nvtVor && nvtNach) return true
+      if (kernKnoten.has(a) && kernKnoten.has(b)) return true
     }
     return false
   })
@@ -452,8 +453,10 @@ export function ermittleMaterialProSegment(
     const kundeAuto = bedarf > 0 ? waehleVerbandMitReserve(materialProfil, bedarf, kapazitaetsObergrenzeProSegment[i] || undefined) : null
     // Manuelle Übersteuerung (2026-08-21, Alex: "im Nachhinein kann ich
     // aber keinen einzigen Verbund bearbeiten") gewinnt immer gegen die
-    // automatische Stufenwahl für dieses Segment.
-    const kunde = manuellProSegment[i] ?? kundeAuto
+    // automatische Stufenwahl für dieses Segment — auch ein explizites
+    // material=null ("Verbund gelöscht") darf NICHT durch ?? wieder auf
+    // kundeAuto zurückfallen, deshalb expliziter undefined-Check.
+    const kunde = manuellProSegment[i] !== undefined ? manuellProSegment[i] : kundeAuto
     const back = ueberschriebenProSegment[i] ?? (backbone[i] ? materialProfil.trasse : null)
     if (kunde && back) return { haupt: kunde, zusatz: back }
     if (kunde) return { haupt: kunde, zusatz: null }
@@ -464,25 +467,28 @@ export function ermittleMaterialProSegment(
 
 // Liefert pro Trasse-Segment das manuell gewählte Material, falls für dessen
 // eigene Endpunkte eine Übersteuerung hinterlegt ist (siehe
-// MaterialUebersteuerung in types.ts) — sonst null (automatische Wahl greift
-// wie bisher). Anders als ermittleUeberschriebenesMaterialProSegment (für
-// BackboneVerbindung, die einen ganzen PFAD zwischen zwei Verteilern
-// überschreibt) reicht hier ein reiner Endpunkt-Abgleich ohne Pfadsuche —
-// eine Material-Übersteuerung bezieht sich immer auf GENAU EIN
-// Trasse-Segment. Ein längerer, mehrsegmentiger Verband bekommt beim
-// Übersteuern entsprechend mehrere Einträge, einen je Segment (siehe
-// handleMaterialUebersteuern in page.tsx).
+// MaterialUebersteuerung in types.ts) — sonst undefined (automatische Wahl
+// greift wie bisher). Ein hinterlegter Eintrag mit material=null bedeutet
+// dagegen explizit "kein Material" (2026-08-20, Alex: "Verbund löschen") und
+// muss von "kein Eintrag vorhanden" unterschieden werden, deshalb liefert
+// diese Funktion bewusst drei Zustände statt nur Material-oder-null. Anders
+// als ermittleUeberschriebenesMaterialProSegment (für BackboneVerbindung,
+// die einen ganzen PFAD zwischen zwei Verteilern überschreibt) reicht hier
+// ein reiner Endpunkt-Abgleich ohne Pfadsuche — eine Material-Übersteuerung
+// bezieht sich immer auf GENAU EIN Trasse-Segment. Ein längerer, mehrsegmen-
+// tiger Verband bekommt beim Übersteuern entsprechend mehrere Einträge, einen
+// je Segment (siehe handleMaterialUebersteuern/handleVerbundLoeschen in page.tsx).
 export function ermittleMaterialUebersteuerungProSegment(
   trassePfade: LatLng[][],
   uebersteuerungen: MaterialUebersteuerung[]
-): Array<MaterialEintrag | null> {
-  const ergebnis: Array<MaterialEintrag | null> = trassePfade.map(() => null)
+): Array<MaterialEintrag | null | undefined> {
+  const ergebnis: Array<MaterialEintrag | null | undefined> = trassePfade.map(() => undefined)
   if (uebersteuerungen.length === 0) return ergebnis
 
   const r = (v: number) => Math.round(v * 100000) / 100000
   const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
 
-  const lookup = new Map<string, MaterialEintrag>()
+  const lookup = new Map<string, MaterialEintrag | null>()
   for (const u of uebersteuerungen) {
     const a = nk(u.von), b = nk(u.nach)
     lookup.set(a < b ? `${a}|${b}` : `${b}|${a}`, u.material)
@@ -491,8 +497,8 @@ export function ermittleMaterialUebersteuerungProSegment(
   trassePfade.forEach((pfad, i) => {
     if (pfad.length < 2) return
     const a = nk(pfad[0]), b = nk(pfad[pfad.length - 1])
-    const treffer = lookup.get(a < b ? `${a}|${b}` : `${b}|${a}`)
-    if (treffer) ergebnis[i] = treffer
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`
+    if (lookup.has(key)) ergebnis[i] = lookup.get(key) ?? null
   })
 
   return ergebnis
@@ -503,17 +509,33 @@ export function ermittleMaterialUebersteuerungProSegment(
 // Start-Segment — Grundlage für die Karten-Hervorhebung "kompletter Verlauf
 // dieses Verbands" (2026-08-21, Alex: "möchte den Verlauf des Verbands
 // sehen, auch bei einer Gabelung, wo sich z.B. ein 24x7 in zwei 12x7
-// aufteilt"). Zwei benachbarte Segmente (teilen sich einen Endpunkt) gehören
-// zur selben Instanz, solange beide DASSELBE Material tragen UND tatsächlich
-// eigene Hausanschlüsse darauf hängen — ein reines Backbone-Segment ohne
-// Kundenanschluss-Bedarf (z.B. hinter dem letzten Verteiler Richtung Start)
-// zählt nicht dazu und bildet automatisch die Grenze, ebenso wie die Stelle,
-// an der sich ein Verband durch eine Gabelung in eine kleinere Stufe
-// aufteilt. `hausanschluesseProSegment` muss aus derselben (verteiler-
-// stoppenden) Berechnung wie `materialProSegment` stammen, sonst passt die
-// "hat Hausanschlüsse"-Grenzbedingung nicht zur tatsächlichen Material-Logik.
+// aufteilt") UND für Material-Ersetzen/Löschen (siehe handleMaterialUebersteuern/
+// handleVerbundLoeschen in page.tsx).
+//
+// WICHTIG (2026-08-20, Alex: "wenn ich nur den lila Strich von 2x7 auf 7x7
+// ändern will, ändert er andere auch die daneben liegen"): Zwei benachbarte
+// Segmente gehören zur selben Instanz, solange beide DASSELBE Material tragen
+// UND tatsächlich eigene Hausanschlüsse darauf hängen — das reicht aber
+// alleine NICHT, da an einer Gabelung zwei UNABHÄNGIGE Stichstraßen zufällig
+// auf dieselbe automatische Stufe kommen können. Der Verlauf muss deshalb
+// RICHTUNGSBEWUSST anhand des tatsächlichen Baums ermittelt werden (per
+// baueGraph/dijkstraVon wie in ermittleBackboneSegmente):
+// - aufwärts (Richtung Start) nur die eindeutige Eltern-Kette entlanglaufen,
+//   solange Material übereinstimmt — dabei NIE in andere Kinder desselben
+//   Eltern-Knotens abbiegen (das war der Bug).
+// - abwärts (weg vom Start) ausgehend vom angeklickten Segment selbst (nicht
+//   von aufwärts gefundenen Vorfahren!) in jedes Kind-Segment einzeln
+//   verzweigen, das sein eigenes Material ebenfalls trägt.
+// Ein reines Backbone-Segment ohne Kundenanschluss-Bedarf (z.B. hinter dem
+// letzten Verteiler Richtung Start) zählt nicht dazu und bildet automatisch
+// die Grenze, ebenso wie die Stelle, an der sich ein Verband durch eine
+// Gabelung in eine kleinere Stufe aufteilt. `hausanschluesseProSegment` muss
+// aus derselben (verteiler-stoppenden) Berechnung wie `materialProSegment`
+// stammen, sonst passt die "hat Hausanschlüsse"-Grenzbedingung nicht zur
+// tatsächlichen Material-Logik.
 export function ermittleVerbandSegmente(
   trassePfade: LatLng[][],
+  startpunkt: LatLng,
   materialProSegment: Array<SegmentMaterial | null>,
   hausanschluesseProSegment: string[][],
   startSegmentIdx: number
@@ -526,15 +548,41 @@ export function ermittleVerbandSegmente(
 
   const r = (v: number) => Math.round(v * 100000) / 100000
   const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
-  const endpunkte = trassePfade.map((pfad) => (pfad.length >= 2 ? [nk(pfad[0]), nk(pfad[pfad.length - 1])] : null))
 
-  const anKnoten = new Map<string, number[]>()
-  endpunkte.forEach((eps, i) => {
-    if (!eps) return
-    for (const k of eps) {
-      if (!anKnoten.has(k)) anKnoten.set(k, [])
-      anKnoten.get(k)!.push(i)
-    }
+  const graph = baueGraph(trassePfade)
+  const startKnoten = naechsterKnoten(graph, startpunkt)
+  const distVomStart = startKnoten ? dijkstraVon(graph, startKnoten).dist : new Map<string, number>()
+
+  // Pro Segment: elternseitiger Endpunkt (näher am Start) und kindseitiger
+  // Endpunkt (weiter vom Start weg) — gleiche Technik wie der frühere
+  // vorKnoten in ermittleBackboneSegmente. Ohne erreichbare Distanz (Start
+  // nicht gefunden) bleibt die Richtung undefiniert, dann verhält sich die
+  // Funktion wie zuvor rein ungerichtet über beide Enden.
+  const elternSeite: Array<string | null> = []
+  const kindSeite: Array<string | null> = []
+  trassePfade.forEach((pfad) => {
+    if (pfad.length < 2) { elternSeite.push(null); kindSeite.push(null); return }
+    const a = nk(pfad[0]), b = nk(pfad[pfad.length - 1])
+    const distA = distVomStart.get(a), distB = distVomStart.get(b)
+    if (distA === undefined || distB === undefined) { elternSeite.push(a); kindSeite.push(b); return }
+    if (distA <= distB) { elternSeite.push(a); kindSeite.push(b) }
+    else { elternSeite.push(b); kindSeite.push(a) }
+  })
+
+  // Kind-Segmente je Knoten (alle Segmente, deren elternseitiger Endpunkt
+  // dieser Knoten ist) — für den Abwärts-Fanout.
+  const kindSegmenteAnKnoten = new Map<string, number[]>()
+  elternSeite.forEach((knoten, i) => {
+    if (knoten === null) return
+    if (!kindSegmenteAnKnoten.has(knoten)) kindSegmenteAnKnoten.set(knoten, [])
+    kindSegmenteAnKnoten.get(knoten)!.push(i)
+  })
+
+  // Eltern-Segment je Knoten (das eine Segment, dessen kindseitiger Endpunkt
+  // dieser Knoten ist) — für den eindeutigen Aufwärts-Pfad.
+  const elternSegmentAnKnoten = new Map<string, number>()
+  kindSeite.forEach((knoten, i) => {
+    if (knoten !== null && !elternSegmentAnKnoten.has(knoten)) elternSegmentAnKnoten.set(knoten, i)
   })
 
   function gehoertZurInstanz(i: number): boolean {
@@ -545,18 +593,43 @@ export function ermittleVerbandSegmente(
   }
 
   const besucht = new Set<number>([startSegmentIdx])
+
+  // Aufwärts: eindeutige Eltern-Kette, KEIN Abbiegen in Geschwister-Äste.
+  let cur = startSegmentIdx
+  for (;;) {
+    const eltern = elternSeite[cur]
+    if (eltern === null) break
+    const elternSegment = elternSegmentAnKnoten.get(eltern)
+    if (elternSegment === undefined || besucht.has(elternSegment) || !gehoertZurInstanz(elternSegment)) break
+    besucht.add(elternSegment)
+    cur = elternSegment
+  }
+
+  // Abwärts: nur aus dem eigenen Teilbaum des angeklickten Segments (nicht
+  // aus aufwärts gefundenen Vorfahren). WICHTIG (2026-08-21, Alex: "wenn's
+  // zwei parallel laufen, sind die immer noch beide gemeinsam nur
+  // anklickbar" — drei unabhängige Straßen von einem NVT aus, zufällig alle
+  // 12x7, wurden beim Klick auf eine davon fälschlich alle drei markiert):
+  // KEIN Fanout in mehrere Kinder mehr, selbst wenn alle dasselbe Material
+  // tragen — ein Knoten mit mehr als einem Kind-Segment ist eine echte
+  // Verzweigung (mehrere eigenständige Straßen/Verbünde), an der der
+  // aktuelle Verband-Verlauf endet. Nur eine einzelne, eindeutige
+  // Fortsetzung (genau ein Kind an diesem Knoten) zählt noch als
+  // "derselbe" Verband. Betrifft NICHT den Fall, in dem ein 24x7 in zwei
+  // 12x7 aufteilt (dort unterscheidet sich ohnehin das Material, der
+  // Verlauf endet schon durch die gehoertZurInstanz-Prüfung).
   const stapel = [startSegmentIdx]
   while (stapel.length > 0) {
-    const cur = stapel.pop()!
-    const eps = endpunkte[cur]
-    if (!eps) continue
-    for (const k of eps) {
-      for (const nachbar of anKnoten.get(k) ?? []) {
-        if (besucht.has(nachbar) || !gehoertZurInstanz(nachbar)) continue
-        besucht.add(nachbar)
-        stapel.push(nachbar)
-      }
-    }
+    const knotenSeg = stapel.pop()!
+    const knoten = kindSeite[knotenSeg]
+    if (knoten === null) continue
+    const kinder = kindSegmenteAnKnoten.get(knoten) ?? []
+    if (kinder.length !== 1) continue
+    const [kind] = kinder
+    if (besucht.has(kind) || !gehoertZurInstanz(kind)) continue
+    besucht.add(kind)
+    stapel.push(kind)
   }
+
   return [...besucht]
 }

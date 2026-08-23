@@ -934,6 +934,40 @@ export default function Home() {
     })
   }, [trassePfade, pushHistory])
 
+  // Verbund explizit löschen (2026-08-20, Alex: "Verbund löschen, neuen
+  // Verbund hinzufügen") — anders als handleMaterialUebersteuern(…, null)
+  // (das die Übersteuerung entfernt und damit zur automatischen Stufenwahl
+  // zurückkehrt) legt dies einen Übersteuerungs-Eintrag mit material=null an:
+  // die betroffenen Segmente bekommen dauerhaft KEIN Material, bis die
+  // Hausanschlüsse manuell neu verkabelt oder per "Wiederherstellen"
+  // (handleMaterialUebersteuern(…, null)) auf automatisch zurückgesetzt werden.
+  const handleVerbundLoeschen = useCallback((segmentIdxs: number[]) => {
+    const r = (v: number) => Math.round(v * 100000) / 100000
+    const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+    const betroffeneKeys = new Set(
+      segmentIdxs
+        .map((idx) => trassePfade[idx])
+        .filter((pfad): pfad is LatLng[] => !!pfad && pfad.length >= 2)
+        .map((pfad) => {
+          const a = nk(pfad[0]), b = nk(pfad[pfad.length - 1])
+          return a < b ? `${a}|${b}` : `${b}|${a}`
+        })
+    )
+    pushHistory('Verbund gelöscht')
+    setMaterialUebersteuerungen((prev) => {
+      const bleibt = prev.filter((u) => {
+        const a = nk(u.von), b = nk(u.nach)
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`
+        return !betroffeneKeys.has(key)
+      })
+      const neue = segmentIdxs
+        .map((idx) => trassePfade[idx])
+        .filter((pfad): pfad is LatLng[] => !!pfad && pfad.length >= 2)
+        .map((pfad) => ({ von: pfad[0], nach: pfad[pfad.length - 1], material: null }))
+      return [...bleibt, ...neue]
+    })
+  }, [trassePfade, pushHistory])
+
   // Ordnet jeden bereits einem NVT zugeordneten Hausanschluss neu dem
   // (Luftlinien-)nächsten der AKTUELLEN NVT-Standorte zu — gedacht als
   // Werkzeug nach dem manuellen Verschieben eines oder mehrerer NVT, damit
@@ -1263,6 +1297,7 @@ export default function Home() {
           onBackboneVerbindungErstellen={handleBackboneVerbindungErstellen}
           onBackboneVerbindungFehlerSchliessen={handleBackboneVerbindungFehlerSchliessen}
           onMaterialUebersteuern={handleMaterialUebersteuern}
+          onVerbundLoeschen={handleVerbundLoeschen}
         />
         {nvtModalOffen && (
           <NVTModal

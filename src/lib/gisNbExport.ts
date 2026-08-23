@@ -195,17 +195,23 @@ function leerrohreLayer(projekt: Projekt): GeoJSON.FeatureCollection {
     const bedarf = bedarfProSegment[i] ?? 0
     if (bedarf > 0) {
       const kapazitaetsObergrenze = kapazitaetsObergrenzeProSegment[i] || undefined
-      const stufe = manuellProSegment[i] ?? waehleVerbandMitReserve(profil, bedarf, kapazitaetsObergrenze)
-      features.push({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: coords },
-        properties: {
-          id: id++,
-          ...materialEigenschaften(stufe),
-          lae_lr: laenge,
-          zustand: 2,
-        },
-      })
+      // manuellProSegment[i] === undefined -> keine Übersteuerung, automatisch wählen.
+      // manuellProSegment[i] === null -> Verbund explizit gelöscht, kein Leerrohr exportieren.
+      const stufe = manuellProSegment[i] !== undefined
+        ? manuellProSegment[i]
+        : waehleVerbandMitReserve(profil, bedarf, kapazitaetsObergrenze)
+      if (stufe) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: coords },
+          properties: {
+            id: id++,
+            ...materialEigenschaften(stufe),
+            lae_lr: laenge,
+            zustand: 2,
+          },
+        })
+      }
     }
   })
 
