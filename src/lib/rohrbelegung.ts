@@ -9,7 +9,7 @@ const FARBEN = [
   'Braun', 'Violett', 'Türkis', 'Schwarz', 'Orange', 'Rosa',
 ]
 
-function farbeFuerRohrNr(rohrNr: number): string {
+export function farbeFuerRohrNr(rohrNr: number): string {
   const basisfarbe = FARBEN[(rohrNr - 1) % 12]
   const streifenRunde = Math.floor((rohrNr - 1) / 12)
   return streifenRunde === 0 ? basisfarbe : `${basisfarbe} + ${streifenRunde}x Streifen`

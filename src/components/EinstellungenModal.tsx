@@ -79,6 +79,18 @@ export default function EinstellungenModal({
     setTimeout(() => setGespeichert(false), 1800)
   }
 
+  // Rohr-Farbschema (2026-08-21) — anders als Firmenname/Adresse bewusst
+  // SOFORT gespeichert (wie der Materialkatalog unten), da eine Auswahl aus
+  // festen Optionen kein Tipp-Risiko hat und ein "vergessen zu speichern"
+  // hier nur verwirren würde.
+  const handleRohrFarbschemaAendern = (schema: Firmendaten['rohrFarbschema']) => {
+    setFirmendaten((f) => {
+      const naechster = { ...f, rohrFarbschema: schema }
+      speichereFirmendaten(naechster)
+      return naechster
+    })
+  }
+
   // Materialkatalog: zwei Profile (Firmenstandard / Bundesförderung), je mit
   // Trasse- und Hausanschluss-Material — geräteweit gespeichert, live bei
   // jeder Änderung (wie die Kalkulations-Preise), kein separater Speichern-
@@ -352,6 +364,22 @@ export default function EinstellungenModal({
                 />
               </div>
             ))}
+          </div>
+          <div className="flex items-center justify-between px-3.5 py-2.5 mt-2"
+            style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-md)' }}>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Rohr-Farbschema (Trassenknoten-Panel)</span>
+              <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Welche Rohr-Farben beim Anklicken eines Trassenknotens angezeigt werden.</span>
+            </div>
+            <select
+              value={firmendaten.rohrFarbschema}
+              onChange={(e) => handleRohrFarbschemaAendern(e.target.value as Firmendaten['rohrFarbschema'])}
+              className="px-2.5 py-1.5 text-xs outline-none shrink-0"
+              style={feldStyle}
+            >
+              <option value="gabocom">gabocom</option>
+              <option value="din">DIN EN 60794</option>
+            </select>
           </div>
         </div>
 
