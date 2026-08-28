@@ -727,6 +727,33 @@ const MapView = memo(function MapView({
       const m = materialProSegment[i]?.haupt
       return m ? (m.bezeichnungFirma || `${m.lrArt}-${m.lrAnzahl}`) : ''
     }
+    // Echter Grad je Knoten (unterschiedliche Nachbar-Richtungen aus ALLEN
+    // Trasse-Punkten, nicht nur den Pfad-Array-Grenzen) — unterscheidet eine
+    // echte Gabelung (Grad >= 3) von einem reinen Durchgangspunkt (Grad 2),
+    // an dem zwei Pfad-Einträge nur deshalb aufeinandertreffen, weil OSM
+    // eine durchgehende Straße in mehrere Wege-Fragmente zerlegt (2026-08-28,
+    // Alex, nach Test: "viel zu viele Trassenknoten ... an jedem Eck" — ein
+    // reiner Durchgangspunkt braucht real keine Muffe, auch wenn sich dort
+    // rechnerisch die Kundenanschluss-Stufe verkleinert, weil ein Haus
+    // passiert wurde: Hausanschlüsse zweigen laut Materialkonzept direkt aus
+    // dem durchlaufenden Rohrverband ab, ohne eigene Spleißstelle).
+    const nachbarnVon = new Map<string, Set<string>>()
+    trassePfade.forEach((pfad) => {
+      for (let i = 0; i < pfad.length - 1; i++) {
+        const ka = nk(pfad[i]), kb = nk(pfad[i + 1])
+        if (ka === kb) continue
+        if (!nachbarnVon.has(ka)) nachbarnVon.set(ka, new Set())
+        if (!nachbarnVon.has(kb)) nachbarnVon.set(kb, new Set())
+        nachbarnVon.get(ka)!.add(kb)
+        nachbarnVon.get(kb)!.add(ka)
+      }
+    })
+    // NVT/Schacht haben schon einen eigenen Marker mit eigenem Klick-Panel —
+    // ein zusätzliches rotes X an derselben Stelle wäre nur Verdopplung.
+    const verteilerKeys = new Set<string>([
+      ...nvtStandorte.map((n) => nk(n.position)),
+      ...schachtStandorte.map((s) => nk(s.position)),
+    ])
     const anKnoten = new Map<string, { position: LatLng; segmentIdxs: number[] }>()
     trassePfade.forEach((pfad, i) => {
       if (pfad.length < 2) return
@@ -737,13 +764,15 @@ const MapView = memo(function MapView({
       }
     })
     const ergebnis: Array<{ position: LatLng; segmentIdxs: number[] }> = []
-    for (const eintrag of anKnoten.values()) {
+    for (const [key, eintrag] of anKnoten) {
       if (eintrag.segmentIdxs.length < 2) continue
+      if (verteilerKeys.has(key)) continue
+      if ((nachbarnVon.get(key)?.size ?? 0) < 3) continue
       const keys = new Set(eintrag.segmentIdxs.map(materialKeyVon))
       if (keys.size > 1) ergebnis.push(eintrag)
     }
     return ergebnis
-  }, [trassePfade, materialProSegment])
+  }, [trassePfade, materialProSegment, nvtStandorte, schachtStandorte])
 
   // Alle Punkte, in denen eine Verband-Linie sichtbar "landen" soll (siehe
   // pfadEndenEinrasten oben) — NVT, Schächte und Trassenknoten.
