@@ -1800,7 +1800,7 @@ const MapView = memo(function MapView({
           : kundeAnzahl > 0 ? 'Kundenanschluss-Verband-Stufenwechsel (Gabelung)'
           : 'Materialwechsel'
         return (
-          <div className="absolute bottom-3 left-64 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-2 max-w-72"
+          <div className="absolute bottom-3 left-64 z-1000 rounded-2xl shadow-lg p-3 flex flex-col gap-2 max-w-96"
             style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #dc2626' }}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] text-gray-500 uppercase tracking-wider">✕ Trassenknoten — {knoten.segmentIdxs.length} Segmente treffen sich hier</span>
@@ -1808,14 +1808,23 @@ const MapView = memo(function MapView({
             </div>
             <div className="flex flex-col gap-0.5">
               <span className="text-xs font-medium" style={{ color: '#f87171' }}>{knotenTyp}</span>
-              <span className="text-[10px] text-gray-600">Farbgleiche Verbünde werden wo möglich durchverbunden.</span>
+              <span className="text-[10px] text-gray-600">Farbgleiche Verbünde werden wo möglich durchverbunden. Klick auf einen Verbund unten zeigt dessen kompletten Verlauf auf der Karte.</span>
             </div>
-            <div className="flex flex-col gap-2" style={{ maxHeight: 260, overflowY: 'auto' }}>
+            <div className="flex flex-col gap-2" style={{ maxHeight: 340, overflowY: 'auto' }}>
               {knoten.segmentIdxs.map((segIdx) => {
                 const material = materialProSegment[segIdx]
                 return (
-                  <div key={segIdx} className="flex flex-col gap-1 pb-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <span className="text-[10px] text-gray-600">Segment {segIdx + 1}</span>
+                  <button
+                    key={segIdx}
+                    onClick={() => {
+                      setAusgewaehlterTrassenknotenIdx(null)
+                      setAusgewaehltesSegmentNormal(segIdx)
+                      setMaterialAuswahlOffen(false)
+                    }}
+                    className="flex flex-col gap-1 pb-1.5 text-left transition-colors hover:brightness-125"
+                    style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                  >
+                    <span className="text-[10px] text-gray-600">Segment {segIdx + 1} · auf Karte zeigen →</span>
                     {material ? (
                       <>
                         {materialMitRohrfarben(material.haupt)}
@@ -1824,7 +1833,7 @@ const MapView = memo(function MapView({
                     ) : (
                       <span className="text-xs text-gray-500">Kein Material zugewiesen</span>
                     )}
-                  </div>
+                  </button>
                 )
               })}
             </div>

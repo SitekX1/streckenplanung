@@ -163,25 +163,94 @@ export function berechneFaserbedarfProSegment(
 // reinen Backbone-Zuführung zwischen Dorf A und Dorf B mitgezählt, was dort
 // zusätzlich zum Backbone einen (unnötigen) Kundenanschluss-Sammelverband
 // ausgelöst hat (Doppelbelegung, siehe ermittleMaterialProSegment).
+// 2026-08-28, Alex an echten Projektdaten ("Test_Projekt.json", Brunnen):
+// "klickt man einen Verbund an, markiert er das halbe Dorf" — 246 von 317
+// Hausanschlüssen liefen auf EIN einziges Segment direkt am Startpunkt.
+// Ursache: die vorherige "stoppt am ERSTEN Verteiler Richtung Start"-Logik
+// nahm an, dass der kürzeste Weg vom Haus zum GLOBALEN Startpunkt zwangsläufig
+// über den Verteiler läuft, dem das Haus tatsächlich zugewiesen ist (siehe
+// nvtStandorte[i].hausanschlussIds) — das stimmt nur, solange die Trasse ein
+// reiner Baum ist. Mit Ringschluss-Schleifen (fuegeKurzeRingschluesseHinzu in
+// steinerbaum.ts) kann der netzweit kürzeste Weg zum Start an genau diesem
+// Verteiler komplett vorbeilaufen, wodurch die Last fast bis zum Startpunkt
+// durchgereicht wurde. Jetzt läuft jedes Haus stattdessen zu SEINEM EIGENEN,
+// tatsächlich zugewiesenen Verteiler (ein separater Dijkstra-Baum pro
+// Verteiler statt einem gemeinsamen vom Startpunkt aus) — endet dort von
+// selbst, kein Stop-Set mehr nötig.
+function verteilerPositionProHausId(
+  nvtStandorte: NvtStandort[],
+  schachtStandorte: SchachtStandort[]
+): Map<string, LatLng> {
+  const map = new Map<string, LatLng>()
+  for (const nvt of nvtStandorte) for (const id of nvt.hausanschlussIds) map.set(id, nvt.position)
+  for (const schacht of schachtStandorte) for (const id of schacht.hausanschlussIds) map.set(id, schacht.position)
+  return map
+}
+
+function berechneLastProSegmentZuVerteiler(
+  trassePfade: LatLng[][],
+  quellen: Array<{ position: LatLng; gewicht: number; verteilerPosition: LatLng }>
+): number[] {
+  const leer = trassePfade.map(() => 0)
+  if (trassePfade.length === 0) return leer
+
+  const graph = baueGraph(trassePfade)
+  const r = (v: number) => Math.round(v * 100000) / 100000
+  const posKey = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+
+  const baumProVerteiler = new Map<string, { dist: Map<string, number>; prev: Map<string, string> }>()
+  const holeBaum = (verteilerPosition: LatLng) => {
+    const key = posKey(verteilerPosition)
+    if (!baumProVerteiler.has(key)) {
+      const knoten = naechsterKnoten(graph, verteilerPosition)
+      baumProVerteiler.set(key, knoten ? dijkstraVon(graph, knoten) : { dist: new Map(), prev: new Map() })
+    }
+    return baumProVerteiler.get(key)!
+  }
+
+  const kantenLast = new Map<string, number>()
+  for (const { position, gewicht, verteilerPosition } of quellen) {
+    if (gewicht <= 0) continue
+    const { dist, prev } = holeBaum(verteilerPosition)
+    const knoten = naechsterKnoten(graph, position)
+    if (!knoten || !dist.has(knoten)) continue
+    let cur = knoten
+    while (prev.has(cur)) {
+      const vor = prev.get(cur)!
+      const key = cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`
+      kantenLast.set(key, (kantenLast.get(key) ?? 0) + gewicht)
+      cur = vor
+    }
+  }
+
+  return trassePfade.map((pfad) => {
+    if (pfad.length < 2) return 0
+    let last = 0
+    for (let i = 0; i < pfad.length - 1; i++) {
+      const a = posKey(pfad[i])
+      const b = posKey(pfad[i + 1])
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`
+      last = Math.max(last, kantenLast.get(key) ?? 0)
+    }
+    return last
+  })
+}
+
 export function berechneHausanschlussAnzahlProSegment(
   trassePfade: LatLng[][],
-  startpunkt: LatLng,
+  _startpunkt: LatLng,
   hausanschluesse: Hausstich[],
   nvtStandorte: NvtStandort[],
   schachtStandorte: SchachtStandort[]
 ): number[] {
-  const quellen = hausanschluesse.map((h) => ({ position: h.trassenPunkt, gewicht: 1 }))
-  const graph = baueGraph(trassePfade)
-  const verteilerKnoten = new Set<string>()
-  for (const nvt of nvtStandorte) {
-    const k = naechsterKnoten(graph, nvt.position)
-    if (k) verteilerKnoten.add(k)
-  }
-  for (const schacht of schachtStandorte) {
-    const k = naechsterKnoten(graph, schacht.position)
-    if (k) verteilerKnoten.add(k)
-  }
-  return berechneLastProSegment(trassePfade, startpunkt, quellen, verteilerKnoten)
+  const verteilerProHaus = verteilerPositionProHausId(nvtStandorte, schachtStandorte)
+  const quellen = hausanschluesse
+    .map((h) => {
+      const verteilerPosition = verteilerProHaus.get(h.id)
+      return verteilerPosition ? { position: h.trassenPunkt, gewicht: 1, verteilerPosition } : null
+    })
+    .filter((q): q is { position: LatLng; gewicht: number; verteilerPosition: LatLng } => !!q)
+  return berechneLastProSegmentZuVerteiler(trassePfade, quellen)
 }
 
 // Physische NVT-Kapazität als Obergrenze je Segment — HIER ist die
@@ -204,22 +273,22 @@ export function berechneNvtKapazitaetsbedarfProSegment(
 }
 
 // Liefert pro Trasse-Segment die IDs genau der Hausanschlüsse, deren
-// tatsächlicher Abzweigpunkt (trassenPunkt) über dieses Segment Richtung
-// Start läuft — Grundlage für die Karten-Klickinfo (2026-08-13, Alex: "ich
-// möchte sehen, auf welchem Segment welche Kunden hängen"). Analog zu
-// berechneLastProSegment(), aber mit ID-Mengen statt Zahlen, damit man nicht
-// nur die Anzahl, sondern die konkreten Adressen anzeigen/hervorheben kann.
+// tatsächlicher Abzweigpunkt (trassenPunkt) über dieses Segment zu SEINEM
+// zugewiesenen Verteiler läuft — Grundlage für die Karten-Klickinfo
+// (2026-08-13, Alex: "ich möchte sehen, auf welchem Segment welche Kunden
+// hängen"). Analog zu berechneLastProSegmentZuVerteiler(), aber mit
+// ID-Mengen statt Zahlen, damit man nicht nur die Anzahl, sondern die
+// konkreten Adressen anzeigen/hervorheben kann.
 //
-// WICHTIG (2026-08-21, dieselbe Korrektur wie bei berechneHausanschlussAnzahlProSegment):
-// stoppt am jeweils ERSTEN Verteiler (NVT/Schacht) Richtung Start — sonst
-// tauchte ein Hausanschluss auch auf der reinen Backbone-Zuführung hinter
-// seinem eigenen NVT wieder in der Liste auf, obwohl dort physisch gar kein
-// Kundenanschluss-Kabel mehr liegt (nur noch Backbone). Wird u.a. für die
-// Verband-Hervorhebung gebraucht (ermittleVerbandSegmente) — die Hausliste
-// muss exakt zum tatsächlich dort verlegten Material passen.
+// 2026-08-28 (dieselbe Korrektur wie bei berechneHausanschlussAnzahlProSegment,
+// siehe dortiger Kommentar): läuft jetzt zum tatsächlich zugewiesenen
+// Verteiler jedes Hauses statt zum globalen Startpunkt mit Stop-am-ersten-
+// Verteiler-Heuristik — die schlug bei Ringschluss-Schleifen fehl und
+// markierte an echten Projektdaten 246 von 317 Hausanschlüssen auf einem
+// einzigen, startpunktnahen Segment.
 export function ermittleHausanschluesseProSegment(
   trassePfade: LatLng[][],
-  startpunkt: LatLng,
+  _startpunkt: LatLng,
   hausanschluesse: Hausstich[],
   nvtStandorte: NvtStandort[] = [],
   schachtStandorte: SchachtStandort[] = []
@@ -228,38 +297,36 @@ export function ermittleHausanschluesseProSegment(
   if (trassePfade.length === 0) return leer
 
   const graph = baueGraph(trassePfade)
-  const startKnoten = naechsterKnoten(graph, startpunkt)
-  if (!startKnoten) return leer
+  const verteilerProHaus = verteilerPositionProHausId(nvtStandorte, schachtStandorte)
 
-  const { dist: distVomStart, prev } = dijkstraVon(graph, startKnoten)
-
-  const verteilerKnoten = new Set<string>()
-  for (const nvt of nvtStandorte) {
-    const k = naechsterKnoten(graph, nvt.position)
-    if (k) verteilerKnoten.add(k)
-  }
-  for (const schacht of schachtStandorte) {
-    const k = naechsterKnoten(graph, schacht.position)
-    if (k) verteilerKnoten.add(k)
+  const baumProVerteiler = new Map<string, { dist: Map<string, number>; prev: Map<string, string> }>()
+  const r = (v: number) => Math.round(v * 100000) / 100000
+  const posKey = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+  const holeBaum = (verteilerPosition: LatLng) => {
+    const key = posKey(verteilerPosition)
+    if (!baumProVerteiler.has(key)) {
+      const knoten = naechsterKnoten(graph, verteilerPosition)
+      baumProVerteiler.set(key, knoten ? dijkstraVon(graph, knoten) : { dist: new Map(), prev: new Map() })
+    }
+    return baumProVerteiler.get(key)!
   }
 
   const kantenHausIds = new Map<string, Set<string>>()
   for (const h of hausanschluesse) {
+    const verteilerPosition = verteilerProHaus.get(h.id)
+    if (!verteilerPosition) continue
+    const { dist, prev } = holeBaum(verteilerPosition)
     const knoten = naechsterKnoten(graph, h.trassenPunkt)
-    if (!knoten || !distVomStart.has(knoten)) continue
+    if (!knoten || !dist.has(knoten)) continue
     let cur = knoten
     while (prev.has(cur)) {
       const vor = prev.get(cur)!
       const key = cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`
       if (!kantenHausIds.has(key)) kantenHausIds.set(key, new Set())
       kantenHausIds.get(key)!.add(h.id)
-      if (verteilerKnoten.has(vor)) break
       cur = vor
     }
   }
-
-  const r = (v: number) => Math.round(v * 100000) / 100000
-  const knotenKeyVon = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
 
   return trassePfade.map((pfad) => {
     if (pfad.length < 2) return []
@@ -268,8 +335,8 @@ export function ermittleHausanschluesseProSegment(
     // im Normalfall ist die Menge auf jeder Teilkante ohnehin identisch.
     const ids = new Set<string>()
     for (let i = 0; i < pfad.length - 1; i++) {
-      const a = knotenKeyVon(pfad[i])
-      const b = knotenKeyVon(pfad[i + 1])
+      const a = posKey(pfad[i])
+      const b = posKey(pfad[i + 1])
       const key = a < b ? `${a}|${b}` : `${b}|${a}`
       for (const id of kantenHausIds.get(key) ?? []) ids.add(id)
     }
