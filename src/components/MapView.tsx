@@ -9,7 +9,7 @@ import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
 import { Address, BackboneVerbindung, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort, MaterialUebersteuerung } from '../lib/types'
-import { ermittleHausanschluesseProSegment, ermittleMaterialProSegment, ermittleMaterialUebersteuerungProSegment, ermittleVerbandSegmente } from '../lib/faserdimensionierung'
+import { ermittleBackboneSegmente, ermittleHausanschluesseProSegment, ermittleMaterialProSegment, ermittleMaterialUebersteuerungProSegment, ermittleVerbandSegmente } from '../lib/faserdimensionierung'
 import { aktivesMaterialProfil, lrArtLabel, MaterialEintrag } from '../lib/materialkatalog'
 import { rohrFarbeFuerRohrNr } from '../lib/rohrFarbschema'
 import { ladeFirmendaten } from '../lib/firmendaten'
@@ -660,6 +660,14 @@ const MapView = memo(function MapView({
     () => ermittleMaterialProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen),
     [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen]
   )
+  // Separat vorgehalten (nicht nur aus materialProSegment abgeleitet) für die
+  // Trassenknoten-Filterung und die Knotentyp-Anzeige unten — dort muss
+  // zuverlässig unterscheidbar sein, ob ein Segment WIRKLICH Backbone ist,
+  // nicht nur zufällig dasselbe "haupt"-Material zeigt.
+  const backboneProSegment = useMemo(
+    () => (startpunkt ? ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte) : trassePfade.map(() => false)),
+    [trassePfade, startpunkt, nvtStandorte, schachtStandorte]
+  )
   // Ist das Segment gerade manuell übersteuert? Nur fürs Klick-Panel (zeigt
   // "manuell gesetzt" + "Automatisch zurücksetzen"-Option statt der
   // Material-Auswahl bei einem bereits übersteuerten Segment).
@@ -768,11 +776,20 @@ const MapView = memo(function MapView({
       if (eintrag.segmentIdxs.length < 2) continue
       if (verteilerKeys.has(key)) continue
       if ((nachbarnVon.get(key)?.size ?? 0) < 3) continue
+      // Nur zählen, wenn Backbone an diesem Knoten beteiligt ist (echter
+      // Backbone-Fork, oder Übergang Backbone -> Kundenanschluss) — ein
+      // reiner Kundenanschluss-Stufenwechsel an einer Straßengabelung (der
+      // weitaus häufigste Fall) braucht laut Materialkonzept keine eigene
+      // Spleißstelle, Hausanschlüsse zweigen direkt aus dem durchlaufenden
+      // Rohrverband ab (2026-08-28, Alex an echten Projektdaten: "so viele
+      // Trassenknoten würden wir niemals bauen" — Auswertung ergab 13 von 27
+      // reine Kundenanschluss-Stufenwechsel ohne jedes Backbone-Segment).
+      if (!eintrag.segmentIdxs.some((i) => backboneProSegment[i])) continue
       const keys = new Set(eintrag.segmentIdxs.map(materialKeyVon))
       if (keys.size > 1) ergebnis.push(eintrag)
     }
     return ergebnis
-  }, [trassePfade, materialProSegment, nvtStandorte, schachtStandorte])
+  }, [trassePfade, materialProSegment, nvtStandorte, schachtStandorte, backboneProSegment])
 
   // Alle Punkte, in denen eine Verband-Linie sichtbar "landen" soll (siehe
   // pfadEndenEinrasten oben) — NVT, Schächte und Trassenknoten.
@@ -1776,10 +1793,8 @@ const MapView = memo(function MapView({
         // der angrenzenden "haupt"-Materialien: läuft hier Backbone auf
         // Kundenanschluss über, oder teilt sich ein Kundenanschluss-Verband
         // auf mehrere Stufen auf (Gabelung)?
-        const hauptMaterialien = knoten.segmentIdxs.map((i) => materialProSegment[i]?.haupt).filter((m): m is MaterialEintrag => !!m)
-        const istBackboneMaterial = (m: MaterialEintrag) => m === materialProfil.trasse
-        const backboneAnzahl = hauptMaterialien.filter(istBackboneMaterial).length
-        const kundeAnzahl = hauptMaterialien.length - backboneAnzahl
+        const backboneAnzahl = knoten.segmentIdxs.filter((i) => backboneProSegment[i]).length
+        const kundeAnzahl = knoten.segmentIdxs.length - backboneAnzahl
         const knotenTyp =
           backboneAnzahl > 0 && kundeAnzahl > 0 ? 'Übergang Backbone → Kundenanschluss-Verband'
           : kundeAnzahl > 0 ? 'Kundenanschluss-Verband-Stufenwechsel (Gabelung)'

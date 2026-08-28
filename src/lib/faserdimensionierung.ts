@@ -278,34 +278,38 @@ export function ermittleHausanschluesseProSegment(
 }
 
 // Bestimmt pro Trasse-Segment, ob es eine echte Backbone-Verbindung
-// darstellt (Startpunkt-zu-Verteiler, Verteiler-zu-Verteiler, oder ein
-// Ringschluss zwischen zwei bereits erschlossenen Punkten) — nur dort gehört
-// das feste Backbone-Material hin (2026-08-12, Alex: "nicht jede Trasse
-// braucht zwei Leerrohrsegmente, es kommt darauf an ob eine SV/NVT-zu-NVT-
-// Verbindung da ist"; klargestellt: "vom Startpunkt bis zum nächstliegenden
-// NVT ist immer Backbone", der Startpunkt zählt hier also selbst als
-// Verteiler-Ende — daher unten mit in verteilerKnoten aufgenommen).
+// darstellt (Startpunkt-zu-Verteiler, Verteiler-zu-Verteiler) — nur dort
+// gehört das feste Backbone-Material hin (2026-08-12, Alex: "nicht jede
+// Trasse braucht zwei Leerrohrsegmente, es kommt darauf an ob eine SV/NVT-
+// zu-NVT-Verbindung da ist"; klargestellt: "vom Startpunkt bis zum
+// nächstliegenden NVT ist immer Backbone", der Startpunkt zählt hier also
+// selbst als Verteiler-Ende — daher unten mit in verteilerKnoten
+// aufgenommen).
 //
-// Algorithmus: "Leaf Pruning" statt reiner Dijkstra-Baum-Herleitung — iterativ
-// werden alle Nicht-Verteiler-Knoten mit Grad ≤ 1 entfernt (samt ihrer
-// Kanten), bis nichts mehr entfernbar ist. Übrig bleibt der minimale
-// zusammenhängende Kern-Teilgraph, der alle Verteiler (inkl. Start)
-// verbindet — ein Segment ist Backbone, wenn BEIDE Endpunkte im Kern liegen.
-// Reine Kundenanschluss-Stiche (Sackgassen ohne weiteren Verteiler) enden
-// zwangsläufig in einem entfernten Blatt und bleiben damit korrekt
-// ausgeschlossen — läuft nur noch der Kundenanschluss-Sammelverband (siehe
-// berechneHausanschlussAnzahlProSegment), ggf. überlagert mit dem Backbone
-// auf Segmenten, wo beides zutrifft (Doppelbelegung).
+// Algorithmus (2026-08-28 neu, siehe Alex nach Test an echten Projektdaten:
+// "80% der Trasse ist mit Backbone belegt, das stimmt auf keinen Fall" /
+// "der viermal zwanzig läuft meistens komplett durch von NVT zu NVT ... das
+// wäre nur der Fall, wenn sich der Backbone wirklich in zwei Richtungen
+// aufteilt"): Steiner-Baum-Näherung (klassische MST-über-paarweise-
+// Kürzeste-Wege-Konstruktion) statt Leaf-Pruning — verbindet iterativ den
+// jeweils NÄCHSTEN noch nicht angebundenen Verteiler an die bereits
+// verbundene Gruppe (Prim-artig) und übernimmt dafür NUR die Kanten des
+// tatsächlich kürzesten Straßen-Pfads zwischen den beiden. Ergebnis ist die
+// minimale Kantenmenge, die alle Verteiler verbindet — bei in einer Reihe
+// liegenden NVTs entsteht dadurch automatisch eine Kette (NVT1-NVT2-NVT3),
+// eine Verzweigung nur dort, wo der kürzeste Pfad zu einem weiteren
+// Verteiler tatsächlich an einem Zwischenpunkt abzweigt.
 //
-// WICHTIG (2026-08-20, Alex: "Backbone-Bereich hat überall Lücken, die
-// Striche enden einfach"): die frühere Implementierung leitete Backbone rein
-// aus EINEM Dijkstra-Kürzeste-Wege-Baum ab (ein Elternteil pro Knoten) — eine
-// echte Schleife (siehe fuegeKurzeRingschluesseHinzu in steinerbaum.ts, fügt
-// bewusst eine zweite, redundante Verbindung zwischen zwei Stichstraßen-Enden
-// ein) hat aber zwangsläufig eine Kante, die auf KEINEM Kürzeste-Wege-Baum
-// liegt — die bekam dadurch nie Material, obwohl real verlegtes Kabel. Ein
-// Knoten auf einer Schleife hat nie Grad 1 und wird beim Leaf-Pruning nie
-// entfernt, die Schleife bleibt also korrekt vollständig im Kern erhalten.
+// Vorherige Implementierung ("Leaf Pruning": iteratives Entfernen aller
+// Nicht-Verteiler-Knoten mit Grad ≤ 1) hatte einen Bug: ein Ringschluss
+// (siehe fuegeKurzeRingschluesseHinzu in steinerbaum.ts — schließt kurze
+// Stichstraßen-Schleifen rein zur Verkürzung der NVT-Platzierungs-Distanz,
+// UNABHÄNGIG davon ob ein Verteiler auf der Schleife liegt) hat nie einen
+// Grad-1-Knoten und wurde daher nie entfernt, selbst wenn kein einziger
+// Verteiler auf der Schleife lag — jede solche rein kosmetische
+// Kundenanschluss-Schleife wurde dadurch fälschlich komplett als Backbone
+// eingestuft (an echten Projektdaten verifiziert: 54% "Backbone"-Anteil,
+// nach dem Fix deutlich weniger, siehe _debug_analyze.ts).
 export function ermittleBackboneSegmente(
   trassePfade: LatLng[][],
   startpunkt: LatLng,
@@ -332,25 +336,39 @@ export function ermittleBackboneSegmente(
     if (k) verteilerKnoten.add(k)
   }
 
-  const grad = new Map<string, number>()
-  for (const [knoten, info] of graph) grad.set(knoten, info.nachbarn.length)
-
-  const entfernt = new Set<string>()
-  const queue: string[] = [...grad.entries()]
-    .filter(([knoten, g]) => g <= 1 && !verteilerKnoten.has(knoten))
-    .map(([knoten]) => knoten)
-  while (queue.length > 0) {
-    const knoten = queue.pop()!
-    if (entfernt.has(knoten) || verteilerKnoten.has(knoten)) continue
-    entfernt.add(knoten)
-    for (const nachbar of graph.get(knoten)?.nachbarn ?? []) {
-      if (entfernt.has(nachbar.zu) || verteilerKnoten.has(nachbar.zu)) continue
-      const neuerGrad = (grad.get(nachbar.zu) ?? 0) - 1
-      grad.set(nachbar.zu, neuerGrad)
-      if (neuerGrad <= 1) queue.push(nachbar.zu)
+  const kernKanten = new Set<string>() // "a|b" (sortierte Knoten-Keys)
+  const verteilerListe = [...verteilerKnoten]
+  if (verteilerListe.length > 1) {
+    const verbunden = new Set<string>([verteilerListe[0]])
+    const dijkstraCache = new Map<string, { dist: Map<string, number>; prev: Map<string, string> }>()
+    const holeDijkstra = (von: string) => {
+      if (!dijkstraCache.has(von)) dijkstraCache.set(von, dijkstraVon(graph, von))
+      return dijkstraCache.get(von)!
+    }
+    while (verbunden.size < verteilerListe.length) {
+      let bestZiel: string | null = null
+      let bestDist = Infinity
+      let bestPrev: Map<string, string> | null = null
+      for (const von of verbunden) {
+        const { dist, prev } = holeDijkstra(von)
+        for (const ziel of verteilerListe) {
+          if (verbunden.has(ziel)) continue
+          const d = dist.get(ziel) ?? Infinity
+          if (d < bestDist) { bestDist = d; bestZiel = ziel; bestPrev = prev }
+        }
+      }
+      // Kein weiterer Verteiler über die Trasse erreichbar (getrennter
+      // Teilgraph) — Rest bleibt ohne Backbone-Zuordnung, kein Endlosloop.
+      if (!bestZiel || !bestPrev || bestDist === Infinity) break
+      let cur = bestZiel
+      while (bestPrev.has(cur)) {
+        const vor = bestPrev.get(cur)!
+        kernKanten.add(cur < vor ? `${cur}|${vor}` : `${vor}|${cur}`)
+        cur = vor
+      }
+      verbunden.add(bestZiel)
     }
   }
-  const kernKnoten = new Set([...grad.keys()].filter((k) => !entfernt.has(k)))
 
   const r = (v: number) => Math.round(v * 100000) / 100000
   const knotenKeyVon = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
@@ -360,7 +378,8 @@ export function ermittleBackboneSegmente(
     for (let i = 0; i < pfad.length - 1; i++) {
       const a = knotenKeyVon(pfad[i])
       const b = knotenKeyVon(pfad[i + 1])
-      if (kernKnoten.has(a) && kernKnoten.has(b)) return true
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`
+      if (kernKanten.has(key)) return true
     }
     return false
   })
