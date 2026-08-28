@@ -150,6 +150,73 @@ function versetzePfadSenkrecht(pfad: LatLng[], meterVersatz: number): LatLng[] {
   })
 }
 
+// Wie versetzePfadSenkrecht, aber der Versatz läuft an den Enden, die NICHT
+// nahtlos an ein gleich-materialiges Doppelbelegungs-Nachbarsegment
+// anschließen, über eine kurze Strecke auf 0 aus statt abrupt beim vollen
+// Wert zu starten (2026-08-28, Alex: "die Linie bricht sichtbar ab, sobald
+// Kurve/Seitenstraße kommt") — an genau dieser Stelle wechselt ein Segment
+// meist von "nur Backbone" (zentriert, kein Versatz) zu "Backbone +
+// Kundenanschluss" (versetzt), der harte Sprung sah wie ein Linienabriss
+// aus. Reine Darstellungs-Korrektur, NICHT für Klick-Trefferflächen (die
+// bleiben beim vollen Versatz aus versetzePfadSenkrecht).
+const DOPPELBELEGUNG_TAPER_METER = 3
+function versetzePfadSenkrechtGetapert(
+  pfad: LatLng[], meterVersatz: number, taperStart: boolean, taperEnd: boolean
+): LatLng[] {
+  const METER_PRO_GRAD_LAT = 111_320
+  const kumDist: number[] = [0]
+  for (let i = 1; i < pfad.length; i++) kumDist.push(kumDist[i - 1] + haversineMeter(pfad[i - 1], pfad[i]))
+  const gesamt = kumDist[kumDist.length - 1]
+  const taperLaenge = Math.min(DOPPELBELEGUNG_TAPER_METER, gesamt / 2)
+  return pfad.map((p, i) => {
+    const von = pfad[Math.max(0, i - 1)]
+    const nach = pfad[Math.min(pfad.length - 1, i + 1)]
+    const cosLat = Math.cos((p.lat * Math.PI) / 180)
+    const dxMeter = (nach.lng - von.lng) * METER_PRO_GRAD_LAT * cosLat
+    const dyMeter = (nach.lat - von.lat) * METER_PRO_GRAD_LAT
+    const laenge = Math.hypot(dxMeter, dyMeter)
+    if (laenge < 1e-6) return p
+    let faktor = 1
+    if (taperLaenge > 0) {
+      if (taperStart) faktor = Math.min(faktor, kumDist[i] / taperLaenge)
+      if (taperEnd) faktor = Math.min(faktor, (gesamt - kumDist[i]) / taperLaenge)
+    }
+    const versatz = meterVersatz * Math.max(0, Math.min(1, faktor))
+    const nx = (-dyMeter / laenge) * versatz
+    const ny = (dxMeter / laenge) * versatz
+    return { lat: p.lat + ny / METER_PRO_GRAD_LAT, lng: p.lng + nx / (METER_PRO_GRAD_LAT * cosLat) }
+  })
+}
+
+// Lässt eine gerenderte Linie exakt im nächstgelegenen NVT-/Schacht-/
+// Trassenknoten-Marker "landen" statt knapp daneben aufzuhören — 2026-08-28,
+// Alex: "die Verbände sollen explizit IM NVT/Trassenknoten enden, nicht
+// daneben Stopp haben". Ursache des Spalts: die gespeicherte Marker-Position
+// kann nach manuellem Verschieben oder erneutem Segmentieren der Trasse
+// leicht von der tatsächlichen Linien-Koordinate abweichen. Rein visuell —
+// verändert nur die gerenderten Endpunkte, nie die gespeicherten Trasse-Daten.
+const MARKER_EINRASTEN_METER = 8
+function pfadEndenEinrasten(pfad: LatLng[], marker: LatLng[]): LatLng[] {
+  if (pfad.length === 0 || marker.length === 0) return pfad
+  const naechster = (p: LatLng): LatLng | null => {
+    let best: LatLng | null = null
+    let bestDist = MARKER_EINRASTEN_METER
+    for (const m of marker) {
+      const d = haversineMeter(p, m)
+      if (d < bestDist) { bestDist = d; best = m }
+    }
+    return best
+  }
+  const result = pfad
+  const start = naechster(result[0])
+  const ende = naechster(result[result.length - 1])
+  if (!start && !ende) return result
+  const kopie = [...result]
+  if (start) kopie[0] = start
+  if (ende) kopie[kopie.length - 1] = ende
+  return kopie
+}
+
 // Sucht beim Ziehen eines Punkts das nächstgelegene Schnapp-Ziel — entweder
 // ein bestehender Punkt (Vertex) auf irgendeinem Trasse-Pfad, oder die
 // Projektion auf eine Pfad-Linie selbst (falls näher als jeder einzelne
@@ -678,6 +745,50 @@ const MapView = memo(function MapView({
     return ergebnis
   }, [trassePfade, materialProSegment])
 
+  // Alle Punkte, in denen eine Verband-Linie sichtbar "landen" soll (siehe
+  // pfadEndenEinrasten oben) — NVT, Schächte und Trassenknoten.
+  const alleMarkerPositionen = useMemo(
+    () => [
+      ...nvtStandorte.map((n) => n.position),
+      ...schachtStandorte.map((s) => s.position),
+      ...trassenKnotenPunkte.map((k) => k.position),
+    ],
+    [nvtStandorte, schachtStandorte, trassenKnotenPunkte]
+  )
+
+  // Pro Doppelbelegungs-Segment: an welchem Ende (Start/Ende des Pfads) muss
+  // der Versatz auf 0 auslaufen (siehe versetzePfadSenkrechtGetapert)? Nur
+  // dort, wo KEIN benachbartes Segment mit identischem Haupt-/Zusatzmaterial
+  // anschließt — zwischen zwei durchgehenden Doppelbelegungs-Segmenten (z.B.
+  // nach segmentiereAnKreuzungen an einer harmlosen Kurve ohne echten
+  // Materialwechsel) soll der Versatz nahtlos durchlaufen, kein künstliches
+  // Einschnüren an jeder Zwischen-Kreuzung.
+  const doppelbelegungTaperProSegment = useMemo(() => {
+    const r = (v: number) => Math.round(v * 100000) / 100000
+    const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+    const anEndpunkt = new Map<string, number[]>()
+    trassePfade.forEach((pfad, i) => {
+      if (pfad.length < 2 || !materialProSegment[i]?.zusatz) return
+      for (const punkt of [pfad[0], pfad[pfad.length - 1]]) {
+        const key = nk(punkt)
+        if (!anEndpunkt.has(key)) anEndpunkt.set(key, [])
+        anEndpunkt.get(key)!.push(i)
+      }
+    })
+    const passtZusammen = (i: number, j: number) => {
+      const mi = materialProSegment[i], mj = materialProSegment[j]
+      return !!mi?.zusatz && !!mj?.zusatz && mi.haupt.farbe === mj.haupt.farbe && mi.zusatz.farbe === mj.zusatz.farbe
+    }
+    const ergebnis = new Map<number, [boolean, boolean]>()
+    trassePfade.forEach((pfad, i) => {
+      if (pfad.length < 2 || !materialProSegment[i]?.zusatz) return
+      const startNachbarn = (anEndpunkt.get(nk(pfad[0])) ?? []).some((j) => j !== i && passtZusammen(i, j))
+      const endNachbarn = (anEndpunkt.get(nk(pfad[pfad.length - 1])) ?? []).some((j) => j !== i && passtZusammen(i, j))
+      ergebnis.set(i, [!startNachbarn, !endNachbarn])
+    })
+    return ergebnis
+  }, [trassePfade, materialProSegment])
+
   // Einfarbige Segmente (kein Doppelbelegung) — normales, Canvas-optimiertes
   // Rendering, gruppiert nach Farbe wie bisher.
   const trassePfadeNachFarbeOhneFeldweg = useMemo(() => {
@@ -687,10 +798,10 @@ const MapView = memo(function MapView({
       if (materialProSegment[i]?.zusatz) return // Doppelbelegung, siehe unten
       const farbe = farbeProSegment[i] ?? trasseFarbe
       if (!gruppen.has(farbe)) gruppen.set(farbe, [])
-      gruppen.get(farbe)!.push(pfad)
+      gruppen.get(farbe)!.push(pfadEndenEinrasten(pfad, alleMarkerPositionen))
     })
     return [...gruppen.entries()]
-  }, [trassePfade, trassePfadeKinds, materialProSegment, farbeProSegment, trasseFarbe])
+  }, [trassePfade, trassePfadeKinds, materialProSegment, farbeProSegment, trasseFarbe, alleMarkerPositionen])
 
   // Doppelbelegung: zwei Materialien auf demselben Segment — statt der
   // früheren konzentrischen Überlagerung (schmal auf breit) zwei parallel
@@ -705,11 +816,14 @@ const MapView = memo(function MapView({
       const m = materialProSegment[i]
       if (!m?.zusatz) return
       const farbe = m.haupt.farbe
+      const [taperStart, taperEnd] = doppelbelegungTaperProSegment.get(i) ?? [true, true]
       if (!gruppen.has(farbe)) gruppen.set(farbe, [])
-      gruppen.get(farbe)!.push(versetzePfadSenkrecht(pfad, DOPPELBELEGUNG_VERSATZ_METER))
+      gruppen.get(farbe)!.push(
+        pfadEndenEinrasten(versetzePfadSenkrechtGetapert(pfad, DOPPELBELEGUNG_VERSATZ_METER, taperStart, taperEnd), alleMarkerPositionen)
+      )
     })
     return [...gruppen.entries()]
-  }, [trassePfade, trassePfadeKinds, materialProSegment])
+  }, [trassePfade, trassePfadeKinds, materialProSegment, doppelbelegungTaperProSegment, alleMarkerPositionen])
   const trassePfadeDoppelbelegungZusatz = useMemo(() => {
     const gruppen = new Map<string, LatLng[][]>()
     trassePfade.forEach((pfad, i) => {
@@ -717,11 +831,14 @@ const MapView = memo(function MapView({
       const m = materialProSegment[i]
       if (!m?.zusatz) return
       const farbe = m.zusatz.farbe
+      const [taperStart, taperEnd] = doppelbelegungTaperProSegment.get(i) ?? [true, true]
       if (!gruppen.has(farbe)) gruppen.set(farbe, [])
-      gruppen.get(farbe)!.push(versetzePfadSenkrecht(pfad, -DOPPELBELEGUNG_VERSATZ_METER))
+      gruppen.get(farbe)!.push(
+        pfadEndenEinrasten(versetzePfadSenkrechtGetapert(pfad, -DOPPELBELEGUNG_VERSATZ_METER, taperStart, taperEnd), alleMarkerPositionen)
+      )
     })
     return [...gruppen.entries()]
-  }, [trassePfade, trassePfadeKinds, materialProSegment])
+  }, [trassePfade, trassePfadeKinds, materialProSegment, doppelbelegungTaperProSegment, alleMarkerPositionen])
   const trassePfadeNurFeldweg = useMemo(
     () => trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track'),
     [trassePfade, trassePfadeKinds]
@@ -1625,12 +1742,29 @@ const MapView = memo(function MapView({
             </div>
           )
         }
+        // Knotentyp benennen (2026-08-28, Alex: "muss genauer explizit
+        // dranstehen, was ist denn das für ein Trassenknoten") — grob anhand
+        // der angrenzenden "haupt"-Materialien: läuft hier Backbone auf
+        // Kundenanschluss über, oder teilt sich ein Kundenanschluss-Verband
+        // auf mehrere Stufen auf (Gabelung)?
+        const hauptMaterialien = knoten.segmentIdxs.map((i) => materialProSegment[i]?.haupt).filter((m): m is MaterialEintrag => !!m)
+        const istBackboneMaterial = (m: MaterialEintrag) => m === materialProfil.trasse
+        const backboneAnzahl = hauptMaterialien.filter(istBackboneMaterial).length
+        const kundeAnzahl = hauptMaterialien.length - backboneAnzahl
+        const knotenTyp =
+          backboneAnzahl > 0 && kundeAnzahl > 0 ? 'Übergang Backbone → Kundenanschluss-Verband'
+          : kundeAnzahl > 0 ? 'Kundenanschluss-Verband-Stufenwechsel (Gabelung)'
+          : 'Materialwechsel'
         return (
           <div className="absolute bottom-3 left-64 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-2 max-w-72"
             style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #dc2626' }}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] text-gray-500 uppercase tracking-wider">✕ Trassenknoten — {knoten.segmentIdxs.length} Segmente treffen sich hier</span>
               <button onClick={() => setAusgewaehlterTrassenknotenIdx(null)} className="text-xs" style={{ color: 'var(--text-secondary)' }}>✕</button>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-medium" style={{ color: '#f87171' }}>{knotenTyp}</span>
+              <span className="text-[10px] text-gray-600">Farbgleiche Verbünde werden wo möglich durchverbunden.</span>
             </div>
             <div className="flex flex-col gap-2" style={{ maxHeight: 260, overflowY: 'auto' }}>
               {knoten.segmentIdxs.map((segIdx) => {
