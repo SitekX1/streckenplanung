@@ -22,6 +22,15 @@ export interface OsmNetz {
 const HIGHWAY_FILTER =
   'primary|secondary|tertiary|unclassified|residential|service|living_street|road'
 
+// 2026-08-19, Alex (Chef-Feedback): Trasse fuhr streckenweise durch private
+// Hauszufahrten statt am öffentlichen Straßenrand zu bleiben — highway=service
+// deckt in OSM auch private Einfahrten/Stellplatzgassen ab (service=driveway/
+// parking_aisle), die ohne diesen Ausschluss ganz normal als Straßenstück in
+// den Trassen-Graphen einfließen. Gilt jetzt für ALLE Straßentypen, nicht nur
+// service — ein explizit privat markiertes Wohngebiet o.ä. gehört ebenso wenig
+// in die öffentliche Trasse.
+const ZUGRIFF_AUSSCHLUSS = '["access"!~"private|no"]["service"!~"driveway|parking_aisle"]'
+
 // Feldwege (highway=track) werden zusätzlich geladen, aber nur außerhalb von
 // Ortschaften genutzt (Filterung dafür in roadGraph.ts) — echte Trassenbauer
 // nutzen zwischen Dörfern öffentliche Feldwege statt Straßen-Umwegen, sofern
@@ -141,9 +150,10 @@ function istUnvollstaendigeAntwort(text: string): boolean {
 export async function fetchOsmNetz(bounds: {
   minLat: number; maxLat: number; minLng: number; maxLng: number
 }): Promise<OsmNetz> {
-  // "v2"-Präfix: Query wurde um Feldwege erweitert, alte Cache-Einträge ohne
-  // Feldweg-Daten dürfen nicht mehr als vollständig gelten.
-  const cacheKey = 'v2_' + [bounds.minLat, bounds.maxLat, bounds.minLng, bounds.maxLng]
+  // "v3"-Präfix: Query schließt jetzt private Zufahrten/Stellplatzgassen aus
+  // (ZUGRIFF_AUSSCHLUSS, s.o.) — alte Cache-Einträge ohne diesen Filter
+  // dürfen nicht mehr als vollständig gelten.
+  const cacheKey = 'v3_' + [bounds.minLat, bounds.maxLat, bounds.minLng, bounds.maxLng]
     .map((v) => v.toFixed(4)).join('_')
 
   // 1. Cache prüfen — wenn vorhanden, sofort zurückgeben (außer der gecachte
@@ -154,7 +164,7 @@ export async function fetchOsmNetz(bounds: {
   }
 
   const bbox = `${bounds.minLat},${bounds.minLng},${bounds.maxLat},${bounds.maxLng}`
-  const query = `[out:json][timeout:50];(way["highway"~"${HIGHWAY_FILTER}"](${bbox});way["highway"~"${FELDWEG_FILTER}"]["access"!~"private|no"](${bbox}););out body;>;out skel qt;`
+  const query = `[out:json][timeout:50];(way["highway"~"${HIGHWAY_FILTER}"]${ZUGRIFF_AUSSCHLUSS}(${bbox});way["highway"~"${FELDWEG_FILTER}"]${ZUGRIFF_AUSSCHLUSS}(${bbox}););out body;>;out skel qt;`
   const body = `data=${encodeURIComponent(query)}`
 
   const OSM_MAX_RETRIES = 1

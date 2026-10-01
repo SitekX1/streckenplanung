@@ -1,3 +1,5 @@
+import { RohrFarbschema } from './rohrFarbschema'
+
 // Firmenlogo + -adresse für den Kalkulations-PDF-Export — geräteweit per
 // localStorage persistent (gleiches Muster wie die Kalkulations-Preise in
 // KalkulationModal.tsx), NICHT Teil des einzelnen Projekts, da sich die
@@ -14,6 +16,11 @@ export interface Firmendaten {
   hausnummer: string
   plz: string
   ort: string
+  // Rohr-Farbschema fürs Trassenknoten-Panel (2026-08-21, Alex: "darf nicht
+  // allgemein aktiv sein, sondern in Einstellungen auswählbar — andere
+  // Firmen haben vielleicht andere Farben, in unserem Fall kann gabocom
+  // aktiv bleiben") — siehe rohrFarbschema.ts.
+  rohrFarbschema: RohrFarbschema
 }
 
 const STORAGE_KEY = 'streckenplanung-firmendaten'
@@ -27,6 +34,7 @@ const DEFAULT_FIRMENDATEN: Firmendaten = {
   hausnummer: '',
   plz: '',
   ort: '',
+  rohrFarbschema: 'gabocom',
 }
 
 export function ladeFirmendaten(): Firmendaten {

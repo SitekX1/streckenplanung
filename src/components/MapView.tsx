@@ -8,7 +8,11 @@ import {
 import L from 'leaflet'
 import * as turf from '@turf/turf'
 import 'leaflet/dist/leaflet.css'
-import { Address, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort } from '../lib/types'
+import { Address, BackboneVerbindung, LatLng, Hausstich, WegKind, NvtStandort, SchachtStandort, MaterialUebersteuerung } from '../lib/types'
+import { ermittleBackboneSegmente, ermittleHausanschluesseProSegment, ermittleMaterialProSegment, ermittleMaterialUebersteuerungProSegment, ermittleVerbandSegmente } from '../lib/faserdimensionierung'
+import { aktivesMaterialProfil, lrArtLabel, MaterialEintrag } from '../lib/materialkatalog'
+import { rohrFarbeFuerRohrNr } from '../lib/rohrFarbschema'
+import { ladeFirmendaten } from '../lib/firmendaten'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -52,6 +56,19 @@ const schachtIcon = new L.DivIcon({
   html: '<div style="width:14px;height:14px;background:#f97316;border:2px solid white;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.8)"></div>',
   iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9],
 })
+// Trassenknoten (2026-08-20, Alex: Tiefbau-Konvention für Spleiß-/Übergabe-
+// punkte, wo sich das Material ändert) — NUR roter Kreisring + rotes X,
+// kein Hintergrund (2026-08-21, Alex: "der weiße Hintergrund soll weg, nur
+// der rote Kreis und das rote X").
+const trassenknotenIcon = new L.DivIcon({
+  className: '',
+  html: `<svg width="22" height="22" viewBox="0 0 22 22" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,0.9))">
+    <circle cx="11" cy="11" r="8.5" fill="none" stroke="#dc2626" stroke-width="2.2"/>
+    <line x1="7" y1="7" x2="15" y2="15" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="15" y1="7" x2="7" y2="15" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round"/>
+  </svg>`,
+  iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -12],
+})
 
 function berechneLinieLaenge(wp: LatLng[]): number {
   let total = 0
@@ -73,6 +90,23 @@ const GELB = '#facc15'
 // mitmarkiert ist, wenn mehrere NVT gleichzeitig zum Vergleichen markiert werden.
 const NVT_MARKIER_FARBEN = ['#22d3ee', '#f472b6', '#a3e635', '#fb923c', '#c084fc', '#facc15', '#38bdf8', '#fb7185']
 const SCHACHT_MARKIER_FARBE = '#22d3ee'
+// Hervorhebung der Hausanschlüsse, die zum gerade angeklickten Trasse-
+// Segment gehören (siehe hausanschluesseProSegment) — bewusst weiß, um sich
+// klar von den NVT-Markier-Farben und dem gelben Segment-Highlight (GELB)
+// abzusetzen.
+const SEGMENT_HERVORHEBUNG_FARBE = '#ffffff'
+// Linienfarbe für explizit gelöschte Verbund-Segmente (2026-08-20, Alex:
+// "Verbund löschen") — dieselbe Warnfarbe wie überall sonst im Löschen-/
+// Fehler-Kontext (siehe z.B. istUeberlastet, "🗑️ … löschen"-Menüeinträge),
+// damit sich das Segment sichtbar von "nie beplant" (fällt sonst unauffällig
+// auf trasseFarbe zurück) abhebt, ohne ein neues Linienmuster einzuführen.
+const VERBUND_GELOESCHT_FARBE = '#f87171'
+// Senkrechter Versatz der beiden Doppelbelegungs-Linien (siehe
+// trassePfadeDoppelbelegungHaupt/-Zusatz weiter unten) — auf Modul-Ebene,
+// damit TrasseKlickbar (eigene Komponente) denselben Wert für die
+// Klick-Trefferflächen kennt (siehe Fix 2026-08-21, Alex: "zwischen den 2
+// parallelen Verbünden ist weiß, nur das weiße kann ich anklicken").
+const DOPPELBELEGUNG_VERSATZ_METER = 1.6
 const MAX_HANDLES = 80
 // Schwellenwert: ≤ 1000 Punkte → Klein-Projekt (alle Handles sofort sichtbar)
 const KLEIN_PROJEKT_SCHWELLE = 1000
@@ -88,6 +122,99 @@ function haversineMeter(a: LatLng, b: LatLng): number {
     Math.sin(dLat / 2) ** 2 +
     Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
   return 2 * R * Math.asin(Math.sqrt(s))
+}
+
+// Versetzt einen Pfad senkrecht zu seiner Laufrichtung um einen festen
+// Meter-Betrag — für Doppelbelegung (zwei Materialien auf demselben
+// Segment) statt der bisherigen konzentrischen Überlagerung zwei parallel
+// nebeneinander laufende Linien zu zeichnen (wie ein Leitungsgraben mit
+// zwei Kabeln), damit beide Farben eigenständig erkennbar bleiben (Alex,
+// 2026-08-21: "Verbünde die aufeinander liegen ... ist unübersichtlich").
+// Bewusst keine echte Polygon-Versatzberechnung (Miter/Bevel je Knick) —
+// bei den vielen, meist sanft gekrümmten Straßen-Stützpunkten reicht ein
+// einfacher Pro-Punkt-Versatz anhand der lokalen Laufrichtung völlig aus.
+function versetzePfadSenkrecht(pfad: LatLng[], meterVersatz: number): LatLng[] {
+  const METER_PRO_GRAD_LAT = 111_320
+  return pfad.map((p, i) => {
+    const von = pfad[Math.max(0, i - 1)]
+    const nach = pfad[Math.min(pfad.length - 1, i + 1)]
+    const cosLat = Math.cos((p.lat * Math.PI) / 180)
+    const dxMeter = (nach.lng - von.lng) * METER_PRO_GRAD_LAT * cosLat
+    const dyMeter = (nach.lat - von.lat) * METER_PRO_GRAD_LAT
+    const laenge = Math.hypot(dxMeter, dyMeter)
+    if (laenge < 1e-6) return p
+    // Senkrechte Richtung (um 90° gedreht), auf Ziel-Versatz normiert
+    const nx = (-dyMeter / laenge) * meterVersatz
+    const ny = (dxMeter / laenge) * meterVersatz
+    return { lat: p.lat + ny / METER_PRO_GRAD_LAT, lng: p.lng + nx / (METER_PRO_GRAD_LAT * cosLat) }
+  })
+}
+
+// Wie versetzePfadSenkrecht, aber der Versatz läuft an den Enden, die NICHT
+// nahtlos an ein gleich-materialiges Doppelbelegungs-Nachbarsegment
+// anschließen, über eine kurze Strecke auf 0 aus statt abrupt beim vollen
+// Wert zu starten (2026-08-28, Alex: "die Linie bricht sichtbar ab, sobald
+// Kurve/Seitenstraße kommt") — an genau dieser Stelle wechselt ein Segment
+// meist von "nur Backbone" (zentriert, kein Versatz) zu "Backbone +
+// Kundenanschluss" (versetzt), der harte Sprung sah wie ein Linienabriss
+// aus. Reine Darstellungs-Korrektur, NICHT für Klick-Trefferflächen (die
+// bleiben beim vollen Versatz aus versetzePfadSenkrecht).
+const DOPPELBELEGUNG_TAPER_METER = 3
+function versetzePfadSenkrechtGetapert(
+  pfad: LatLng[], meterVersatz: number, taperStart: boolean, taperEnd: boolean
+): LatLng[] {
+  const METER_PRO_GRAD_LAT = 111_320
+  const kumDist: number[] = [0]
+  for (let i = 1; i < pfad.length; i++) kumDist.push(kumDist[i - 1] + haversineMeter(pfad[i - 1], pfad[i]))
+  const gesamt = kumDist[kumDist.length - 1]
+  const taperLaenge = Math.min(DOPPELBELEGUNG_TAPER_METER, gesamt / 2)
+  return pfad.map((p, i) => {
+    const von = pfad[Math.max(0, i - 1)]
+    const nach = pfad[Math.min(pfad.length - 1, i + 1)]
+    const cosLat = Math.cos((p.lat * Math.PI) / 180)
+    const dxMeter = (nach.lng - von.lng) * METER_PRO_GRAD_LAT * cosLat
+    const dyMeter = (nach.lat - von.lat) * METER_PRO_GRAD_LAT
+    const laenge = Math.hypot(dxMeter, dyMeter)
+    if (laenge < 1e-6) return p
+    let faktor = 1
+    if (taperLaenge > 0) {
+      if (taperStart) faktor = Math.min(faktor, kumDist[i] / taperLaenge)
+      if (taperEnd) faktor = Math.min(faktor, (gesamt - kumDist[i]) / taperLaenge)
+    }
+    const versatz = meterVersatz * Math.max(0, Math.min(1, faktor))
+    const nx = (-dyMeter / laenge) * versatz
+    const ny = (dxMeter / laenge) * versatz
+    return { lat: p.lat + ny / METER_PRO_GRAD_LAT, lng: p.lng + nx / (METER_PRO_GRAD_LAT * cosLat) }
+  })
+}
+
+// Lässt eine gerenderte Linie exakt im nächstgelegenen NVT-/Schacht-/
+// Trassenknoten-Marker "landen" statt knapp daneben aufzuhören — 2026-08-28,
+// Alex: "die Verbände sollen explizit IM NVT/Trassenknoten enden, nicht
+// daneben Stopp haben". Ursache des Spalts: die gespeicherte Marker-Position
+// kann nach manuellem Verschieben oder erneutem Segmentieren der Trasse
+// leicht von der tatsächlichen Linien-Koordinate abweichen. Rein visuell —
+// verändert nur die gerenderten Endpunkte, nie die gespeicherten Trasse-Daten.
+const MARKER_EINRASTEN_METER = 8
+function pfadEndenEinrasten(pfad: LatLng[], marker: LatLng[]): LatLng[] {
+  if (pfad.length === 0 || marker.length === 0) return pfad
+  const naechster = (p: LatLng): LatLng | null => {
+    let best: LatLng | null = null
+    let bestDist = MARKER_EINRASTEN_METER
+    for (const m of marker) {
+      const d = haversineMeter(p, m)
+      if (d < bestDist) { bestDist = d; best = m }
+    }
+    return best
+  }
+  const result = pfad
+  const start = naechster(result[0])
+  const ende = naechster(result[result.length - 1])
+  if (!start && !ende) return result
+  const kopie = [...result]
+  if (start) kopie[0] = start
+  if (ende) kopie[kopie.length - 1] = ende
+  return kopie
 }
 
 // Sucht beim Ziehen eines Punkts das nächstgelegene Schnapp-Ziel — entweder
@@ -139,6 +266,7 @@ interface MapViewProps {
   trasseFarbe: string
   hausanschlussfarbe: string
   feldwegFarbe: string
+  bundesfoerderung: boolean
   trassePfadeKinds: WegKind[]
   trasseMethode?: string
   nichtAngebundeneAdressen?: Address[]
@@ -148,6 +276,10 @@ interface MapViewProps {
   nvtManuellSetzenAktiv?: boolean
   schachtStandorte?: SchachtStandort[]
   schachtSetzenAktiv?: boolean
+  backboneVerbindungen?: BackboneVerbindung[]
+  backboneVerbindungLaeuft?: boolean
+  backboneVerbindungFehler?: string | null
+  materialUebersteuerungen?: MaterialUebersteuerung[]
   onStartpunktGesetzt: (punkt: LatLng) => void
   onTrasseGeaendert: (punkte: LatLng[]) => void
   onTrassePfadeGeaendert: (pfade: LatLng[][], kinds: WegKind[]) => void
@@ -164,11 +296,16 @@ interface MapViewProps {
   onSchachtLoeschen?: (schachtIdx: number) => void
   onSchachtHausanschlussToggle?: (schachtIdx: number, hausId: string) => void
   onSchachtVerschoben?: (schachtIdx: number, position: LatLng) => void
+  onBackboneVerbindungErstellen?: (quelle: LatLng, ziel: LatLng, material: MaterialEintrag) => void
+  onBackboneVerbindungFehlerSchliessen?: () => void
+  onMaterialUebersteuern?: (segmentIdxs: number[], material: MaterialEintrag | null) => void
+  onVerbundLoeschen?: (segmentIdxs: number[]) => void
 }
 
 function KlickHandler({
   aktiv, onKlick, ziehModus, onZiehZiel, hsZeichenModus, onHsZeichenZiel,
   nvtSetzenModus, onNvtSetzenZiel, schachtSetzenModus, onSchachtSetzenZiel,
+  mehrpunktModus, onMehrpunktKlick, onMehrpunktFertig,
   menuOffen, onMenuSchliessen, onMapKlick,
 }: {
   aktiv: boolean
@@ -181,22 +318,38 @@ function KlickHandler({
   onNvtSetzenZiel?: (p: LatLng) => void
   schachtSetzenModus?: boolean
   onSchachtSetzenZiel?: (p: LatLng) => void
+  mehrpunktModus?: boolean
+  onMehrpunktKlick?: (p: LatLng) => void
+  onMehrpunktFertig?: () => void
   menuOffen?: boolean
   onMenuSchliessen?: () => void
   onMapKlick?: () => void
 }) {
-  useMapEvents({
+  const map = useMapEvents({
     click(e) {
       if (menuOffen) { onMenuSchliessen?.(); return }
       const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
-      if (ziehModus && onZiehZiel) onZiehZiel(pos)
+      if (mehrpunktModus && onMehrpunktKlick) onMehrpunktKlick(pos)
+      else if (ziehModus && onZiehZiel) onZiehZiel(pos)
       else if (hsZeichenModus && onHsZeichenZiel) onHsZeichenZiel(pos)
       else if (nvtSetzenModus && onNvtSetzenZiel) onNvtSetzenZiel(pos)
       else if (schachtSetzenModus && onSchachtSetzenZiel) onSchachtSetzenZiel(pos)
       else if (aktiv) onKlick(pos)
       else onMapKlick?.()
     },
+    dblclick(e) {
+      if (mehrpunktModus && onMehrpunktFertig) {
+        L.DomEvent.stopPropagation(e)
+        onMehrpunktFertig()
+      }
+    },
   })
+  // Doppelklick-Zoom stört den "Doppelklick = Linie fertig"-Abschluss beim
+  // Mehrpunkt-Zeichnen (BayernAtlas-Flow) — während des Modus deaktivieren.
+  useEffect(() => {
+    if (mehrpunktModus) map.doubleClickZoom.disable()
+    else map.doubleClickZoom.enable()
+  }, [mehrpunktModus, map])
   return null
 }
 
@@ -236,7 +389,7 @@ function FlyTo({ ziel }: { ziel: LatLng | null }) {
   return null
 }
 
-function TrasseNetzwerk({ pfade, farbe, opacity = 0.9 }: { pfade: LatLng[][]; farbe: string; opacity?: number }) {
+function TrasseNetzwerk({ pfade, farbe, opacity = 0.9, weight = 4 }: { pfade: LatLng[][]; farbe: string; opacity?: number; weight?: number }) {
   const map = useMap()
   useEffect(() => {
     const gueltige = pfade.filter((p) => p.length >= 2)
@@ -244,11 +397,11 @@ function TrasseNetzwerk({ pfade, farbe, opacity = 0.9 }: { pfade: LatLng[][]; fa
     const renderer = L.canvas({ padding: 0.1 })
     const gruppe = L.layerGroup(
       gueltige.map((pfad) =>
-        L.polyline(pfad.map((p) => [p.lat, p.lng] as [number, number]), { color: farbe, weight: 4, opacity, renderer } as L.PolylineOptions)
+        L.polyline(pfad.map((p) => [p.lat, p.lng] as [number, number]), { color: farbe, weight, opacity, renderer } as L.PolylineOptions)
       )
     ).addTo(map)
     return () => { map.removeLayer(gruppe) }
-  }, [pfade, farbe, opacity, map])
+  }, [pfade, farbe, opacity, weight, map])
   return null
 }
 
@@ -258,34 +411,62 @@ function TrasseNetzwerk({ pfade, farbe, opacity = 0.9 }: { pfade: LatLng[][]; fa
 // Canvas-Rendering dort unangetastet bleibt. Das ausgewählte Segment bekommt
 // zusätzlich eine echte gelbe Overlay-Polyline (nur eine gleichzeitig, daher
 // keine Performance-Sorge trotz react-leaflet statt Canvas).
-function TrasseKlickbar({ pfade, ausgewaehlterIdx, onKlick }: {
+function TrasseKlickbar({ pfade, doppelbelegungIdxs, ausgewaehlteIdxs, onKlick }: {
   pfade: LatLng[][]
-  ausgewaehlterIdx: number | null
+  // Segmente mit zwei parallel versetzten Materialien (siehe
+  // trassePfadeDoppelbelegungHaupt/-Zusatz) — dort liegt die Original-
+  // Mittellinie (pfade[i]) im sichtbar LEEREN Zwischenraum zwischen den
+  // beiden farbigen Linien, eine zentrierte Trefferfläche würde also genau
+  // die unsichtbare Lücke statt der Linien selbst treffbar machen
+  // (2026-08-21, Alex: "zwischen den 2 parallelen Verbünden ist weiß, nur
+  // das weiße kann ich anklicken") — für diese Segmente kommen zusätzlich
+  // zwei versetzte Trefferflächen an den tatsächlichen Linienpositionen dazu.
+  doppelbelegungIdxs?: Set<number>
+  // Mehrere Indizes = kompletter Verband-Verlauf wird hervorgehoben, nicht
+  // nur das einzeln angeklickte Segment (2026-08-21, Alex: "möchte den
+  // Verlauf des Verbands sehen").
+  ausgewaehlteIdxs: number[]
   onKlick: (idx: number) => void
 }) {
   const map = useMap()
   useEffect(() => {
     const renderer = L.canvas({ padding: 0.1 })
     const linien: L.Polyline[] = []
-    pfade.forEach((pfad, i) => {
-      if (pfad.length < 2) return
-      const linie = L.polyline(pfad.map((p) => [p.lat, p.lng] as [number, number]), {
+    function fuegeTrefferflaecheHinzu(punkte: LatLng[], i: number) {
+      const linie = L.polyline(punkte.map((p) => [p.lat, p.lng] as [number, number]), {
         color: '#000', weight: 16, opacity: 0.01, renderer,
       } as L.PolylineOptions)
       linie.on('click', (e) => { L.DomEvent.stopPropagation(e); onKlick(i) })
       linien.push(linie)
+    }
+    pfade.forEach((pfad, i) => {
+      if (pfad.length < 2) return
+      if (doppelbelegungIdxs?.has(i)) {
+        fuegeTrefferflaecheHinzu(versetzePfadSenkrecht(pfad, DOPPELBELEGUNG_VERSATZ_METER), i)
+        fuegeTrefferflaecheHinzu(versetzePfadSenkrecht(pfad, -DOPPELBELEGUNG_VERSATZ_METER), i)
+        return
+      }
+      fuegeTrefferflaecheHinzu(pfad, i)
     })
     const gruppe = L.layerGroup(linien).addTo(map)
     return () => { map.removeLayer(gruppe) }
-  }, [pfade, onKlick, map])
+  }, [pfade, doppelbelegungIdxs, onKlick, map])
 
-  const ausgewaehltesPfad = ausgewaehlterIdx !== null ? pfade[ausgewaehlterIdx] : null
-  if (!ausgewaehltesPfad || ausgewaehltesPfad.length < 2) return null
+  const ausgewaehltePfade = ausgewaehlteIdxs
+    .map((idx) => pfade[idx])
+    .filter((pfad): pfad is LatLng[] => !!pfad && pfad.length >= 2)
+    .map((pfad) => pfad.map((p) => [p.lat, p.lng] as [number, number]))
+  if (ausgewaehltePfade.length === 0) return null
   return (
     <Polyline
-      positions={ausgewaehltesPfad.map((p) => [p.lat, p.lng] as [number, number])}
+      positions={ausgewaehltePfade}
       interactive={false}
-      pathOptions={{ color: GELB, weight: 6, opacity: 1 }} />
+      // Weiß statt Gelb (2026-08-21) — Gelb kollidierte optisch mit der
+      // 12x7-Materialfarbe (#eab308, fast identischer Ton), sobald ein
+      // Verband über mehrere Segmente hinweg markiert wird und dabei neben
+      // 12x7-Strecken verläuft. Passt zusätzlich zur bereits weißen
+      // Hausanschluss-Hervorhebung (SEGMENT_HERVORHEBUNG_FARBE).
+      pathOptions={{ color: SEGMENT_HERVORHEBUNG_FARBE, weight: 6, opacity: 1 }} />
   )
 }
 
@@ -323,19 +504,53 @@ function zeigeSchnappZiel(layerRef: React.MutableRefObject<L.CircleMarker | null
   }
 }
 
+// Live-Linie beim Ziehen eines Punkt-Handles (2026-08-21, Alex: "wenn ich
+// einen Punkt verziehen will ... würd gern, dass der Punkt gleich mitgeht
+// und mit Linie mitgeht", statt nur der grüne Schnapp-Kreis) — genau wie
+// SchnappZielLayer oben ein einziger, dauerhaft vorhandener Layer, der pro
+// drag-Tick imperativ per setLatLngs() aktualisiert wird, damit KEIN
+// Re-Rendern von MapView ausgelöst wird (das würde den gerade gezogenen
+// Marker auf seine alte Position zurückreißen, siehe Kommentar oben).
+function LiveLinienLayer({ layerRef }: { layerRef: React.MutableRefObject<L.Polyline | null> }) {
+  const map = useMap()
+  useEffect(() => {
+    const linie = L.polyline([], {
+      color: GELB, weight: 5, opacity: 0, interactive: false,
+    }).addTo(map)
+    layerRef.current = linie
+    return () => { linie.remove(); layerRef.current = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map])
+  return null
+}
+
+function zeigeLiveLinie(layerRef: React.MutableRefObject<L.Polyline | null>, pfad: LatLng[] | null) {
+  const layer = layerRef.current
+  if (!layer) return
+  if (pfad && pfad.length >= 2) {
+    layer.setLatLngs(pfad.map((p) => [p.lat, p.lng] as [number, number]))
+    layer.setStyle({ opacity: 1 })
+  } else {
+    layer.setStyle({ opacity: 0 })
+  }
+}
+
 type TileVariante = 'satellit' | 'osm'
 
 const MapView = memo(function MapView({
   adressen, startpunkt, startpunktSetzenAktiv, trasse, trassePfade, hausanschluesse,
   editierbarAktiv, aktiveOrteKeys, adressFarbe, trasseFarbe, hausanschlussfarbe, trasseMethode,
-  feldwegFarbe, trassePfadeKinds,
+  feldwegFarbe, bundesfoerderung, trassePfadeKinds,
   nichtAngebundeneAdressen = [],
   aussiedlerhofUuids = new Set(), aussiedlerhofMarkierenAktiv = false, nvtStandorte = [],
   nvtManuellSetzenAktiv = false, schachtStandorte = [], schachtSetzenAktiv = false,
+  backboneVerbindungen = [], backboneVerbindungLaeuft = false, backboneVerbindungFehler = null,
+  materialUebersteuerungen = [],
   onStartpunktGesetzt, onTrasseGeaendert, onTrassePfadeGeaendert, onHausanschluesseGeaendert,
   onAussiedlerhofToggle, onAussiedlerhofMarkierenFertig,
   onNvtManuellHinzufuegen, onNvtManuellSetzenAbbrechen, onNvtLoeschen, onNvtHausanschlussToggle, onNvtVerschoben,
   onSchachtGesetzt, onSchachtSetzenAbbrechen, onSchachtLoeschen, onSchachtHausanschlussToggle, onSchachtVerschoben,
+  onBackboneVerbindungErstellen, onBackboneVerbindungFehlerSchliessen, onMaterialUebersteuern, onVerbundLoeschen,
 }: MapViewProps) {
   const [tileVariante, setTileVariante] = useState<TileVariante>('satellit')
   const [topoSichtbar, setTopoSichtbar] = useState(false)
@@ -351,6 +566,12 @@ const MapView = memo(function MapView({
   const [schachtSichtbar, setSchachtSichtbar] = useState(true)
   // Segment-Markierung außerhalb des Bearbeitungsmodus (reines Ansehen).
   const [ausgewaehltesSegmentNormal, setAusgewaehltesSegmentNormal] = useState<number | null>(null)
+  // Material-Auswahl im Klick-Panel ein-/ausgeklappt (2026-08-21, Alex:
+  // "im Nachhinein kann ich aber keinen einzigen Verbund bearbeiten").
+  const [materialAuswahlOffen, setMaterialAuswahlOffen] = useState(false)
+  // Ausgewählter Trassenknoten (2026-08-20, Alex: Klick zeigt an, welche
+  // Materialien/Rohre sich hier treffen) — Index in trassenKnotenPunkte.
+  const [ausgewaehlterTrassenknotenIdx, setAusgewaehlterTrassenknotenIdx] = useState<number | null>(null)
   const [warnModalOffen, setWarnModalOffen] = useState(false)
   // Referenz der zuletzt gesehenen Liste — erlaubt, das Warnmodal direkt beim
   // Render zu öffnen sobald eine NEUE (andere Referenz) Liste ankommt, ohne
@@ -375,17 +596,27 @@ const MapView = memo(function MapView({
   // entfernen, weil sich sonst alle Indizes danach verschieben.
   const [ausgewaehlteNvtIdxs, setAusgewaehlteNvtIdxs] = useState<Set<number>>(new Set())
   const [ausgewaehltesSchachtIdx, setAusgewaehltesSchachtIdx] = useState<number | null>(null)
-  const hausIdZuFarbe = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const nvtIdx of ausgewaehlteNvtIdxs) {
-      const farbe = NVT_MARKIER_FARBEN[nvtIdx % NVT_MARKIER_FARBEN.length]
-      for (const hausId of nvtStandorte[nvtIdx]?.hausanschlussIds ?? []) map.set(hausId, farbe)
-    }
-    if (ausgewaehltesSchachtIdx !== null) {
-      for (const hausId of schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? []) map.set(hausId, SCHACHT_MARKIER_FARBE)
-    }
-    return map
-  }, [ausgewaehlteNvtIdxs, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte])
+
+  // Mausover-Übersicht für NVT/Schacht (2026-08-13, Alex: "wenn ich mit der
+  // Maus drüber geh, soll son kleines Modal aufgehen mit allen wichtigen
+  // Daten") — bewusst getrennt von ausgewaehlteNvtIdxs/-SchachtIdx, da Klick
+  // weiterhin die Hausanschlüsse auf der Karte markiert und das eine mit dem
+  // anderen nichts zu tun haben soll.
+  const [hoverNvtIdx, setHoverNvtIdx] = useState<number | null>(null)
+  const [hoverSchachtIdx, setHoverSchachtIdx] = useState<number | null>(null)
+
+  // Welche Hausanschlüsse hängen an welchem Trasse-Segment (2026-08-13, Alex:
+  // "ich möchte sehen, auf welchem Segment welche Kunden hängen") — dieselbe
+  // Baum-Aggregation wie im GIS-NB-Export, hier für die Klick-Info + optische
+  // Hervorhebung der betroffenen Hausanschluss-Stiche genutzt.
+  const hausanschluesseProSegment = useMemo(
+    () =>
+      startpunkt && trassePfade.length > 0
+        ? ermittleHausanschluesseProSegment(trassePfade, startpunkt, hausanschluesse, nvtStandorte, schachtStandorte)
+        : trassePfade.map(() => [] as string[]),
+    [trassePfade, startpunkt, hausanschluesse, nvtStandorte, schachtStandorte]
+  )
+
   // "Hausanschlüsse zuweisen" braucht genau EIN Ziel-NVT — der Zuweisen-Modus
   // setzt die Auswahl beim Aktivieren bewusst auf ein Einzelelement (siehe
   // Kontextmenü-Aktion der NVT-Marker), daher reicht hier size === 1.
@@ -397,16 +628,278 @@ const MapView = memo(function MapView({
   // dessen useEffect (in TrasseNetzwerk/TrasseKlickbar) daraufhin sämtliche
   // Leaflet-Layer der kompletten Trasse abbaut und neu aufbaut — bei
   // größeren Projekten spürbar langsamer mit jeder Interaktion.
-  const trassePfadeOhneFeldweg = useMemo(
-    () => trassePfade.filter((_, i) => trassePfadeKinds[i] !== 'track'),
-    [trassePfade, trassePfadeKinds]
+  // Kartenfarbe je Trasse-Segment nach zugewiesenem Material (2026-08-12,
+  // Alex: "7x7, 12x7, 24x7, 4x20, 2x20, 7x14 jeweils eine andere Farbe") —
+  // dieselbe Zuordnungslogik wie im GIS-NB-Export (gisNbExport.ts):
+  // Backbone-Segmente (siehe ermittleBackboneSegmente) bekommen die Farbe
+  // des Trasse-Materials, alle anderen (mit Hausanschlüssen dahinter) die
+  // Farbe der jeweils gewählten Kundenanschluss-Sammelverband-Stufe. Nur für
+  // die normale Ansicht (außerhalb des Bearbeitungsmodus) berücksichtigt —
+  // die Edit-Modus-Einfärbung (localPfade weiter unten) bleibt unverändert
+  // bei Straße/Feldweg, um das ohnehin fragile Drag-Verhalten dort nicht
+  // anzufassen.
+  const materialProfil = useMemo(() => aktivesMaterialProfil(bundesfoerderung), [bundesfoerderung])
+  // Material pro Segment — Grundlage für die Kartenfarbe UND die Klick-Info-
+  // Box (2026-08-13, Alex: "ich möchte sehen, welcher Verbund wo langläuft").
+  // "haupt" ist das primär gezeigte Material (Kundenanschluss-Stufe, sonst
+  // Backbone), "zusatz" nur gesetzt bei Doppelbelegung (beides trifft zu) —
+  // dann läuft ZUSÄTZLICH das Backbone-Material auf demselben Segment, siehe
+  // Doppelbelegungs-Rendering unten (zwei Linien übereinander statt einer
+  // einzelnen Farbe, sonst wäre auf der Karte gar nicht sichtbar, dass dort
+  // zwei Verbände liegen — Alex-Feedback 2026-08-13).
+  // Ohne mindestens einen Verteiler (NVT/Schacht) lässt sich noch gar kein
+  // Verbund sinnvoll bestimmen — die Kapazitätsobergrenze UND die
+  // Backbone-Klassifizierung hängen direkt an dessen Standort. Vorher würde
+  // rein aus der Hausanschluss-Anzahl schon eine Kundenanschluss-Stufe
+  // gewählt, obwohl das Programm noch gar nicht weiß, wo der NVT sitzt
+  // (Alex, 2026-08-13: "Verbünde sollen erst gesetzt sein, wenn die NVTs
+  // stehen") — bis dahin bleibt die Trasse in der Fallback-Farbe (siehe
+  // ermittleMaterialProSegment in faserdimensionierung.ts, die dieselbe
+  // Prüfung macht und leer zurückgibt).
+  const materialProSegment = useMemo(
+    () => ermittleMaterialProSegment(trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen),
+    [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen]
   )
+  // Separat vorgehalten (nicht nur aus materialProSegment abgeleitet) für die
+  // Trassenknoten-Filterung und die Knotentyp-Anzeige unten — dort muss
+  // zuverlässig unterscheidbar sein, ob ein Segment WIRKLICH Backbone ist,
+  // nicht nur zufällig dasselbe "haupt"-Material zeigt.
+  const backboneProSegment = useMemo(
+    () => (startpunkt ? ermittleBackboneSegmente(trassePfade, startpunkt, nvtStandorte, schachtStandorte) : trassePfade.map(() => false)),
+    [trassePfade, startpunkt, nvtStandorte, schachtStandorte]
+  )
+  // Ist das Segment gerade manuell übersteuert? Nur fürs Klick-Panel (zeigt
+  // "manuell gesetzt" + "Automatisch zurücksetzen"-Option statt der
+  // Material-Auswahl bei einem bereits übersteuerten Segment).
+  const manuellUebersteuertProSegment = useMemo(
+    () => ermittleMaterialUebersteuerungProSegment(trassePfade, materialUebersteuerungen),
+    [trassePfade, materialUebersteuerungen]
+  )
+  // Kompletter Verlauf des Verbands, zu dem das angeklickte Segment gehört
+  // (2026-08-21, Alex: "möchte den Verlauf des Verbands sehen, auch bei einer
+  // Gabelung") — nicht nur das eine angeklickte Segment, sondern die ganze
+  // zusammenhängende Kette gleichen Materials bis zur Gabelung/zum NVT.
+  const verbandSegmentIdxs = useMemo(
+    () =>
+      ausgewaehltesSegmentNormal !== null && startpunkt
+        ? ermittleVerbandSegmente(trassePfade, startpunkt, materialProSegment, hausanschluesseProSegment, ausgewaehltesSegmentNormal)
+        : ausgewaehltesSegmentNormal !== null ? [ausgewaehltesSegmentNormal] : [],
+    [trassePfade, startpunkt, materialProSegment, hausanschluesseProSegment, ausgewaehltesSegmentNormal]
+  )
+  // Hausanschlüsse, die irgendwo auf dem kompletten Verband-Verlauf hängen —
+  // Vereinigung über alle Segmente der Instanz (durch die Verteiler-
+  // stoppende Akkumulation trägt ohnehin meist schon das NVT-nächste Segment
+  // die volle Menge, die Vereinigung ist hier nur ein Sicherheitsnetz).
+  const verbandHausIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const idx of verbandSegmentIdxs) for (const id of hausanschluesseProSegment[idx] ?? []) ids.add(id)
+    return ids
+  }, [verbandSegmentIdxs, hausanschluesseProSegment])
+  const hausIdZuFarbe = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const nvtIdx of ausgewaehlteNvtIdxs) {
+      const farbe = NVT_MARKIER_FARBEN[nvtIdx % NVT_MARKIER_FARBEN.length]
+      for (const hausId of nvtStandorte[nvtIdx]?.hausanschlussIds ?? []) map.set(hausId, farbe)
+    }
+    if (ausgewaehltesSchachtIdx !== null) {
+      for (const hausId of schachtStandorte[ausgewaehltesSchachtIdx]?.hausanschlussIds ?? []) map.set(hausId, SCHACHT_MARKIER_FARBE)
+    }
+    if (ausgewaehltesSegmentNormal !== null) {
+      for (const hausId of verbandHausIds) map.set(hausId, SEGMENT_HERVORHEBUNG_FARBE)
+    }
+    return map
+  }, [ausgewaehlteNvtIdxs, nvtStandorte, ausgewaehltesSchachtIdx, schachtStandorte, ausgewaehltesSegmentNormal, verbandHausIds])
+  const farbeProSegment = useMemo(
+    () => materialProSegment.map((m, i) => {
+      if (m) return m.haupt.farbe
+      // Explizit gelöschter Verbund (manuellUebersteuertProSegment[i] === null)
+      // ohne verbleibendes Backbone-Material (sonst würde m oben schon greifen)
+      // -> deutlich als "hier fehlt Material" markieren statt unauffällig auf
+      // trasseFarbe zurückzufallen.
+      if (manuellUebersteuertProSegment[i] === null) return VERBUND_GELOESCHT_FARBE
+      return trasseFarbe
+    }),
+    [materialProSegment, manuellUebersteuertProSegment, trasseFarbe]
+  )
+
+  // Trassenknoten (2026-08-20, Alex: "überall wo sich Verbunde ändern ist im
+  // Trassenbau ein Trassenknoten, das könnten wir auch implementieren") —
+  // jeder gemeinsame Endpunkt von ≥2 Segmenten, an dem sich das Hauptmaterial
+  // unterscheidet (Gabelung mit Stufenwechsel, Übergang zu/von Backbone,
+  // Start/Ende eines Verbands). Rein abgeleitet wie farbeProSegment, kein
+  // gespeicherter Zustand.
+  const trassenKnotenPunkte = useMemo(() => {
+    const r = (v: number) => Math.round(v * 100000) / 100000
+    const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+    const materialKeyVon = (i: number): string => {
+      const m = materialProSegment[i]?.haupt
+      return m ? (m.bezeichnungFirma || `${m.lrArt}-${m.lrAnzahl}`) : ''
+    }
+    // Echter Grad je Knoten (unterschiedliche Nachbar-Richtungen aus ALLEN
+    // Trasse-Punkten, nicht nur den Pfad-Array-Grenzen) — unterscheidet eine
+    // echte Gabelung (Grad >= 3) von einem reinen Durchgangspunkt (Grad 2),
+    // an dem zwei Pfad-Einträge nur deshalb aufeinandertreffen, weil OSM
+    // eine durchgehende Straße in mehrere Wege-Fragmente zerlegt (2026-08-28,
+    // Alex, nach Test: "viel zu viele Trassenknoten ... an jedem Eck" — ein
+    // reiner Durchgangspunkt braucht real keine Muffe, auch wenn sich dort
+    // rechnerisch die Kundenanschluss-Stufe verkleinert, weil ein Haus
+    // passiert wurde: Hausanschlüsse zweigen laut Materialkonzept direkt aus
+    // dem durchlaufenden Rohrverband ab, ohne eigene Spleißstelle).
+    const nachbarnVon = new Map<string, Set<string>>()
+    trassePfade.forEach((pfad) => {
+      for (let i = 0; i < pfad.length - 1; i++) {
+        const ka = nk(pfad[i]), kb = nk(pfad[i + 1])
+        if (ka === kb) continue
+        if (!nachbarnVon.has(ka)) nachbarnVon.set(ka, new Set())
+        if (!nachbarnVon.has(kb)) nachbarnVon.set(kb, new Set())
+        nachbarnVon.get(ka)!.add(kb)
+        nachbarnVon.get(kb)!.add(ka)
+      }
+    })
+    // NVT/Schacht haben schon einen eigenen Marker mit eigenem Klick-Panel —
+    // ein zusätzliches rotes X an derselben Stelle wäre nur Verdopplung.
+    const verteilerKeys = new Set<string>([
+      ...nvtStandorte.map((n) => nk(n.position)),
+      ...schachtStandorte.map((s) => nk(s.position)),
+    ])
+    const anKnoten = new Map<string, { position: LatLng; segmentIdxs: number[] }>()
+    trassePfade.forEach((pfad, i) => {
+      if (pfad.length < 2) return
+      for (const punkt of [pfad[0], pfad[pfad.length - 1]]) {
+        const key = nk(punkt)
+        if (!anKnoten.has(key)) anKnoten.set(key, { position: punkt, segmentIdxs: [] })
+        anKnoten.get(key)!.segmentIdxs.push(i)
+      }
+    })
+    const ergebnis: Array<{ position: LatLng; segmentIdxs: number[] }> = []
+    for (const [key, eintrag] of anKnoten) {
+      if (eintrag.segmentIdxs.length < 2) continue
+      if (verteilerKeys.has(key)) continue
+      if ((nachbarnVon.get(key)?.size ?? 0) < 3) continue
+      // Nur zählen, wenn Backbone an diesem Knoten beteiligt ist (echter
+      // Backbone-Fork, oder Übergang Backbone -> Kundenanschluss) — ein
+      // reiner Kundenanschluss-Stufenwechsel an einer Straßengabelung (der
+      // weitaus häufigste Fall) braucht laut Materialkonzept keine eigene
+      // Spleißstelle, Hausanschlüsse zweigen direkt aus dem durchlaufenden
+      // Rohrverband ab (2026-08-28, Alex an echten Projektdaten: "so viele
+      // Trassenknoten würden wir niemals bauen" — Auswertung ergab 13 von 27
+      // reine Kundenanschluss-Stufenwechsel ohne jedes Backbone-Segment).
+      if (!eintrag.segmentIdxs.some((i) => backboneProSegment[i])) continue
+      const keys = new Set(eintrag.segmentIdxs.map(materialKeyVon))
+      if (keys.size > 1) ergebnis.push(eintrag)
+    }
+    return ergebnis
+  }, [trassePfade, materialProSegment, nvtStandorte, schachtStandorte, backboneProSegment])
+
+  // Alle Punkte, in denen eine Verband-Linie sichtbar "landen" soll (siehe
+  // pfadEndenEinrasten oben) — NVT, Schächte und Trassenknoten.
+  const alleMarkerPositionen = useMemo(
+    () => [
+      ...nvtStandorte.map((n) => n.position),
+      ...schachtStandorte.map((s) => s.position),
+      ...trassenKnotenPunkte.map((k) => k.position),
+    ],
+    [nvtStandorte, schachtStandorte, trassenKnotenPunkte]
+  )
+
+  // Pro Doppelbelegungs-Segment: an welchem Ende (Start/Ende des Pfads) muss
+  // der Versatz auf 0 auslaufen (siehe versetzePfadSenkrechtGetapert)? Nur
+  // dort, wo KEIN benachbartes Segment mit identischem Haupt-/Zusatzmaterial
+  // anschließt — zwischen zwei durchgehenden Doppelbelegungs-Segmenten (z.B.
+  // nach segmentiereAnKreuzungen an einer harmlosen Kurve ohne echten
+  // Materialwechsel) soll der Versatz nahtlos durchlaufen, kein künstliches
+  // Einschnüren an jeder Zwischen-Kreuzung.
+  const doppelbelegungTaperProSegment = useMemo(() => {
+    const r = (v: number) => Math.round(v * 100000) / 100000
+    const nk = (p: LatLng) => `${r(p.lat)},${r(p.lng)}`
+    const anEndpunkt = new Map<string, number[]>()
+    trassePfade.forEach((pfad, i) => {
+      if (pfad.length < 2 || !materialProSegment[i]?.zusatz) return
+      for (const punkt of [pfad[0], pfad[pfad.length - 1]]) {
+        const key = nk(punkt)
+        if (!anEndpunkt.has(key)) anEndpunkt.set(key, [])
+        anEndpunkt.get(key)!.push(i)
+      }
+    })
+    const passtZusammen = (i: number, j: number) => {
+      const mi = materialProSegment[i], mj = materialProSegment[j]
+      return !!mi?.zusatz && !!mj?.zusatz && mi.haupt.farbe === mj.haupt.farbe && mi.zusatz.farbe === mj.zusatz.farbe
+    }
+    const ergebnis = new Map<number, [boolean, boolean]>()
+    trassePfade.forEach((pfad, i) => {
+      if (pfad.length < 2 || !materialProSegment[i]?.zusatz) return
+      const startNachbarn = (anEndpunkt.get(nk(pfad[0])) ?? []).some((j) => j !== i && passtZusammen(i, j))
+      const endNachbarn = (anEndpunkt.get(nk(pfad[pfad.length - 1])) ?? []).some((j) => j !== i && passtZusammen(i, j))
+      ergebnis.set(i, [!startNachbarn, !endNachbarn])
+    })
+    return ergebnis
+  }, [trassePfade, materialProSegment])
+
+  // Einfarbige Segmente (kein Doppelbelegung) — normales, Canvas-optimiertes
+  // Rendering, gruppiert nach Farbe wie bisher.
+  const trassePfadeNachFarbeOhneFeldweg = useMemo(() => {
+    const gruppen = new Map<string, LatLng[][]>()
+    trassePfade.forEach((pfad, i) => {
+      if (trassePfadeKinds[i] === 'track') return
+      if (materialProSegment[i]?.zusatz) return // Doppelbelegung, siehe unten
+      const farbe = farbeProSegment[i] ?? trasseFarbe
+      if (!gruppen.has(farbe)) gruppen.set(farbe, [])
+      gruppen.get(farbe)!.push(pfadEndenEinrasten(pfad, alleMarkerPositionen))
+    })
+    return [...gruppen.entries()]
+  }, [trassePfade, trassePfadeKinds, materialProSegment, farbeProSegment, trasseFarbe, alleMarkerPositionen])
+
+  // Doppelbelegung: zwei Materialien auf demselben Segment — statt der
+  // früheren konzentrischen Überlagerung (schmal auf breit) zwei parallel
+  // versetzte Linien wie ein Leitungsgraben mit zwei Kabeln, gruppiert nach
+  // Farbe für performantes Canvas-Rendering (wie die einfarbigen Segmente).
+  // Bewusst KEINE gestrichelte/Punkt-Strich-Symbolik (von Alex explizit
+  // abgelehnt), nur Farbe + räumlicher Versatz.
+  const trassePfadeDoppelbelegungHaupt = useMemo(() => {
+    const gruppen = new Map<string, LatLng[][]>()
+    trassePfade.forEach((pfad, i) => {
+      if (trassePfadeKinds[i] === 'track') return
+      const m = materialProSegment[i]
+      if (!m?.zusatz) return
+      const farbe = m.haupt.farbe
+      const [taperStart, taperEnd] = doppelbelegungTaperProSegment.get(i) ?? [true, true]
+      if (!gruppen.has(farbe)) gruppen.set(farbe, [])
+      gruppen.get(farbe)!.push(
+        pfadEndenEinrasten(versetzePfadSenkrechtGetapert(pfad, DOPPELBELEGUNG_VERSATZ_METER, taperStart, taperEnd), alleMarkerPositionen)
+      )
+    })
+    return [...gruppen.entries()]
+  }, [trassePfade, trassePfadeKinds, materialProSegment, doppelbelegungTaperProSegment, alleMarkerPositionen])
+  const trassePfadeDoppelbelegungZusatz = useMemo(() => {
+    const gruppen = new Map<string, LatLng[][]>()
+    trassePfade.forEach((pfad, i) => {
+      if (trassePfadeKinds[i] === 'track') return
+      const m = materialProSegment[i]
+      if (!m?.zusatz) return
+      const farbe = m.zusatz.farbe
+      const [taperStart, taperEnd] = doppelbelegungTaperProSegment.get(i) ?? [true, true]
+      if (!gruppen.has(farbe)) gruppen.set(farbe, [])
+      gruppen.get(farbe)!.push(
+        pfadEndenEinrasten(versetzePfadSenkrechtGetapert(pfad, -DOPPELBELEGUNG_VERSATZ_METER, taperStart, taperEnd), alleMarkerPositionen)
+      )
+    })
+    return [...gruppen.entries()]
+  }, [trassePfade, trassePfadeKinds, materialProSegment, doppelbelegungTaperProSegment, alleMarkerPositionen])
   const trassePfadeNurFeldweg = useMemo(
     () => trassePfade.filter((_, i) => trassePfadeKinds[i] === 'track'),
     [trassePfade, trassePfadeKinds]
   )
+  // Für TrasseKlickbar: welche Segment-Indizes sind visuell versetzt
+  // dargestellt (siehe trassePfadeDoppelbelegungHaupt/-Zusatz oben) —
+  // dieselbe Bedingung (kein Feldweg + zusatz vorhanden).
+  const doppelbelegungIdxs = useMemo(
+    () => new Set(trassePfade.map((_, i) => i).filter((i) => trassePfadeKinds[i] !== 'track' && !!materialProSegment[i]?.zusatz)),
+    [trassePfade, trassePfadeKinds, materialProSegment]
+  )
   const handleSegmentNormalKlick = useCallback((i: number) => {
     setAusgewaehltesSegmentNormal((prev) => (prev === i ? null : i))
+    setMaterialAuswahlOffen(false)
+    setAusgewaehlterTrassenknotenIdx(null)
   }, [])
 
   // Manuelles NVT setzen: nach Klick auf die Karte erst Kapazität abfragen,
@@ -416,6 +909,25 @@ const MapView = memo(function MapView({
   // Zuweisen-Modus: Hausanschlüsse anklicken ordnet sie dem ausgewählten NVT/Schacht zu.
   const [nvtZuweisenAktiv, setNvtZuweisenAktiv] = useState(false)
   const [schachtZuweisenAktiv, setSchachtZuweisenAktiv] = useState(false)
+
+  // Backbone-Verbindung erstellen (2026-08-13, Alex: "Schacht setzen oder
+  // NVT, markiert den, sagt Backbone-Verbindung erstellen mit diesem
+  // Verband") — Quelle wird per Kontextmenü-Aktion gesetzt, danach fängt der
+  // nächste Klick auf einen ANDEREN NVT/Schacht (siehe click-Handler der
+  // Marker oben) das Ziel ab statt die normale Markieren-Auswahl auszulösen.
+  // Sobald beide stehen, fragt ein kleiner Dialog das Material ab (jedes im
+  // aktiven Katalog-Profil hinterlegte, nicht nur das feste Backbone-Material
+  // — "kann man dann alles auswählen, was hinterlegt wurde").
+  const [backboneVerbindungQuelle, setBackboneVerbindungQuelle] =
+    useState<{ typ: 'nvt' | 'schacht'; idx: number; position: LatLng } | null>(null)
+  const [backboneVerbindungZiel, setBackboneVerbindungZiel] =
+    useState<{ typ: 'nvt' | 'schacht'; idx: number; position: LatLng } | null>(null)
+  const [backboneVerbindungMaterial, setBackboneVerbindungMaterial] = useState<MaterialEintrag | null>(null)
+  const backboneVerbindungAbbrechen = useCallback(() => {
+    setBackboneVerbindungQuelle(null)
+    setBackboneVerbindungZiel(null)
+    setBackboneVerbindungMaterial(null)
+  }, [setBackboneVerbindungQuelle, setBackboneVerbindungZiel, setBackboneVerbindungMaterial])
 
   // Lokale Arbeitskopie der Pfade im Edit-Modus
   const [localPfade, setLocalPfade] = useState<LatLng[][]>([])
@@ -449,6 +961,7 @@ const MapView = memo(function MapView({
   // Marker zurück auf seine alte Position (react-leaflet vergleicht die
   // position-Prop nur per Referenz).
   const schnappZielLayerRef = useRef<L.CircleMarker | null>(null)
+  const liveLinienLayerRef = useRef<L.Polyline | null>(null)
   const [aktivMenu, setAktivMenu] = useState<AktivMenu>(null)
   const [neuerHsStart, setNeuerHsStart] = useState<NeuerHsStart>(null)
   const [aktivesSegment, setAktivesSegment] = useState<string | null>(null)
@@ -456,6 +969,13 @@ const MapView = memo(function MapView({
   // Start, zweiter Klick auf DEMSELBEN Pfad schneidet den Abschnitt dazwischen
   // als eigenständiges Segment heraus (für den Export wichtig).
   const [segmentStart, setSegmentStart] = useState<{ pfadIdx: number; pos: LatLng } | null>(null)
+  // Mehrpunkt-Linienzeichnen (BayernAtlas-Flow, 2026-08-21, Alex: "Eine Linie
+  // zieht mit mehreren Punkten ... zwischendrin verbinden Sie die Linien") —
+  // ZUSÄTZLICH zum bestehenden Ein-Klick-"Neuer Strich" (unverändert), nicht
+  // als Ersatz. Startet wie "Neuer Strich" an einem bestehenden Punkt, sammelt
+  // aber beliebig viele weitere Punkte, bis "Fertig" (oder Doppelklick).
+  const [mehrpunktModus, setMehrpunktModus] = useState(false)
+  const [mehrpunktPunkte, setMehrpunktPunkte] = useState<LatLng[]>([])
 
   const trasseRef = useRef<LatLng[]>([])
   const trassePfadeRef = useRef<LatLng[][]>([])
@@ -574,6 +1094,8 @@ const MapView = memo(function MapView({
       setAktivMenu(null)
       setAktivesSegment(null)
       setSegmentStart(null)
+      setMehrpunktModus(false)
+      setMehrpunktPunkte([])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editierbarAktiv])
@@ -584,6 +1106,7 @@ const MapView = memo(function MapView({
       setZiehStartId(null); setZiehStartPos(null)
       setNeuerHsStart(null); setAktivMenu(null)
       setSegmentStart(null)
+      setMehrpunktModus(false); setMehrpunktPunkte([])
       handleDeselect()
     }
     window.addEventListener('keydown', onKey)
@@ -848,6 +1371,48 @@ const MapView = memo(function MapView({
     setZiehStartPos(null)
   }
 
+  // Mehrpunkt-Linie: jeder Klick (auf Karte oder bestehenden Punkt) hängt
+  // einen weiteren Punkt an — Abschluss erst über "Fertig" / Doppelklick /
+  // Enter, im Gegensatz zu handleZiehZiel oben, das nach einem Klick endet.
+  function handleMehrpunktPunkt(p: LatLng) {
+    setMehrpunktPunkte((prev) => [...prev, p])
+  }
+
+  function handleMehrpunktUndo() {
+    setMehrpunktPunkte((prev) => prev.slice(0, -1))
+  }
+
+  function handleMehrpunktAbbrechen() {
+    setMehrpunktModus(false)
+    setMehrpunktPunkte([])
+  }
+
+  function handleMehrpunktFertig() {
+    if (mehrpunktPunkte.length < 2) { handleMehrpunktAbbrechen(); return }
+    let aktuelllePfade = localPfadeRef.current
+    const segIdx = editSegmentIdxRef.current
+    const punkte = editPunkteRef.current
+    if (segIdx !== null && punkte.length >= 2) {
+      aktuelllePfade = aktuelllePfade.map((pf, i) => i === segIdx ? punkte : pf)
+    }
+    const neuePfade = [...aktuelllePfade, mehrpunktPunkte]
+    localPfadeRef.current = neuePfade
+    setLocalPfade(neuePfade)
+    const neueKinds = [...localPfadeKindsRef.current, 'paved' as WegKind]
+    localPfadeKindsRef.current = neueKinds
+    setLocalPfadeKinds(neueKinds)
+    if (!kleinProjekt) {
+      setEditSegmentIdx(neuePfade.length - 1)
+      editSegmentIdxRef.current = neuePfade.length - 1
+      setEditPunkte(mehrpunktPunkte)
+      editPunkteRef.current = mehrpunktPunkte
+      setAktivesSegment(`pfad-${neuePfade.length - 1}`)
+    }
+    editiertRef.current = true
+    setMehrpunktModus(false)
+    setMehrpunktPunkte([])
+  }
+
   // Schaltet die Straße/Feldweg-Klassifizierung eines Segments manuell um —
   // sowohl für frisch generierte als auch für per Hand editierte Segmente.
   function handleSegmentKindToggle(idx: number) {
@@ -873,9 +1438,20 @@ const MapView = memo(function MapView({
     setNeuerHsStart(null)
   }
 
+  // Rastet einen frei geklickten/gezogenen Punkt auf die Trasse ein, falls er
+  // nah genug dran liegt (2026-08-13, Alex: "Schacht setzen ist aktuell so,
+  // dass man den nicht auf die Trasse setzen kann, muss ihn danach immer
+  // verschieben") — sonst bleibt die Originalposition (z.B. für einen
+  // Aussiedlerhof-Schacht bewusst abseits jeder Trasse). Dieselbe
+  // Schnapp-Logik wie beim Ziehen von Trasse-Punkten im Bearbeitungsmodus.
+  const snapAufTrasse = useCallback(
+    (pos: LatLng): LatLng => findeSchnappziel(pos, trassePfade, -1, -1) ?? pos,
+    [trassePfade]
+  )
+
   // ── NVT manuell setzen ────────────────────────────────────────────────────
   function handleNvtSetzenZiel(pos: LatLng) {
-    setNeuerNvtPosition(pos)
+    setNeuerNvtPosition(snapAufTrasse(pos))
   }
 
   function handleNeuerNvtBestaetigen() {
@@ -893,7 +1469,7 @@ const MapView = memo(function MapView({
   // Kein Bestätigungsschritt nötig (keine Kapazität abzufragen) — Klick auf
   // die Karte legt den Standort direkt an, analog zum Startpunkt-Setzen.
   function handleSchachtSetzenZiel(pos: LatLng) {
-    onSchachtGesetzt?.(pos)
+    onSchachtGesetzt?.(snapAufTrasse(pos))
   }
 
   // ── Hausanschlüsse ────────────────────────────────────────────────────────
@@ -971,16 +1547,23 @@ const MapView = memo(function MapView({
 
   const btnStyle = (farbe: string, border: boolean): React.CSSProperties => ({
     display: 'block', width: '100%', padding: '13px 16px', background: 'none', border: 'none',
-    borderBottom: border ? '1px solid #374151' : 'none',
+    borderBottom: border ? '1px solid var(--border-strong)' : 'none',
     color: farbe, fontSize: '14px', cursor: 'pointer', textAlign: 'left',
   })
 
-  const layerBtnStyle = (aktiv: boolean): React.CSSProperties => ({
-    backgroundColor: aktiv ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb',
-    border: `1px solid ${aktiv ? '#3b82f6' : '#374151'}`, opacity: aktiv ? 1 : 0.55,
-  })
+  // Werkzeug-/Layer-Zeile fürs gebündelte Karten-Panel (2026-08-14, komplette
+  // Design-Überarbeitung nach Sitenna-Referenz: EIN abgerundetes, geschichtetes
+  // Panel mit Trennlinien statt vieler einzelner freischwebender Buttons).
+  const panelZeile = (aktiv: boolean, farbe: string | undefined, label: string, onClick: () => void, key?: string) => (
+    <button key={key ?? label} onClick={onClick}
+      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-left transition-colors hover:brightness-125"
+      style={{ backgroundColor: aktiv && farbe === undefined ? 'var(--accent-blue-dim)' : 'transparent', color: aktiv ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+      {farbe && <span style={{ width: 9, height: 9, borderRadius: '50%', background: farbe, display: 'inline-block', flexShrink: 0, opacity: aktiv ? 1 : 0.4 }} />}
+      {label}
+    </button>
+  )
 
-  const imZeichenModus = !!ziehStartId || !!neuerHsStart
+  const imZeichenModus = !!ziehStartId || !!neuerHsStart || mehrpunktModus
 
   // Handle-Dezimierung für Groß-Projekt (nur für ausgewähltes Segment)
   const handleSchritt = editPunkte.length > MAX_HANDLES ? Math.ceil(editPunkte.length / MAX_HANDLES) : 1
@@ -995,60 +1578,392 @@ const MapView = memo(function MapView({
         <input type="text" value={suchQuery}
           onChange={(e) => { setSuchQuery(e.target.value); setSuchFehler(false) }}
           onKeyDown={(e) => e.key === 'Enter' && handleSuche()}
-          placeholder="Ort oder Adresse suchen…"
-          className="w-56 px-3 py-1.5 rounded-lg text-xs outline-none shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: `1px solid ${suchFehler ? '#ef4444' : '#374151'}` }} />
+          placeholder="🔍 Ort oder Adresse suchen…"
+          className="w-60 px-4 py-2 text-xs outline-none shadow-lg"
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: `1px solid ${suchFehler ? 'var(--accent-red)' : 'var(--border-subtle)'}`, borderRadius: 999 }} />
         <button onClick={handleSuche} disabled={suchLaden}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg disabled:opacity-50"
-          style={{ backgroundColor: '#3b82f6', color: '#fff', border: 'none' }}>
-          {suchLaden ? '…' : '🔍'}
+          className="px-4 py-2 text-xs font-medium shadow-lg disabled:opacity-50 text-white transition-colors hover:brightness-110"
+          style={{ backgroundColor: 'var(--accent-blue)', borderRadius: 999 }}>
+          {suchLaden ? '…' : 'Suchen'}
         </button>
-        {suchFehler && <span className="text-xs" style={{ color: '#ef4444' }}>Nicht gefunden</span>}
+        {suchFehler && <span className="text-xs px-2" style={{ color: 'var(--accent-red)' }}>Nicht gefunden</span>}
       </div>
 
-      <div className="absolute top-3 right-3 z-1000 flex flex-col gap-2">
-        <button onClick={() => setTileVariante((v) => v === 'satellit' ? 'osm' : 'satellit')}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #374151' }}>
-          {tileVariante === 'satellit' ? '🗺️ Karte' : '🛰️ Satellit'}
-        </button>
-        <button onClick={() => setTopoSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
-          style={{ backgroundColor: topoSichtbar ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb', border: `1px solid ${topoSichtbar ? '#3b82f6' : '#374151'}` }}>
-          📐 Topokarte
-        </button>
-        <button onClick={() => setOrtsnamenSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg"
-          style={{ backgroundColor: ortsnamenSichtbar ? '#1e3a5f' : '#1a1a1a', color: '#f9fafb', border: `1px solid ${ortsnamenSichtbar ? '#3b82f6' : '#374151'}` }}>
-          🏷️ Ortsnamen
-        </button>
-        <div style={{ borderTop: '1px solid #374151', margin: '2px 0' }} />
-        <button onClick={() => setTrasseSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(trasseSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: trasseFarbe, display: 'inline-block', flexShrink: 0 }} />Trasse
-        </button>
-        <button onClick={() => setHausanschluesseSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(hausanschluesseSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: hausanschlussfarbe, display: 'inline-block', flexShrink: 0 }} />Hausanschlüsse
-        </button>
-        <button onClick={() => setAdressenSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(adressenSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: '50%', background: adressFarbe, display: 'inline-block', flexShrink: 0 }} />Adressen
-        </button>
-        <button onClick={() => setNvtSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(nvtSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: '#7c3aed', display: 'inline-block', flexShrink: 0 }} />NVT
-        </button>
-        <button onClick={() => setSchachtSichtbar((v) => !v)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg flex items-center gap-1.5"
-          style={layerBtnStyle(schachtSichtbar)}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: '#f97316', display: 'inline-block', flexShrink: 0 }} />Schacht
-        </button>
+      {/* Gebündeltes Karten-Werkzeug-Panel — ein abgerundeter, geschichteter
+          Container mit Trennlinien statt vieler einzelner freischwebender
+          Buttons (2026-08-14, komplette Design-Überarbeitung nach
+          Sitenna-Referenz + Apple-Formsprache, Alex: "Farben behalten, aber
+          Struktur modernisieren"). */}
+      <div className="absolute top-3 right-3 z-1000 flex flex-col overflow-hidden shadow-lg"
+        style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-lg)', width: 196 }}>
+        {panelZeile(tileVariante === 'satellit', undefined, tileVariante === 'satellit' ? '🗺️ Karte' : '🛰️ Satellit', () => setTileVariante((v) => v === 'satellit' ? 'osm' : 'satellit'))}
+        {panelZeile(topoSichtbar, undefined, '📐 Topokarte', () => setTopoSichtbar((v) => !v))}
+        {panelZeile(ortsnamenSichtbar, undefined, '🏷️ Ortsnamen', () => setOrtsnamenSichtbar((v) => !v))}
+        <div style={{ borderTop: '1px solid var(--border-subtle)' }} />
+        {panelZeile(trasseSichtbar, trasseFarbe, 'Trasse', () => setTrasseSichtbar((v) => !v))}
+        {panelZeile(hausanschluesseSichtbar, hausanschlussfarbe, 'Hausanschlüsse', () => setHausanschluesseSichtbar((v) => !v))}
+        {panelZeile(adressenSichtbar, adressFarbe, 'Adressen', () => setAdressenSichtbar((v) => !v))}
+        {panelZeile(nvtSichtbar, '#7c3aed', 'NVT', () => setNvtSichtbar((v) => !v))}
+        {panelZeile(schachtSichtbar, '#f97316', 'Schacht', () => setSchachtSichtbar((v) => !v))}
       </div>
+
+      {/* Material-Legende (2026-08-13, Alex: "ich seh lauter verschiedene
+          Farben, aber ich weiß nicht was was ist") — zeigt Farbe ↔ Material
+          aus dem gerade aktiven Katalog-Profil (Firmenstandard/Förderung). */}
+      {trasseSichtbar && !editierbarAktiv && trassePfade.length > 0 && (nvtStandorte.length > 0 || schachtStandorte.length > 0) && (
+        <div className="absolute bottom-3 left-3 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-56"
+          style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border-strong)' }}>
+          <span className="text-[10px] text-gray-500 uppercase tracking-wider">Legende — Material</span>
+          {[materialProfil.trasse, ...materialProfil.kundenanschlussStufen].map((m, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+              <span className="text-[10px] text-gray-300 truncate">
+                {m.bezeichnungFirma || lrArtLabel(m.lrArt)}{i === 0 ? ' (Backbone)' : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Klick-Info fürs angeklickte Trasse-Segment (2026-08-13, Alex: "ich
+          möchte sehen, welcher Verbund wo langläuft und welche Adresse an
+          welchem Verbund hängt") — Hausanschlüsse werden zusätzlich weiß auf
+          der Karte hervorgehoben (siehe hausIdZuFarbe). */}
+      {trasseSichtbar && !editierbarAktiv && ausgewaehltesSegmentNormal !== null && (() => {
+        const material = materialProSegment[ausgewaehltesSegmentNormal]
+        const hausIds = [...verbandHausIds]
+        const adressenHier = hausIds
+          .map((id) => hausanschluesse.find((h) => h.id === id))
+          .filter((h): h is Hausstich => !!h)
+          .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
+          .filter((a): a is Address => !!a)
+        const ANZEIGE_LIMIT = 8
+        const materialZeile = (m: MaterialEintrag, zusatzLabel?: string) => (
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-1.5">
+              <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+              <span className="text-xs text-gray-200">{m.bezeichnungFirma || lrArtLabel(m.lrArt)}{zusatzLabel ? ` (${zusatzLabel})` : ''}</span>
+            </div>
+            <span className="text-[10px] text-gray-500 ml-4.5">
+              {m.anzahl}× {lrArtLabel(m.lrArt)}, Reserve {m.reserve} Röhrchen
+            </span>
+          </div>
+        )
+        return (
+          <div className="absolute bottom-3 left-64 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: 'var(--surface-1)', border: `1px solid ${GELB}` }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">
+                {verbandSegmentIdxs.length > 1 ? `Verband über ${verbandSegmentIdxs.length} Segmente` : `Segment ${ausgewaehltesSegmentNormal + 1}`}
+              </span>
+              <button onClick={() => setAusgewaehltesSegmentNormal(null)} className="text-xs" style={{ color: 'var(--text-secondary)' }}>✕</button>
+            </div>
+            {material ? (
+              <>
+                {materialZeile(material.haupt)}
+                {material.zusatz && materialZeile(material.zusatz, 'Doppelbelegung')}
+              </>
+            ) : (
+              <span className="text-xs text-gray-500">Kein Material zugewiesen</span>
+            )}
+            <span className="text-[10px] text-gray-500">{hausIds.length} Hausanschluss(e) auf diesem Verbund:</span>
+            <div className="flex flex-col gap-0.5">
+              {adressenHier.slice(0, ANZEIGE_LIMIT).map((a) => (
+                <span key={a.uuid} className="text-[10px] text-gray-300 truncate">
+                  {a.strasse} {a.nr}{a.nr_zusatz}
+                </span>
+              ))}
+              {adressenHier.length > ANZEIGE_LIMIT && (
+                <span className="text-[10px] text-gray-600">… und {adressenHier.length - ANZEIGE_LIMIT} weitere</span>
+              )}
+            </div>
+            {/* Manuelle Material-Übersteuerung (2026-08-21, Alex: "im
+                Nachhinein kann ich aber keinen einzigen Verbund
+                bearbeiten") — wirkt auf den KOMPLETTEN Verband-Verlauf
+                (verbandSegmentIdxs), nicht nur das angeklickte Einzelsegment.
+                Drei Zustände: kein Eintrag = automatisch, Eintrag mit echtem
+                Material = ersetzt, Eintrag mit material=null = gelöscht
+                (2026-08-20, Alex: "Verbund löschen"). */}
+            {(onMaterialUebersteuern || onVerbundLoeschen) && (() => {
+              const uebersteuerung = manuellUebersteuertProSegment[ausgewaehltesSegmentNormal]
+              const istGeloescht = uebersteuerung === null
+              const istErsetzt = uebersteuerung !== undefined && uebersteuerung !== null
+              return (
+                <div className="flex flex-col gap-1 pt-1" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                  {istGeloescht && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px]" style={{ color: VERBUND_GELOESCHT_FARBE }}>🗑️ Verbund gelöscht</span>
+                      {onMaterialUebersteuern && (
+                        <button
+                          onClick={() => { onMaterialUebersteuern(verbandSegmentIdxs, null); setMaterialAuswahlOffen(false) }}
+                          className="text-[10px] underline"
+                          style={{ color: 'var(--text-secondary)' }}>
+                          ↺ Wiederherstellen
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {istErsetzt && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px]" style={{ color: '#c084fc' }}>✏️ manuell gesetzt</span>
+                      {onMaterialUebersteuern && (
+                        <button
+                          onClick={() => { onMaterialUebersteuern(verbandSegmentIdxs, null); setMaterialAuswahlOffen(false) }}
+                          className="text-[10px] underline"
+                          style={{ color: 'var(--text-secondary)' }}>
+                          ↺ Automatisch
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {materialAuswahlOffen ? (
+                    <div className="flex flex-col gap-0.5">
+                      {[...materialProfil.kundenanschlussStufen]
+                        .sort((a, b) => a.lrAnzahl - b.lrAnzahl)
+                        .map((m) => (
+                          <button
+                            key={m.bezeichnungFirma || m.lrArt}
+                            onClick={() => { onMaterialUebersteuern?.(verbandSegmentIdxs, m); setMaterialAuswahlOffen(false) }}
+                            className="flex items-center gap-1.5 px-1.5 py-1 rounded text-left transition-colors hover:brightness-125"
+                            style={{ backgroundColor: 'var(--surface-2)' }}>
+                            <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+                            <span className="text-[10px] text-gray-200">{m.bezeichnungFirma || lrArtLabel(m.lrArt)}</span>
+                          </button>
+                        ))}
+                      <button onClick={() => setMaterialAuswahlOffen(false)} className="text-[10px] text-left" style={{ color: 'var(--text-secondary)' }}>
+                        ✕ Abbrechen
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      {onMaterialUebersteuern && (
+                        <button onClick={() => setMaterialAuswahlOffen(true)} className="text-[10px] text-left underline" style={{ color: '#93c5fd' }}>
+                          ✏️ {istErsetzt || istGeloescht ? 'Ersetzen' : 'Material ändern'}
+                        </button>
+                      )}
+                      {onVerbundLoeschen && !istGeloescht && (
+                        <button onClick={() => { onVerbundLoeschen(verbandSegmentIdxs); setMaterialAuswahlOffen(false) }} className="text-[10px] text-left underline" style={{ color: VERBUND_GELOESCHT_FARBE }}>
+                          🗑️ Löschen
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+        )
+      })()}
+
+      {/* Klick-Info für den angeklickten Trassenknoten (2026-08-20, Alex:
+          "man könnte den Trassenknoten anklicken und man sieht wie was
+          verbunden ist, Rohr Farben") — listet jedes hier angrenzende
+          Segment mit Material + Gabo-Rohr-Farben-Aufschlüsselung. */}
+      {!editierbarAktiv && ausgewaehlterTrassenknotenIdx !== null && trassenKnotenPunkte[ausgewaehlterTrassenknotenIdx] && (() => {
+        const knoten = trassenKnotenPunkte[ausgewaehlterTrassenknotenIdx]
+        // Geräteweite Einstellung (siehe EinstellungenModal, 2026-08-21,
+        // Alex: "darf nicht allgemein aktiv sein, sondern in Einstellungen
+        // auswählbar") — bewusst frisch aus localStorage gelesen statt in
+        // State gehalten, da sich das Farbschema selten ändert und dieser
+        // Panel-Render nur bei explizitem Klick auf einen Trassenknoten
+        // passiert (kein Performance-Problem, aber immer aktuell).
+        const rohrFarbschema = ladeFirmendaten().rohrFarbschema
+        const ANZEIGE_LIMIT = 12
+        const materialMitRohrfarben = (m: MaterialEintrag) => {
+          const positionen = Array.from({ length: Math.min(m.lrAnzahl, ANZEIGE_LIMIT) }, (_, idx) => idx + 1)
+          return (
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-1.5">
+                <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+                <span className="text-xs text-gray-200">{m.bezeichnungFirma || lrArtLabel(m.lrArt)}</span>
+              </div>
+              <div className="flex flex-wrap gap-x-2 gap-y-0.5 ml-4.5">
+                {positionen.map((nr) => (
+                  <span key={nr} className="text-[10px] text-gray-500">{nr}: {rohrFarbeFuerRohrNr(rohrFarbschema, m.lrAnzahl, nr)}</span>
+                ))}
+                {m.lrAnzahl > ANZEIGE_LIMIT && (
+                  <span className="text-[10px] text-gray-600">… und {m.lrAnzahl - ANZEIGE_LIMIT} weitere</span>
+                )}
+              </div>
+            </div>
+          )
+        }
+        // Knotentyp benennen (2026-08-28, Alex: "muss genauer explizit
+        // dranstehen, was ist denn das für ein Trassenknoten") — grob anhand
+        // der angrenzenden "haupt"-Materialien: läuft hier Backbone auf
+        // Kundenanschluss über, oder teilt sich ein Kundenanschluss-Verband
+        // auf mehrere Stufen auf (Gabelung)?
+        const backboneAnzahl = knoten.segmentIdxs.filter((i) => backboneProSegment[i]).length
+        const kundeAnzahl = knoten.segmentIdxs.length - backboneAnzahl
+        const knotenTyp =
+          backboneAnzahl > 0 && kundeAnzahl > 0 ? 'Übergang Backbone → Kundenanschluss-Verband'
+          : kundeAnzahl > 0 ? 'Kundenanschluss-Verband-Stufenwechsel (Gabelung)'
+          : 'Materialwechsel'
+        return (
+          <div className="absolute bottom-3 left-64 z-1000 rounded-2xl shadow-lg p-3 flex flex-col gap-2 max-w-96"
+            style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #dc2626' }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">✕ Trassenknoten — {knoten.segmentIdxs.length} Segmente treffen sich hier</span>
+              <button onClick={() => setAusgewaehlterTrassenknotenIdx(null)} className="text-xs" style={{ color: 'var(--text-secondary)' }}>✕</button>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-medium" style={{ color: '#f87171' }}>{knotenTyp}</span>
+              <span className="text-[10px] text-gray-600">Farbgleiche Verbünde werden wo möglich durchverbunden. Klick auf einen Verbund unten zeigt dessen kompletten Verlauf auf der Karte.</span>
+            </div>
+            <div className="flex flex-col gap-2" style={{ maxHeight: 340, overflowY: 'auto' }}>
+              {knoten.segmentIdxs.map((segIdx) => {
+                const material = materialProSegment[segIdx]
+                return (
+                  <button
+                    key={segIdx}
+                    onClick={() => {
+                      setAusgewaehlterTrassenknotenIdx(null)
+                      setAusgewaehltesSegmentNormal(segIdx)
+                      setMaterialAuswahlOffen(false)
+                    }}
+                    className="flex flex-col gap-1 pb-1.5 text-left transition-colors hover:brightness-125"
+                    style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                  >
+                    <span className="text-[10px] text-gray-600">Segment {segIdx + 1} · auf Karte zeigen →</span>
+                    {material ? (
+                      <>
+                        {materialMitRohrfarben(material.haupt)}
+                        {material.zusatz && materialMitRohrfarben(material.zusatz)}
+                      </>
+                    ) : (
+                      <span className="text-xs text-gray-500">Kein Material zugewiesen</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            <span className="text-[9px] leading-tight" style={{ color: 'var(--text-tertiary)' }}>
+              Rohr-Farben nach {rohrFarbschema === 'din' ? 'DIN EN 60794' : 'gabocom'} (⚙️ Einstellungen → Rohr-Farbschema änderbar).
+              {rohrFarbschema === 'gabocom' && ' Backbone-Rohrtypen (4x20/7x14) nicht durch Diagramm bestätigt, bitte gegenchecken.'}
+            </span>
+          </div>
+        )
+      })()}
+
+      {/* Mausover-Übersicht fürs NVT (2026-08-13, Alex: "wenn ich mit der
+          Maus draufgeh, soll son kleines Modal aufgehen mit allen wichtigen
+          Daten") — zeigt Belegung, hängende Hausanschlüsse und die
+          Kundenanschluss-Verbände auf den Zuführungssegmenten, die
+          ausschließlich diesem NVT zugeordnet sind (bei geteilten
+          Backbone-Segmenten also nicht mitgezählt, da die dort mehreren
+          NVTs gleichzeitig dienen). Zeigt sich jetzt auch bei einem einzeln
+          angeklickten (nicht nur gehovertem) NVT (2026-08-21, Alex: "wenn
+          ich draufklick, seh ich nur die Hausanschlüsse" — der Verband-
+          Verlauf war bisher nur per Hover erreichbar). */}
+      {(hoverNvtIdx ?? (ausgewaehlteNvtIdxs.size === 1 ? [...ausgewaehlteNvtIdxs][0] : null)) !== null && (() => {
+        const angezeigterNvtIdx = (hoverNvtIdx ?? [...ausgewaehlteNvtIdxs][0])!
+        if (!nvtStandorte[angezeigterNvtIdx]) return null
+        const nvt = nvtStandorte[angezeigterNvtIdx]
+        const istUeberlastet = nvt.belegung > nvt.kapazitaet
+        const auslastung = nvt.kapazitaet > 0 ? Math.round((nvt.belegung / nvt.kapazitaet) * 100) : 0
+        const adressenHier = nvt.hausanschlussIds
+          .map((id) => hausanschluesse.find((h) => h.id === id))
+          .filter((h): h is Hausstich => !!h)
+          .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
+          .filter((a): a is Address => !!a)
+        // Jede eigenständige Verband-INSTANZ einzeln auflisten, nicht nach
+        // Material zusammengefasst (2026-08-21, Alex: "seh nicht den
+        // Verbundverlauf" / "drei verschiedene Straßen ... müssen drei
+        // einzelne 12x7-Verbünde sein" — vorher wurden mehrere unabhängige
+        // Straßen mit zufällig gleicher Stufe zu EINEM Listeneintrag mit nur
+        // einem klickbaren Beispiel zusammengefasst, die anderen Äste waren
+        // aus dieser Liste heraus gar nicht erreichbar). Nutzt dieselbe
+        // richtungsbewusste ermittleVerbandSegmente()-Logik wie das
+        // Klick-Panel, um pro Segment die volle Instanz zu ermitteln und
+        // bereits erfasste Segmente nicht doppelt zu listen.
+        const verwendeteSegmente = new Set<number>()
+        const verbaende: Array<{ material: MaterialEintrag; segmentAnzahl: number; beispielSegmentIdx: number }> = []
+        if (startpunkt) {
+          trassePfade.forEach((_, i) => {
+            if (verwendeteSegmente.has(i)) return
+            const ids = hausanschluesseProSegment[i] ?? []
+            if (ids.length === 0 || !ids.every((id) => nvt.hausanschlussIds.includes(id))) return
+            const m = materialProSegment[i]?.haupt
+            if (!m) return
+            const instanz = ermittleVerbandSegmente(trassePfade, startpunkt, materialProSegment, hausanschluesseProSegment, i)
+            instanz.forEach((idx) => verwendeteSegmente.add(idx))
+            verbaende.push({ material: m, segmentAnzahl: instanz.length, beispielSegmentIdx: i })
+          })
+        }
+        const ANZEIGE_LIMIT = 6
+        return (
+          <div className="absolute bottom-3 right-3 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: 'var(--surface-1)', border: `1px solid ${istUeberlastet ? '#f87171' : '#3b82f6'}` }}
+            // Hover bleibt beim Wechsel von Marker zu Panel bestehen, sonst
+            // schließt sich das Panel per mouseout am Marker, bevor man
+            // einen Verband-Eintrag überhaupt anklicken kann.
+            onMouseEnter={() => setHoverNvtIdx(hoverNvtIdx)}
+            onMouseLeave={() => setHoverNvtIdx(null)}>
+            <span className="text-[10px] text-gray-500 uppercase tracking-wider">NVT {angezeigterNvtIdx + 1}</span>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-300">Belegung</span>
+              <span className="text-xs font-medium" style={{ color: istUeberlastet ? '#f87171' : '#93c5fd' }}>
+                {nvt.belegung}/{nvt.kapazitaet} ({auslastung}%){istUeberlastet ? ' ⚠️' : ''}
+              </span>
+            </div>
+            {verbaende.length > 0 && (
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-500">Verbände auf Zuführung (je einzeln anklickbar für Verlauf):</span>
+                {verbaende.map(({ material, segmentAnzahl, beispielSegmentIdx }) => (
+                  <button
+                    key={beispielSegmentIdx}
+                    onClick={() => { setAusgewaehltesSegmentNormal(beispielSegmentIdx); setMaterialAuswahlOffen(false) }}
+                    className="flex items-center gap-1.5 text-left transition-colors hover:brightness-125"
+                  >
+                    <span style={{ width: 12, height: 3, borderRadius: 2, background: material.farbe, display: 'inline-block', flexShrink: 0 }} />
+                    <span className="text-[10px] text-gray-300">{material.bezeichnungFirma || lrArtLabel(material.lrArt)} ({segmentAnzahl} Segment{segmentAnzahl === 1 ? '' : 'e'})</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <span className="text-[10px] text-gray-500">{adressenHier.length} Hausanschluss(e):</span>
+            <div className="flex flex-col gap-0.5">
+              {adressenHier.slice(0, ANZEIGE_LIMIT).map((a) => (
+                <span key={a.uuid} className="text-[10px] text-gray-300 truncate">
+                  {a.strasse} {a.nr}{a.nr_zusatz}
+                </span>
+              ))}
+              {adressenHier.length > ANZEIGE_LIMIT && (
+                <span className="text-[10px] text-gray-600">… und {adressenHier.length - ANZEIGE_LIMIT} weitere</span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Mausover-Übersicht fürs Schacht — dieselbe Idee wie beim NVT, aber
+          ohne Kapazitätsgrenze (Schacht hat keine, siehe types.ts). */}
+      {hoverSchachtIdx !== null && schachtStandorte[hoverSchachtIdx] && (() => {
+        const schacht = schachtStandorte[hoverSchachtIdx]
+        const adressenHier = schacht.hausanschlussIds
+          .map((id) => hausanschluesse.find((h) => h.id === id))
+          .filter((h): h is Hausstich => !!h)
+          .map((h) => adressen.find((a) => a.uuid === h.addressUuid))
+          .filter((a): a is Address => !!a)
+        const ANZEIGE_LIMIT = 6
+        return (
+          <div className="absolute bottom-3 right-3 z-1000 rounded-2xl shadow-lg p-2.5 flex flex-col gap-1.5 max-w-64"
+            style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #f97316' }}>
+            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Schacht {hoverSchachtIdx + 1}</span>
+            <span className="text-[10px] text-gray-500">{adressenHier.length} Hausanschluss(e):</span>
+            <div className="flex flex-col gap-0.5">
+              {adressenHier.slice(0, ANZEIGE_LIMIT).map((a) => (
+                <span key={a.uuid} className="text-[10px] text-gray-300 truncate">
+                  {a.strasse} {a.nr}{a.nr_zusatz}
+                </span>
+              ))}
+              {adressenHier.length > ANZEIGE_LIMIT && (
+                <span className="text-[10px] text-gray-600">… und {adressenHier.length - ANZEIGE_LIMIT} weitere</span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
 
       <MapContainer center={[51.1657, 10.4515]} zoom={6} style={{ height: '100%', width: '100%' }}
         className={startpunktSetzenAktiv || imZeichenModus ? 'cursor-crosshair' : ''}>
@@ -1056,6 +1971,9 @@ const MapView = memo(function MapView({
         {tileVariante === 'satellit' ? (
           <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" attribution="© Esri" maxNativeZoom={19} maxZoom={21} />
         ) : (
+          // Standard-OSM-Kacheln — bewusst NICHT eingefärbt (Alex, 2026-08-14:
+          // "die Karte an sich selber nicht ändern", Rückbau des dunklen
+          // Kartenversuchs aus derselben Design-Überarbeitung).
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='© OpenStreetMap' maxNativeZoom={19} maxZoom={21} />
         )}
         {ortsnamenSichtbar && (
@@ -1067,10 +1985,12 @@ const MapView = memo(function MapView({
           hsZeichenModus={!!neuerHsStart} onHsZeichenZiel={handleNeuerHsZiel}
           nvtSetzenModus={nvtManuellSetzenAktiv && !neuerNvtPosition} onNvtSetzenZiel={handleNvtSetzenZiel}
           schachtSetzenModus={schachtSetzenAktiv} onSchachtSetzenZiel={handleSchachtSetzenZiel}
+          mehrpunktModus={mehrpunktModus} onMehrpunktKlick={handleMehrpunktPunkt} onMehrpunktFertig={handleMehrpunktFertig}
           menuOffen={!!aktivMenu} onMenuSchliessen={() => setAktivMenu(null)}
           onMapKlick={() => {
             if (editierbarAktiv && !kleinProjekt) handleDeselect()
             setAusgewaehltesSegmentNormal(null)
+            setAusgewaehlterTrassenknotenIdx(null)
           }} />
         <AutoZoom adressen={adressen} />
         <TopographieWMS sichtbar={topoSichtbar} />
@@ -1081,9 +2001,22 @@ const MapView = memo(function MapView({
           trassePfade.length > 0
             ? (
               <>
-                <TrasseNetzwerk pfade={trassePfadeOhneFeldweg} farbe={trasseFarbe} opacity={0.9} />
+                {trassePfadeNachFarbeOhneFeldweg.map(([farbe, pfade]) => (
+                  <TrasseNetzwerk key={farbe} pfade={pfade} farbe={farbe} opacity={0.9} />
+                ))}
+                {/* Doppelbelegung: zwei parallel versetzte Linien statt einer
+                    einzelnen, nicht unterscheidbaren Farbe — macht sichtbar,
+                    dass hier zwei Verbände auf demselben Segment liegen
+                    (Alex, 2026-08-13 / 2026-08-21: Überlagerung war
+                    "unübersichtlich"). */}
+                {trassePfadeDoppelbelegungZusatz.map(([farbe, pfade]) => (
+                  <TrasseNetzwerk key={`db-zusatz-${farbe}`} pfade={pfade} farbe={farbe} opacity={0.9} weight={4} />
+                ))}
+                {trassePfadeDoppelbelegungHaupt.map(([farbe, pfade]) => (
+                  <TrasseNetzwerk key={`db-haupt-${farbe}`} pfade={pfade} farbe={farbe} opacity={0.9} weight={4} />
+                ))}
                 <TrasseNetzwerk pfade={trassePfadeNurFeldweg} farbe={feldwegFarbe} opacity={0.9} />
-                <TrasseKlickbar pfade={trassePfade} ausgewaehlterIdx={ausgewaehltesSegmentNormal}
+                <TrasseKlickbar pfade={trassePfade} doppelbelegungIdxs={doppelbelegungIdxs} ausgewaehlteIdxs={verbandSegmentIdxs}
                   onKlick={handleSegmentNormalKlick} />
               </>
             )
@@ -1108,6 +2041,7 @@ const MapView = memo(function MapView({
                     click: (e) => {
                       L.DomEvent.stopPropagation(e)
                       const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                      if (mehrpunktModus) { handleMehrpunktPunkt(pos); return }
                       if (ziehStartId) { handleZiehZiel(pos); return }
                       if (neuerHsStart) { handleNeuerHsZiel(pos); return }
                       handleSegmentAuswaehlen(pi)
@@ -1168,11 +2102,13 @@ const MapView = memo(function MapView({
                   eventHandlers={{
                     click: (e) => {
                       if (e.originalEvent) e.originalEvent.stopPropagation()
+                      if (mehrpunktModus) { handleMehrpunktPunkt(p); return }
                       if (ziehStartId) { handleZiehZiel(p); return }
                       if (neuerHsStart) { handleNeuerHsZiel(p); return }
                       zeigeMenu(e, [
                         { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleEditPunktLoeschen(i); setAktivMenu(null) } },
                         { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
+                        { label: '📐 Mehrpunkt-Linie', farbe: '#93c5fd', action: () => { setMehrpunktModus(true); setMehrpunktPunkte([p]); setAktivMenu(null) } },
                         segmentDefinierenMenuEintrag(editSegmentIdx, p),
                       ])
                     },
@@ -1180,7 +2116,10 @@ const MapView = memo(function MapView({
                     drag: (e) => {
                       const ll = (e.target as L.Marker).getLatLng()
                       const linienLive = localPfadeRef.current.map((pf, idx) => (idx === editSegmentIdx ? editPunkteRef.current : pf))
-                      zeigeSchnappZiel(schnappZielLayerRef, findeSchnappziel({ lat: ll.lat, lng: ll.lng }, linienLive, editSegmentIdx ?? -1, i))
+                      const ziel = findeSchnappziel({ lat: ll.lat, lng: ll.lng }, linienLive, editSegmentIdx ?? -1, i)
+                      zeigeSchnappZiel(schnappZielLayerRef, ziel)
+                      const zielPos = ziel ?? { lat: ll.lat, lng: ll.lng }
+                      zeigeLiveLinie(liveLinienLayerRef, editPunkteRef.current.map((p, idx) => (idx === i ? zielPos : p)))
                     },
                     dragend: (e) => {
                       const ll = (e.target as L.Marker).getLatLng()
@@ -1189,6 +2128,7 @@ const MapView = memo(function MapView({
                       const ziel = findeSchnappziel(pos, linienLive, editSegmentIdx ?? -1, i)
                       handleEditPunktBewegt(i, ziel ?? pos)
                       zeigeSchnappZiel(schnappZielLayerRef, null)
+                      zeigeLiveLinie(liveLinienLayerRef, null)
                     },
                   }}>
                   {istAktiv && <Tooltip permanent>Karte antippen → Segment · ESC = Abbrechen</Tooltip>}
@@ -1214,6 +2154,7 @@ const MapView = memo(function MapView({
                   click: (e) => {
                     L.DomEvent.stopPropagation(e)
                     const pos = { lat: e.latlng.lat, lng: e.latlng.lng }
+                    if (mehrpunktModus) { handleMehrpunktPunkt(pos); return }
                     if (ziehStartId) { handleZiehZiel(pos); return }
                     if (neuerHsStart) { handleNeuerHsZiel(pos); return }
                     setAktivesSegment(segKey)
@@ -1249,24 +2190,31 @@ const MapView = memo(function MapView({
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
+                    if (mehrpunktModus) { handleMehrpunktPunkt(p); return }
                     if (ziehStartId) { handleZiehZiel(p); return }
                     if (neuerHsStart) { handleNeuerHsZiel(p); return }
                     zeigeMenu(e, [
                       { label: '🗑️ Punkt löschen', farbe: '#f87171', action: () => { handleKleinPunktLoeschen(pi, i); setAktivMenu(null) } },
                       { label: '✏️ Neuer Strich', farbe: '#93c5fd', action: () => { setZiehStartId(hid); setZiehStartPos(p); setAktivMenu(null) } },
+                      { label: '📐 Mehrpunkt-Linie', farbe: '#93c5fd', action: () => { setMehrpunktModus(true); setMehrpunktPunkte([p]); setAktivMenu(null) } },
                       segmentDefinierenMenuEintrag(pi, p),
                     ])
                   },
                   dragstart: () => setAktivMenu(null),
                   drag: (e) => {
                     const ll = (e.target as L.Marker).getLatLng()
-                    zeigeSchnappZiel(schnappZielLayerRef, findeSchnappziel({ lat: ll.lat, lng: ll.lng }, localPfadeRef.current, pi, i))
+                    const ziel = findeSchnappziel({ lat: ll.lat, lng: ll.lng }, localPfadeRef.current, pi, i)
+                    zeigeSchnappZiel(schnappZielLayerRef, ziel)
+                    const zielPos = ziel ?? { lat: ll.lat, lng: ll.lng }
+                    const aktuellerPfad = localPfadeRef.current[pi] ?? []
+                    zeigeLiveLinie(liveLinienLayerRef, aktuellerPfad.map((p2, idx) => (idx === i ? zielPos : p2)))
                   },
                   dragend: (e) => {
                     const ll = (e.target as L.Marker).getLatLng()
                     const pos = { lat: ll.lat, lng: ll.lng }
                     const ziel = findeSchnappziel(pos, localPfadeRef.current, pi, i)
                     handleKleinPunktBewegt(pi, i, ziel ?? pos)
+                    zeigeLiveLinie(liveLinienLayerRef, null)
                     zeigeSchnappZiel(schnappZielLayerRef, null)
                   },
                 }}>
@@ -1279,6 +2227,17 @@ const MapView = memo(function MapView({
         {/* Schnapp-Ziel beim Ziehen eines Punkts — zeigt live, wo genau
             gelandet wird, wenn jetzt losgelassen wird. */}
         <SchnappZielLayer layerRef={schnappZielLayerRef} />
+        <LiveLinienLayer layerRef={liveLinienLayerRef} />
+
+        {/* Mehrpunkt-Linie: live wachsende Vorschau während des Zeichnens */}
+        {mehrpunktModus && mehrpunktPunkte.length >= 2 && (
+          <Polyline positions={mehrpunktPunkte.map((p) => [p.lat, p.lng] as [number, number])}
+            interactive={false} pathOptions={{ color: '#4ade80', weight: 4, opacity: 0.9 }} />
+        )}
+        {mehrpunktModus && mehrpunktPunkte.map((p, i) => (
+          <CircleMarker key={`mp-${i}`} center={[p.lat, p.lng]} radius={5}
+            pathOptions={{ color: '#4ade80', fillColor: '#4ade80', fillOpacity: 1, weight: 2 }} />
+        ))}
 
         {/* Adressen */}
         {adressenSichtbar && adressen.map((a) => {
@@ -1290,7 +2249,7 @@ const MapView = memo(function MapView({
             <CircleMarker key={a.uuid} center={[a.lat, a.lon]}
               radius={istAussiedlerhof ? 9 : istNichtAngebunden ? 9 : istHsStart ? 9 : aktiv ? 6 : 4}
               pathOptions={{
-                fillColor: istAussiedlerhof ? '#a16207' : istNichtAngebunden ? '#ef4444' : istHsStart ? '#fbbf24' : aktiv ? adressFarbe : '#6b7280',
+                fillColor: istAussiedlerhof ? '#a16207' : istNichtAngebunden ? '#ef4444' : istHsStart ? '#fbbf24' : aktiv ? adressFarbe : 'var(--text-tertiary)',
                 color: istAussiedlerhof ? '#fcd34d' : istNichtAngebunden ? '#fca5a5' : istHsStart ? '#f59e0b' : aktiv ? adressFarbe : '#4b5563',
                 weight: istAussiedlerhof ? 3 : istNichtAngebunden ? 3 : istHsStart ? 3 : 1.5,
                 fillOpacity: istAussiedlerhof ? 0.95 : istNichtAngebunden ? 0.95 : aktiv ? 0.85 : 0.3,
@@ -1303,6 +2262,7 @@ const MapView = memo(function MapView({
               } : editierbarAktiv ? {
                 click: (e) => {
                   L.DomEvent.stopPropagation(e)
+                  if (mehrpunktModus) { handleMehrpunktPunkt({ lat: a.lat, lng: a.lon }); return }
                   if (ziehStartId) { handleZiehZiel({ lat: a.lat, lng: a.lon }); return }
                   if (neuerHsStart) {
                     setNeuerHsStart({ adresseUuid: a.uuid, pos: { lat: a.lat, lng: a.lon }, name: `${a.strasse} ${a.nr}` })
@@ -1343,6 +2303,20 @@ const MapView = memo(function MapView({
           )
         })}
 
+        {/* Trassenknoten (2026-08-20, Alex: rotes X-Symbol wo sich Material
+            ändert) — nur außerhalb des Bearbeitungsmodus sichtbar, analog
+            zu TrasseKlickbar, damit sie beim Editieren nicht im Weg stehen. */}
+        {!editierbarAktiv && trassenKnotenPunkte.map((knoten, i) => (
+          <Marker key={`trassenknoten-${i}`} position={[knoten.position.lat, knoten.position.lng]} icon={trassenknotenIcon}
+            eventHandlers={{
+              click: (e) => {
+                if (e.originalEvent) L.DomEvent.stopPropagation(e as L.LeafletMouseEvent)
+                setAusgewaehltesSegmentNormal(null)
+                setAusgewaehlterTrassenknotenIdx((prev) => (prev === i ? null : i))
+              },
+            }} />
+        ))}
+
         {/* NVT-Standorte */}
         {nvtSichtbar && nvtStandorte.map((nvt, i) => {
           const istUeberlastet = nvt.belegung > nvt.kapazitaet
@@ -1352,6 +2326,12 @@ const MapView = memo(function MapView({
               eventHandlers={{
                 click: (e) => {
                   if (e.originalEvent) e.originalEvent.stopPropagation()
+                  if (backboneVerbindungQuelle) {
+                    if (backboneVerbindungQuelle.typ === 'nvt' && backboneVerbindungQuelle.idx === i) return
+                    setBackboneVerbindungZiel({ typ: 'nvt', idx: i, position: nvt.position })
+                    setBackboneVerbindungMaterial(materialProfil.trasse)
+                    return
+                  }
                   setAusgewaehltesSchachtIdx(null)
                   setAusgewaehlteNvtIdxs((prev) => {
                     const next = new Set(prev)
@@ -1364,13 +2344,16 @@ const MapView = memo(function MapView({
                   if (e.originalEvent) e.originalEvent.stopPropagation()
                   zeigeMenu(e, [
                     { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehltesSchachtIdx(null); setAusgewaehlteNvtIdxs(new Set([i])); setNvtZuweisenAktiv(true); setAktivMenu(null) } },
+                    { label: '🔌 Backbone-Verbindung erstellen', farbe: '#a78bfa', action: () => { setAusgewaehlteNvtIdxs(new Set()); setAusgewaehltesSchachtIdx(null); setBackboneVerbindungQuelle({ typ: 'nvt', idx: i, position: nvt.position }); setAktivMenu(null) } },
                     { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onNvtLoeschen?.(i); setAusgewaehlteNvtIdxs(new Set()); setNvtZuweisenAktiv(false); setAktivMenu(null) } },
                   ])
                 },
                 dragend: (e) => {
                   const ll = (e.target as L.Marker).getLatLng()
-                  onNvtVerschoben?.(i, { lat: ll.lat, lng: ll.lng })
+                  onNvtVerschoben?.(i, snapAufTrasse({ lat: ll.lat, lng: ll.lng }))
                 },
+                mouseover: () => setHoverNvtIdx(i),
+                mouseout: () => setHoverNvtIdx((prev) => (prev === i ? null : prev)),
               }}>
               <Tooltip>
                 NVT {i + 1} · {nvt.belegung}/{nvt.kapazitaet} belegt{istUeberlastet ? ' · ⚠️ überbelegt' : ''}
@@ -1387,6 +2370,12 @@ const MapView = memo(function MapView({
             eventHandlers={{
               click: (e) => {
                 if (e.originalEvent) e.originalEvent.stopPropagation()
+                if (backboneVerbindungQuelle) {
+                  if (backboneVerbindungQuelle.typ === 'schacht' && backboneVerbindungQuelle.idx === i) return
+                  setBackboneVerbindungZiel({ typ: 'schacht', idx: i, position: schacht.position })
+                  setBackboneVerbindungMaterial(materialProfil.trasse)
+                  return
+                }
                 setAusgewaehlteNvtIdxs(new Set())
                 setAusgewaehltesSchachtIdx((prev) => (prev === i ? null : i))
               },
@@ -1394,13 +2383,16 @@ const MapView = memo(function MapView({
                 if (e.originalEvent) e.originalEvent.stopPropagation()
                 zeigeMenu(e, [
                   { label: '🔗 Hausanschlüsse zuweisen', farbe: '#93c5fd', action: () => { setAusgewaehlteNvtIdxs(new Set()); setAusgewaehltesSchachtIdx(i); setSchachtZuweisenAktiv(true); setAktivMenu(null) } },
+                  { label: '🔌 Backbone-Verbindung erstellen', farbe: '#a78bfa', action: () => { setAusgewaehlteNvtIdxs(new Set()); setAusgewaehltesSchachtIdx(null); setBackboneVerbindungQuelle({ typ: 'schacht', idx: i, position: schacht.position }); setAktivMenu(null) } },
                   { label: '🗑️ Standort löschen', farbe: '#f87171', action: () => { onSchachtLoeschen?.(i); setAusgewaehltesSchachtIdx(null); setSchachtZuweisenAktiv(false); setAktivMenu(null) } },
                 ])
               },
               dragend: (e) => {
                 const ll = (e.target as L.Marker).getLatLng()
-                onSchachtVerschoben?.(i, { lat: ll.lat, lng: ll.lng })
+                onSchachtVerschoben?.(i, snapAufTrasse({ lat: ll.lat, lng: ll.lng }))
               },
+              mouseover: () => setHoverSchachtIdx(i),
+              mouseout: () => setHoverSchachtIdx((prev) => (prev === i ? null : prev)),
             }}>
             <Tooltip>
               Schacht {i + 1}{schacht.hausanschlussIds.length > 0 ? ` · ${schacht.hausanschlussIds.length} Hausanschluss(e)` : ''}
@@ -1479,6 +2471,7 @@ const MapView = memo(function MapView({
                 eventHandlers={{
                   click: (e) => {
                     if (e.originalEvent) e.originalEvent.stopPropagation()
+                    if (mehrpunktModus) { handleMehrpunktPunkt(p); return }
                     if (ziehStartId) { handleZiehZiel(p); return }
                     if (neuerHsStart) { handleNeuerHsZiel(p); return }
                     zeigeMenu(e, [
@@ -1497,18 +2490,18 @@ const MapView = memo(function MapView({
 
       {startpunktSetzenAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #3b82f6' }}>
           Klick auf die Karte, um den Startpunkt zu setzen
         </div>
       )}
 
       {aussiedlerhofMarkierenAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #a16207' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #a16207' }}>
           🚜 Adressen anklicken zum Markieren/Entmarkieren als Aussiedlerhof
           <button onClick={() => onAussiedlerhofMarkierenFertig?.()}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#a16207', color: '#fff' }}>
+            style={{ backgroundColor: 'var(--accent-amber)', color: '#fff' }}>
             ✓ Fertig
           </button>
         </div>
@@ -1516,28 +2509,28 @@ const MapView = memo(function MapView({
 
       {nvtManuellSetzenAktiv && !neuerNvtPosition && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #3b82f6' }}>
           📍 Klick auf die Karte, um einen NVT-Standort zu setzen
           <button onClick={handleNeuerNvtAbbrechen}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
             ✕ Abbrechen
           </button>
         </div>
       )}
 
       {neuerNvtPosition && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg p-3 flex flex-col gap-2.5"
-          style={{ backgroundColor: '#1a1a1a', border: '1px solid #3b82f6', width: 280 }}>
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-2xl shadow-lg p-3 flex flex-col gap-2.5"
+          style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #3b82f6', width: 280 }}>
           <span className="text-sm font-medium text-white">📍 Kapazität für neuen NVT</span>
           <div className="flex items-center gap-1.5 flex-wrap">
             {[7, 12, 24, 96, 120].map((k) => (
               <button key={k} onClick={() => setNeueNvtKapazitaet(k)}
                 className="px-2.5 py-1 rounded text-xs font-medium transition-colors"
                 style={{
-                  backgroundColor: neueNvtKapazitaet === k ? '#1e3a5f' : '#111827',
-                  color: neueNvtKapazitaet === k ? '#93c5fd' : '#9ca3af',
-                  border: `1px solid ${neueNvtKapazitaet === k ? '#3b82f6' : '#374151'}`,
+                  backgroundColor: neueNvtKapazitaet === k ? '#1e3a5f' : 'var(--surface-2)',
+                  color: neueNvtKapazitaet === k ? '#93c5fd' : 'var(--text-secondary)',
+                  border: `1px solid ${neueNvtKapazitaet === k ? '#3b82f6' : 'var(--border-strong)'}`,
                 }}>
                 {k}
               </button>
@@ -1545,17 +2538,17 @@ const MapView = memo(function MapView({
             <input type="number" min={1} value={neueNvtKapazitaet}
               onChange={(e) => setNeueNvtKapazitaet(Number(e.target.value) || 1)}
               className="w-16 px-2 py-1 rounded text-sm outline-none"
-              style={{ backgroundColor: '#111827', color: '#f9fafb', border: '1px solid #374151' }} />
+              style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)' }} />
           </div>
           <div className="flex gap-2">
             <button onClick={handleNeuerNvtBestaetigen}
               className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
-              style={{ backgroundColor: '#3b82f6', color: '#fff' }}>
+              style={{ backgroundColor: 'var(--accent-blue)', color: '#fff' }}>
               ✓ Anlegen
             </button>
             <button onClick={handleNeuerNvtAbbrechen}
               className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
-              style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+              style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
               ✕ Abbrechen
             </button>
           </div>
@@ -1564,11 +2557,11 @@ const MapView = memo(function MapView({
 
       {nvtZuweisenAktiv && zuweisenZielNvtIdx !== null && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #3b82f6' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #3b82f6' }}>
           🔗 Hausanschlüsse anklicken zum Zuweisen/Entfernen (NVT {zuweisenZielNvtIdx + 1})
           <button onClick={() => setNvtZuweisenAktiv(false)}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#3b82f6', color: '#fff' }}>
+            style={{ backgroundColor: 'var(--accent-blue)', color: '#fff' }}>
             ✓ Fertig
           </button>
         </div>
@@ -1576,11 +2569,11 @@ const MapView = memo(function MapView({
 
       {schachtZuweisenAktiv && ausgewaehltesSchachtIdx !== null && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #0d9488' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #0d9488' }}>
           🔗 Hausanschlüsse anklicken zum Zuweisen/Entfernen (Schacht {ausgewaehltesSchachtIdx + 1})
           <button onClick={() => setSchachtZuweisenAktiv(false)}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#0d9488', color: '#fff' }}>
+            style={{ backgroundColor: 'var(--accent-teal)', color: '#fff' }}>
             ✓ Fertig
           </button>
         </div>
@@ -1588,12 +2581,93 @@ const MapView = memo(function MapView({
 
       {schachtSetzenAktiv && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
-          style={{ backgroundColor: '#1a1a1a', color: '#f9fafb', border: '1px solid #0d9488' }}>
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #0d9488' }}>
           🕳️ Klick auf die Karte, um einen Schacht zu setzen
           <button onClick={() => onSchachtSetzenAbbrechen?.()}
             className="px-3 py-1 rounded text-xs font-medium"
-            style={{ backgroundColor: '#374151', color: '#f9fafb' }}>
+            style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
             ✕ Abbrechen
+          </button>
+        </div>
+      )}
+
+      {/* Backbone-Verbindung erstellen (2026-08-13) — Schritt 1: Ziel wählen. */}
+      {backboneVerbindungQuelle && !backboneVerbindungZiel && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #a78bfa' }}>
+          🔌 Ziel-NVT/Schacht anklicken für Backbone-Verbindung ab {backboneVerbindungQuelle.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungQuelle.idx + 1}
+          <button onClick={backboneVerbindungAbbrechen}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
+            ✕ Abbrechen
+          </button>
+        </div>
+      )}
+
+      {/* Schritt 2: Material wählen — jede im aktiven Katalog-Profil
+          hinterlegte Sorte steht zur Auswahl (Backbone-Material + alle
+          Kundenanschluss-Stufen), nicht nur das eine feste Backbone-Material
+          (Alex: "kann man dann alles auswählen, was hinterlegt wurde"). Die
+          Route wird beim Bestätigen über das echte Straßennetz berechnet
+          (siehe onBackboneVerbindungErstellen in page.tsx) — kann ein paar
+          Sekunden dauern, daher schließt der Dialog sofort und ein separater
+          Fortschritts-/Fehler-Hinweis übernimmt (siehe unten). */}
+      {backboneVerbindungQuelle && backboneVerbindungZiel && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-2xl shadow-lg p-3 flex flex-col gap-2.5"
+          style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #a78bfa', width: 300 }}>
+          <span className="text-sm font-medium text-white">
+            🔌 {backboneVerbindungQuelle.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungQuelle.idx + 1} → {backboneVerbindungZiel.typ === 'nvt' ? 'NVT' : 'Schacht'} {backboneVerbindungZiel.idx + 1}
+          </span>
+          <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+            {[materialProfil.trasse, ...materialProfil.kundenanschlussStufen].map((m) => (
+              <button key={m.bezeichnungFirma || m.lrArt} onClick={() => setBackboneVerbindungMaterial(m)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded text-xs font-medium text-left transition-colors"
+                style={{
+                  backgroundColor: backboneVerbindungMaterial === m ? '#3b2f5f' : 'var(--surface-2)',
+                  color: backboneVerbindungMaterial === m ? '#c4b5fd' : 'var(--text-secondary)',
+                  border: `1px solid ${backboneVerbindungMaterial === m ? '#a78bfa' : 'var(--border-strong)'}`,
+                }}>
+                <span style={{ width: 12, height: 3, borderRadius: 2, background: m.farbe, display: 'inline-block', flexShrink: 0 }} />
+                {m.bezeichnungFirma || lrArtLabel(m.lrArt)}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                if (!backboneVerbindungMaterial) return
+                onBackboneVerbindungErstellen?.(backboneVerbindungQuelle.position, backboneVerbindungZiel.position, backboneVerbindungMaterial)
+                backboneVerbindungAbbrechen()
+              }}
+              disabled={!backboneVerbindungMaterial}
+              className="flex-1 px-3 py-1.5 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ backgroundColor: '#a78bfa', color: 'var(--surface-1)' }}>
+              ✓ Verbindung erstellen
+            </button>
+            <button onClick={backboneVerbindungAbbrechen}
+              className="flex-1 px-3 py-1.5 rounded text-xs font-medium"
+              style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
+              ✕ Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
+
+      {backboneVerbindungLaeuft && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg"
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)', border: '1px solid #a78bfa' }}>
+          🔌 Backbone-Verbindung wird über das Straßennetz berechnet …
+        </div>
+      )}
+
+      {backboneVerbindungFehler && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 px-4 py-2 rounded-lg text-sm font-medium shadow-lg flex items-center gap-3"
+          style={{ backgroundColor: 'var(--surface-1)', color: '#fca5a5', border: '1px solid #dc2626' }}>
+          ⚠️ {backboneVerbindungFehler}
+          <button onClick={() => onBackboneVerbindungFehlerSchliessen?.()}
+            className="px-3 py-1 rounded text-xs font-medium"
+            style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)' }}>
+            ✕
           </button>
         </div>
       )}
@@ -1606,13 +2680,13 @@ const MapView = memo(function MapView({
         const istFallback = !istFehler && trasseMethode.startsWith('Fallback:')
         const istHinweis = !istFehler && !istFallback && trasseMethode.startsWith('Hinweis:')
 
-        const farbe = istFehler ? '#f87171' : istFallback ? '#93c5fd' : istHinweis ? '#9ca3af' : '#4ade80'
+        const farbe = istFehler ? '#f87171' : istFallback ? '#93c5fd' : istHinweis ? 'var(--text-secondary)' : '#4ade80'
         const rand = istFehler ? '#dc2626' : istFallback ? '#2563eb' : istHinweis ? '#4b5563' : '#16a34a'
         const icon = istFehler ? '❌' : istFallback ? '🔁' : istHinweis ? 'ℹ️' : '✅'
 
         return (
           <div className="absolute bottom-4 right-3 z-1000 px-3 py-1.5 rounded-lg text-xs shadow-lg max-w-xs"
-            style={{ backgroundColor: '#1a1a1a', color: farbe, border: `1px solid ${rand}` }}>
+            style={{ backgroundColor: 'var(--surface-1)', color: farbe, border: `1px solid ${rand}` }}>
             {icon} {trasseMethode}
             {istFehler && <div style={{ marginTop: 4, color: '#fca5a5' }}>Straßendaten nicht verfügbar — bitte erneut versuchen</div>}
             {istFallback && <div style={{ marginTop: 4, color: '#bfdbfe' }}>Weniger präzise als OSM-Routing — bei Gelegenheit erneut versuchen</div>}
@@ -1623,13 +2697,13 @@ const MapView = memo(function MapView({
       {nichtAngebundeneAdressen.length > 0 && warnModalOffen && (
         <div className="absolute inset-0 z-1000 flex items-center justify-center"
           style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="rounded-lg shadow-lg p-4" style={{ backgroundColor: '#1a1a1a', border: '1px solid #dc2626', width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
+          <div className="rounded-2xl shadow-lg p-4" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid #dc2626', width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold" style={{ color: '#f87171' }}>
                 ⚠️ {nichtAngebundeneAdressen.length} Adresse(n) nicht angebunden
               </span>
               <button onClick={() => setWarnModalOffen(false)}
-                className="text-xs px-2 py-1 rounded" style={{ color: '#9ca3af' }}>✕</button>
+                className="text-xs px-2 py-1 rounded" style={{ color: 'var(--text-secondary)' }}>✕</button>
             </div>
             <p className="text-xs mb-2" style={{ color: '#d1d5db' }}>
               Kein öffentlicher Weg (Straße/Feldweg) im OSM-Netz gefunden — bitte im Edit-Modus manuell anbinden.
@@ -1637,7 +2711,7 @@ const MapView = memo(function MapView({
             <div className="overflow-y-auto" style={{ flex: 1 }}>
               {nichtAngebundeneAdressen.map((a) => (
                 <div key={a.uuid} className="flex items-center justify-between text-xs py-1.5"
-                  style={{ borderBottom: '1px solid #374151', color: '#f9fafb' }}>
+                  style={{ borderBottom: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}>
                   <span>{a.strasse} {a.nr}{a.nr_zusatz ? ` ${a.nr_zusatz}` : ''}, {a.ortsname}</span>
                   <button
                     onClick={() => { setFlugZiel({ lat: a.lat, lng: a.lon }); setWarnModalOffen(false) }}
@@ -1650,7 +2724,7 @@ const MapView = memo(function MapView({
             </div>
             <button onClick={() => setWarnModalOffen(false)}
               className="mt-3 px-3 py-1.5 rounded-lg text-xs font-medium"
-              style={{ backgroundColor: '#374151', color: '#f9fafb', border: 'none' }}>
+              style={{ backgroundColor: 'var(--surface-3)', color: 'var(--text-primary)', border: 'none' }}>
               Schließen
             </button>
           </div>
@@ -1663,8 +2737,8 @@ const MapView = memo(function MapView({
           position: 'absolute',
           left: Math.min(aktivMenu.screenX + 16, window.innerWidth - 185),
           top: Math.max(aktivMenu.screenY - aktivMenu.aktionen.length * 46 - 26, 60),
-          zIndex: 2000, backgroundColor: '#1a1a1a',
-          border: `1px solid ${aktivesSegment ? GELB : '#374151'}`,
+          zIndex: 2000, backgroundColor: 'var(--surface-1)',
+          border: `1px solid ${aktivesSegment ? GELB : 'var(--border-strong)'}`,
           borderRadius: '10px', overflow: 'hidden',
           boxShadow: '0 8px 24px rgba(0,0,0,0.9)', minWidth: '170px',
         }}>
@@ -1679,17 +2753,33 @@ const MapView = memo(function MapView({
 
       {/* Bearbeitungs-Banner */}
       {editierbarAktiv && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-lg shadow-lg"
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-1000 rounded-2xl shadow-lg"
           style={{
-            backgroundColor: segmentStart ? '#052e2b' : ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : '#111827',
-            border: `1px solid ${segmentStart ? '#4ade80' : ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : '#374151'}`,
+            backgroundColor: mehrpunktModus ? '#022c22' : segmentStart ? '#052e2b' : ziehStartId ? '#431407' : neuerHsStart ? '#1a1207' : 'var(--surface-2)',
+            border: `1px solid ${mehrpunktModus ? '#4ade80' : segmentStart ? '#4ade80' : ziehStartId ? '#f97316' : neuerHsStart ? '#fbbf24' : aktivesSegment ? GELB : 'var(--border-strong)'}`,
             padding: '10px 16px', maxWidth: '92vw',
           }}>
-          {segmentStart ? (
+          {mehrpunktModus ? (
+            <p style={{ color: '#bbf7d0', fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              📐 <b>Mehrpunkt-Linie</b> — {mehrpunktPunkte.length} Punkt{mehrpunktPunkte.length === 1 ? '' : 'e'} &nbsp;·&nbsp; Karte/Punkt antippen = weiterer Punkt &nbsp;·&nbsp; Doppelklick = fertig
+              <button onClick={handleMehrpunktUndo} disabled={mehrpunktPunkte.length === 0}
+                style={{ background: 'var(--border-strong)', color: 'var(--text-primary)', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: mehrpunktPunkte.length === 0 ? 'default' : 'pointer', fontSize: 11, opacity: mehrpunktPunkte.length === 0 ? 0.5 : 1 }}>
+                ↩ Letzten Punkt entfernen
+              </button>
+              <button onClick={handleMehrpunktFertig} disabled={mehrpunktPunkte.length < 2}
+                style={{ background: mehrpunktPunkte.length < 2 ? 'var(--border-strong)' : '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: mehrpunktPunkte.length < 2 ? 'default' : 'pointer', fontSize: 11, opacity: mehrpunktPunkte.length < 2 ? 0.5 : 1 }}>
+                ✅ Fertig
+              </button>
+              <button onClick={handleMehrpunktAbbrechen}
+                style={{ background: 'var(--border-strong)', color: 'var(--text-primary)', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}>
+                ✕ Abbrechen
+              </button>
+            </p>
+          ) : segmentStart ? (
             <p style={{ color: '#bbf7d0', fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
               📍 <b>Segment-Start gesetzt</b> — zweiten Punkt auf demselben Abschnitt antippen für Segment-Ende
               <button onClick={() => setSegmentStart(null)}
-                style={{ background: '#374151', color: '#f9fafb', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}>
+                style={{ background: 'var(--border-strong)', color: 'var(--text-primary)', border: 'none', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}>
                 ✕ Abbrechen
               </button>
             </p>
@@ -1709,7 +2799,7 @@ const MapView = memo(function MapView({
                 </span>
                 {aktivesSegment && <span style={{ color: GELB, marginLeft: 8, fontWeight: 600 }}>● Segment markiert</span>}
               </p>
-              <p style={{ color: '#9ca3af', fontSize: 11, margin: 0 }}>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 11, margin: 0 }}>
                 {kleinProjekt
                   ? <><b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → verschieben &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt antippen</b> → Menü &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Linie antippen</b> → Menü</>
                   : <><b style={{ color: '#d1d5db' }}>Segment antippen</b> → <span style={{ color: GELB }}>gelb</span> + Handles &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>Punkt ziehen</b> → verschieben &nbsp;·&nbsp; <b style={{ color: '#d1d5db' }}>ESC</b> → Auswahl aufheben</>

@@ -1,3 +1,5 @@
+import { MaterialEintrag } from './materialkatalog'
+
 export interface Address {
   uuid: string
   lat: number
@@ -56,6 +58,40 @@ export interface SchachtStandort {
   hausanschlussIds: string[]
 }
 
+// Manuell erstellte Backbone-Verbindung zwischen zwei Verteilern (NVT/Schacht/
+// Startpunkt), z.B. eine nachträgliche Anbindung eines abseits liegenden
+// Aussiedlerhof-Schachts (2026-08-13, Alex: "muss man dann alles auswählen
+// können, was hinterlegt wurde" — 4x20, 2x20, 7x14, ...). "von"/"nach" sind
+// die Standort-Positionen zum Erstellzeitpunkt, nicht Array-Indizes — bleibt
+// dadurch stabil, auch wenn die Trasse später neu segmentiert wird (siehe
+// ermittleUeberschriebenesMaterialProSegment in faserdimensionierung.ts, das
+// die betroffenen Segmente jedes Mal frisch aus der Geometrie ableitet statt
+// gespeicherte Indizes zu vertrauen).
+export interface BackboneVerbindung {
+  von: LatLng
+  nach: LatLng
+  material: MaterialEintrag
+}
+
+// Manuelle Material-Übersteuerung für EIN einzelnes Trasse-Segment
+// (2026-08-21, Alex: "im Nachhinein kann ich aber keinen einzigen Verbund
+// bearbeiten") — überschreibt die automatisch (nach Hausanschluss-Bedarf)
+// gewählte Kundenanschluss-Sammelverband-Stufe für dieses Segment fest.
+// "von"/"nach" sind die Endpunkt-Positionen des Segments zum Erstellzeitpunkt
+// (nicht der Array-Index) — dasselbe Stabilitätsprinzip wie bei
+// BackboneVerbindung, da segmentiereAnKreuzungen() die Trasse jederzeit neu
+// aufteilen kann. Ein längerer Verband (mehrere Trasse-Segmente) bekommt
+// entsprechend mehrere Einträge, einen je Segment — siehe
+// ermittleMaterialUebersteuerungProSegment in faserdimensionierung.ts.
+// material=null (2026-08-20, Alex: "Verbund löschen") bedeutet explizit
+// "kein Material auf diesem Segment" — anders als KEIN Eintrag (dann greift
+// die automatische Stufenwahl).
+export interface MaterialUebersteuerung {
+  von: LatLng
+  nach: LatLng
+  material: MaterialEintrag | null
+}
+
 export interface Projekt {
   name: string
   erstelltAm: string
@@ -73,7 +109,20 @@ export interface Projekt {
   nvtStandorte?: NvtStandort[]
   aussiedlerhofUuids?: string[]
   schachtStandorte?: SchachtStandort[]
+  // Manuell erstellte Backbone-Verbindungen (siehe BackboneVerbindung oben) —
+  // fehlt bei älteren Projekten, dann einfach keine.
+  backboneVerbindungen?: BackboneVerbindung[]
+  // Manuelle Material-Übersteuerungen einzelner Segmente (siehe
+  // MaterialUebersteuerung oben) — fehlt bei älteren Projekten, dann einfach
+  // keine (alles bleibt automatisch berechnet wie bisher).
+  materialUebersteuerungen?: MaterialUebersteuerung[]
   // Welche Orte-Filter beim Speichern aktiv waren (Sidebar-Auswahl) — fehlt
   // bei älteren Projekten, dann sind beim Laden wie bisher alle Orte aktiv.
   aktiveOrteKeys?: string[]
+  // Bundesförderung (Breitbandförderung des Bundes): bestimmt, ob Export
+  // (KML/Shapefile) und Materialzuweisung nach dem gesetzlich verbindlichen
+  // GIS-NB-Schema + Materialkonzept-Mindestvorgaben laufen, oder nach dem
+  // freien Firmenstandard. Fehlt bei älteren Projekten → false (bisheriges
+  // Verhalten/Export bleibt unverändert).
+  bundesfoerderung?: boolean
 }

@@ -59,7 +59,7 @@ function haversine(a: LatLng, b: LatLng): number {
 const FELDWEG_KOSTEN_FAKTOR = 1.15
 
 export class RoadGraph {
-  adjacency: Map<number, Array<{ to: number; dist: number; weight: number; kind: WegKind }>> = new Map()
+  adjacency: Map<number, Array<{ to: number; dist: number; weight: number; kind: WegKind; synthetic: boolean }>> = new Map()
   coordinates: Map<number, LatLng> = new Map()
   private naechsteVirtuelleId = -1
 
@@ -68,10 +68,18 @@ export class RoadGraph {
     if (!this.adjacency.has(id)) this.adjacency.set(id, [])
   }
 
-  addEdge(a: number, b: number, dist: number, oneway: boolean, kind: WegKind = 'paved') {
+  // synthetic = true nur für die automatisch generierten Verbindungsbrücken aus
+  // verbindeGetrennteTeilnetze() (s.u.) — echte OSM-Kanten sind immer false.
+  // Wichtig für nearestPointOnGraph(): eine Brücke ist eine reine
+  // Luftlinien-Annahme zwischen zwei sonst getrennten Netzteilen, KEIN
+  // tatsächlich begehbarer Weg mit eigener Mitte — ein Haus, das zufällig
+  // näher an der Mitte einer Brücke liegt als an seiner echten Straße, darf
+  // dort nicht andocken, sonst "klaut" die Brücke einem Nachbarhaus dessen
+  // bis dahin funktionierenden (echten) Anschlusspunkt.
+  addEdge(a: number, b: number, dist: number, oneway: boolean, kind: WegKind = 'paved', synthetic = false) {
     const weight = kind === 'track' ? dist * FELDWEG_KOSTEN_FAKTOR : dist
-    this.adjacency.get(a)?.push({ to: b, dist, weight, kind })
-    if (!oneway) this.adjacency.get(b)?.push({ to: a, dist, weight, kind })
+    this.adjacency.get(a)?.push({ to: b, dist, weight, kind, synthetic })
+    if (!oneway) this.adjacency.get(b)?.push({ to: a, dist, weight, kind, synthetic })
   }
 
   // Für Kartenfärbung/Längenaufschlüsselung (Straße vs. Feldweg): welcher Art
@@ -122,7 +130,8 @@ export class RoadGraph {
     const gesehen = new Set<string>()
 
     for (const [a, kanten] of this.adjacency) {
-      for (const { to: b } of kanten) {
+      for (const { to: b, synthetic } of kanten) {
+        if (synthetic) continue // reine Luftlinien-Brücke, kein gültiger Andockpunkt (s.o.)
         const key = a < b ? `${a}_${b}` : `${b}_${a}`
         if (gesehen.has(key)) continue
         gesehen.add(key)
@@ -312,6 +321,86 @@ function baueOrtszonenTest(adressen: LatLng[], radiusMeter: number): (p: LatLng)
   }
 }
 
+// Bis zu dieser Distanz werden zwei eigentlich getrennte Teilnetze automatisch
+// überbrückt (2026-08-17, Alex: "eine Hauptstraße mitten durchs Dorf, da wurde
+// überhaupt keine Trasse gebildet"). Root Cause: OSM-Wege werden unabhängig
+// voneinander digitalisiert und ihre Endpunkte treffen sich oft nicht exakt
+// auf einem gemeinsamen Knoten — z.B. eine kurze Stichstraße/Grundstücks-
+// zufahrt, die ein paar Meter neben der eigentlichen Straßenmitte endet, statt
+// exakt auf ihr. snappeKnoten() (s.o.) fängt nur den 1:1-Fall "zwei Knoten
+// liegen fast exakt übereinander" (~2m) ab, nicht "Endpunkt X liegt ein Stück
+// neben Straße Y" — genau DAS ist aber die häufigste Ursache, warum ganze,
+// real angebundene Straßenzüge für den Steiner-Baum unerreichbar blieben.
+// Bewusst klein gehalten: eine echte fehlende Straßenverbindung (>30m) soll
+// NICHT geraten, sondern weiterhin im Warnmodal zur manuellen Prüfung
+// gemeldet werden (siehe nichtErreichbareNodeIds in steinerbaum.ts).
+const AUTO_VERBINDUNG_MAX_METER = 30
+
+// Verbindet kleine, vom Rest des Netzes getrennte Teilnetze automatisch mit
+// dem nächstgelegenen anderen Teilnetz, sofern die Lücke klein genug ist (s.o.).
+// Läuft NACH dem normalen Kantenaufbau, EINMAL über alle Knoten — durch die
+// Union-Find-Struktur wirken bereits hinzugefügte Brücken sofort auf spätere
+// Prüfungen, wodurch auch Ketten aus mehreren kleinen Inseln (A→B→Hauptnetz)
+// in einem Durchlauf zusammenfinden.
+function verbindeGetrennteTeilnetze(graph: RoadGraph) {
+  const ids = [...graph.coordinates.keys()]
+  if (ids.length === 0) return
+
+  const parent = new Map<number, number>(ids.map((id) => [id, id]))
+  function find(x: number): number {
+    while (parent.get(x) !== x) {
+      parent.set(x, parent.get(parent.get(x)!)!)
+      x = parent.get(x)!
+    }
+    return x
+  }
+  function union(a: number, b: number) {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent.set(ra, rb)
+  }
+  for (const [a, kanten] of graph.adjacency) {
+    for (const { to: b } of kanten) union(a, b)
+  }
+
+  // Grid-Index über alle Knoten (gleiche Technik wie snappeKnoten/
+  // baueOrtszonenTest) für eine schnelle Nachbarschaftssuche auch bei
+  // mehreren tausend Knoten.
+  const zellGrad = AUTO_VERBINDUNG_MAX_METER / 111_320
+  const grid = new Map<string, number[]>()
+  for (const id of ids) {
+    const c = graph.coordinates.get(id)!
+    const cx = Math.floor(c.lat / zellGrad)
+    const cy = Math.floor(c.lng / zellGrad)
+    const key = `${cx}_${cy}`
+    if (!grid.has(key)) grid.set(key, [])
+    grid.get(key)!.push(id)
+  }
+
+  for (const id of ids) {
+    const c = graph.coordinates.get(id)!
+    const cx = Math.floor(c.lat / zellGrad)
+    const cy = Math.floor(c.lng / zellGrad)
+    let bestId = -1
+    let bestDist = AUTO_VERBINDUNG_MAX_METER
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const kandidaten = grid.get(`${cx + dx}_${cy + dy}`)
+        if (!kandidaten) continue
+        for (const kandId of kandidaten) {
+          if (kandId === id || find(kandId) === find(id)) continue
+          const d = haversine(c, graph.coordinates.get(kandId)!)
+          if (d < bestDist) { bestDist = d; bestId = kandId }
+        }
+      }
+    }
+    if (bestId !== -1) {
+      graph.addEdge(id, bestId, bestDist, false, 'paved', true)
+      union(id, bestId)
+    }
+  }
+}
+
 export function buildRoadGraph(netz: OsmNetz, adressen: LatLng[] = []): RoadGraph {
   const graph = new RoadGraph()
   const kanonisch = snappeKnoten(netz)
@@ -343,6 +432,8 @@ export function buildRoadGraph(netz: OsmNetz, adressen: LatLng[] = []): RoadGrap
       }
     }
   }
+
+  verbindeGetrennteTeilnetze(graph)
 
   return graph
 }

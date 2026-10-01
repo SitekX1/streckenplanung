@@ -90,6 +90,40 @@ export function segmentiereAnKreuzungen(
   const istEndpunkt = (pfad: LatLng[], idx: number) => idx <= 0 || idx >= pfad.length - 1
 
   const schnitteProPfad: number[][] = pfade.map(() => [])
+  // Arbeitskopie — an den Schnittstellen wird der getroffene Vertex exakt
+  // auf den jeweils anderen Pfad "eingeschnappt" (siehe Erklärung unten),
+  // nie das Original-Array mutieren.
+  const arbeitsPfade = pfade.map((p) => p.map((pt) => ({ ...pt })))
+
+  // WICHTIG (2026-08-21, Alex: "Backbone sollte nie unterbrochen sein" /
+  // "X-Marker fehlt komplett"), ZWEI Probleme in einem:
+  // 1) turf.nearestPointOnLine liefert nur den nächstgelegenen
+  //    EXISTIERENDEN Vertex von Pfad J, der bis zu toleranzMeter von Pfad
+  //    I's Endpunkt entfernt sein darf — geometrisch sehen beide Pfade auf
+  //    der Karte durchgehend verbunden aus, sind es numerisch aber NICHT
+  //    (zwei verschiedene Koordinaten). Jede knotenbasierte Berechnung
+  //    (baueGraph in nvt.ts für Backbone/Hausanschluss-Zählung,
+  //    trassenKnotenPunkte in MapView.tsx) rundet nur auf ~1m genau und
+  //    hält die beiden Punkte deshalb fälschlich für getrennte Knoten.
+  // 2) `nearest.properties.index` ist laut turf-Dokumentation der
+  //    SEGMENT-Index (die wievielte Kante), NICHT der Vertex-Index —
+  //    wurde vorher aber direkt als Vertex-Index zum Schneiden verwendet.
+  //    Liegt der Treffpunkt näher am ENDE eines Segments (nahe Vertex
+  //    segmentIndex+1) statt am Anfang, zeigte der alte Code auf den
+  //    FALSCHEN, oft schon vorhandenen Endpunkt-Vertex — die
+  //    !istEndpunkt-Prüfung verwarf den Schnitt dann sogar komplett,
+  //    obwohl real eine Kreuzung vorlag (verifiziert per Test-Skript: turf
+  //    lieferte index=0 für einen Punkt, der geometrisch exakt auf Vertex 1
+  //    lag). Fix: explizit den NÄHEREN der beiden Segment-Endpunkte
+  //    (segmentIndex/segmentIndex+1) bestimmen und darauf einschnappen.
+  function naechsterVertexIndex(pfad: LatLng[], segmentIndex: number, ziel: LatLng): number {
+    const v0 = pfad[segmentIndex]
+    const v1 = pfad[segmentIndex + 1]
+    if (!v1) return segmentIndex
+    const d0 = turf.distance(turf.point([v0.lng, v0.lat]), turf.point([ziel.lng, ziel.lat]), { units: 'meters' })
+    const d1 = turf.distance(turf.point([v1.lng, v1.lat]), turf.point([ziel.lng, ziel.lat]), { units: 'meters' })
+    return d0 <= d1 ? segmentIndex : segmentIndex + 1
+  }
 
   // Fall 1: Endpunkte jedes Pfads gegen alle ANDEREN Pfade prüfen.
   pfade.forEach((pfadI, i) => {
@@ -100,15 +134,20 @@ export function segmentiereAnKreuzungen(
         if (i === j || !lineJ) return
         const nearest = turf.nearestPointOnLine(lineJ, zielPt, { units: 'meters' })
         const dist = nearest.properties.dist ?? Infinity
-        const idx = nearest.properties.index ?? 0
+        const segmentIndex = nearest.properties.index ?? 0
+        const idx = naechsterVertexIndex(pfade[j], segmentIndex, endpunkt)
         if (dist <= toleranzMeter && !istEndpunkt(pfade[j], idx)) {
           schnitteProPfad[j].push(idx)
+          arbeitsPfade[j][idx] = { lat: endpunkt.lat, lng: endpunkt.lng }
         }
       })
     }
   })
 
-  // Fall 2: echte Kreuzungen zwischen je zwei Pfaden.
+  // Fall 2: echte Kreuzungen zwischen je zwei Pfaden — beide Seiten werden
+  // exakt auf denselben berechneten Schnittpunkt eingeschnappt (sonst
+  // liefern die zwei unabhängigen nearestPointOnLine-Aufrufe für "denselben"
+  // Kreuzungspunkt zwei minimal unterschiedliche existierende Vertizes).
   for (let i = 0; i < pfade.length; i++) {
     const lineI = lines[i]
     if (!lineI) continue
@@ -118,15 +157,23 @@ export function segmentiereAnKreuzungen(
       const schnittpunkte = turf.lineIntersect(lineI, lineJ)
       for (const feature of schnittpunkte.features) {
         const schnittPt = turf.point(feature.geometry.coordinates)
+        const [schnittLng, schnittLat] = feature.geometry.coordinates
+        const schnittLatLng: LatLng = { lat: schnittLat, lng: schnittLng }
         const nearestI = turf.nearestPointOnLine(lineI, schnittPt)
         const nearestJ = turf.nearestPointOnLine(lineJ, schnittPt)
-        const idxI = nearestI.properties.index ?? 0
-        const idxJ = nearestJ.properties.index ?? 0
-        if (!istEndpunkt(pfade[i], idxI)) schnitteProPfad[i].push(idxI)
-        if (!istEndpunkt(pfade[j], idxJ)) schnitteProPfad[j].push(idxJ)
+        const idxI = naechsterVertexIndex(pfade[i], nearestI.properties.index ?? 0, schnittLatLng)
+        const idxJ = naechsterVertexIndex(pfade[j], nearestJ.properties.index ?? 0, schnittLatLng)
+        if (!istEndpunkt(pfade[i], idxI)) {
+          schnitteProPfad[i].push(idxI)
+          arbeitsPfade[i][idxI] = { lat: schnittLat, lng: schnittLng }
+        }
+        if (!istEndpunkt(pfade[j], idxJ)) {
+          schnitteProPfad[j].push(idxJ)
+          arbeitsPfade[j][idxJ] = { lat: schnittLat, lng: schnittLng }
+        }
       }
     }
   }
 
-  return schneidePfadeAnIndizes(pfade, kinds, schnitteProPfad)
+  return schneidePfadeAnIndizes(arbeitsPfade, kinds, schnitteProPfad)
 }

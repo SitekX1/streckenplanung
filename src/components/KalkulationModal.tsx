@@ -1,16 +1,32 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { exportKalkulationPdf } from '../lib/kalkulationPdfExport'
 import { ladeFirmendaten } from '../lib/firmendaten'
+import { MaterialEintrag, ladeMaterialkatalog, speichereMaterialkatalog, lrArtLabel, profilName } from '../lib/materialkatalog'
+import { ermittleMaterialProSegment } from '../lib/faserdimensionierung'
+import { segmentLaenge } from '../lib/shapefileExport'
+import { BackboneVerbindung, Hausstich, LatLng, MaterialUebersteuerung, NvtStandort, SchachtStandort } from '../lib/types'
 
 interface KalkulationModalProps {
   projektName: string
   strasseLaenge: number
   feldwegLaenge: number
   hausanschluesseCount: number
+  hausanschlussLaenge: number
   nvtAnzahl: number
   schachtAnzahl: number
+  bundesfoerderung: boolean
+  // Rohdaten für die segmentgenaue Material-Kostenaufteilung (siehe
+  // trasseMaterialLaengen unten) — zusätzlich zu den bereits aggregierten
+  // Längen/Stückzahlen oben, die für die restlichen Positionen reichen.
+  trassePfade: LatLng[][]
+  startpunkt: LatLng | null
+  nvtStandorte: NvtStandort[]
+  schachtStandorte: SchachtStandort[]
+  hausanschluesse: Hausstich[]
+  backboneVerbindungen: BackboneVerbindung[]
+  materialUebersteuerungen: MaterialUebersteuerung[]
   onClose: () => void
 }
 
@@ -50,9 +66,42 @@ function formatEuro(betrag: number): string {
   return betrag.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 }
 
+// siehe EinstellungenModal.tsx für dieselbe Feld-Stil-Konvention
+const feldStyle: React.CSSProperties = {
+  backgroundColor: 'var(--surface-3)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)',
+}
+
 export default function KalkulationModal({
-  projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, nvtAnzahl, schachtAnzahl, onClose,
+  projektName, strasseLaenge, feldwegLaenge, hausanschluesseCount, hausanschlussLaenge, nvtAnzahl, schachtAnzahl, bundesfoerderung,
+  trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, backboneVerbindungen, materialUebersteuerungen, onClose,
 }: KalkulationModalProps) {
+  // Material-Leerrohrpreise (nicht Verlegekosten — die stehen separat oben)
+  // kommen aus dem geräteweiten Materialkatalog, je nach Projekt-Schalter
+  // "Bundesförderung" das passende Profil. Typ/Größe des Materials wird
+  // weiterhin unter Einstellungen festgelegt, der €/m-Preis aber HIER
+  // editiert (2026-08-14, Alex: "Kosten pro laufenden Meter nicht in die
+  // Material-Einstellung reinschmeißen, sondern wie bei der Kalkulation") —
+  // eigener Katalog-State statt des einmaligen aktivesMaterialProfil()-Calls,
+  // damit Preisänderungen hier sofort zurückgeschrieben werden können.
+  const [katalog, setKatalog] = useState(ladeMaterialkatalog)
+  const materialProfil = katalog[profilName(bundesfoerderung)]
+  const aktualisiereMaterialPreis = (ebene: 'trasse' | 'hausanschluss', preisProMeter: number) => {
+    setKatalog((k) => {
+      const profil = profilName(bundesfoerderung)
+      const naechster = { ...k, [profil]: { ...k[profil], [ebene]: { ...k[profil][ebene], preisProMeter } } }
+      speichereMaterialkatalog(naechster)
+      return naechster
+    })
+  }
+  const aktualisiereStufePreis = (index: number, preisProMeter: number) => {
+    setKatalog((k) => {
+      const profil = profilName(bundesfoerderung)
+      const naechsteStufen = k[profil].kundenanschlussStufen.map((s, i) => (i === index ? { ...s, preisProMeter } : s))
+      const naechster = { ...k, [profil]: { ...k[profil], kundenanschlussStufen: naechsteStufen } }
+      speichereMaterialkatalog(naechster)
+      return naechster
+    })
+  }
   // Preise sind geräteweit gespeichert (nicht Teil des Projekts) — die
   // Sätze eurer Firma ändern sich kaum von Projekt zu Projekt, im
   // Gegensatz zu den Streckenlängen/Stückzahlen selbst. Lazy-Initializer
@@ -76,8 +125,8 @@ export default function KalkulationModal({
 
   const feld = (label: string, key: keyof KalkulationPreise, einheit: string) => (
     <label className="flex flex-col gap-1">
-      <span className="text-xs text-gray-400">{label}</span>
-      <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid #374151', backgroundColor: '#111827' }}>
+      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <div className="flex items-center overflow-hidden" style={feldStyle}>
         <input
           type="number"
           min={0}
@@ -88,12 +137,60 @@ export default function KalkulationModal({
             setPreise((p) => ({ ...p, [key]: Number(text) || 0 }))
           }}
           className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
-          style={{ backgroundColor: 'transparent', color: '#f9fafb' }}
+          style={{ backgroundColor: 'transparent', color: 'var(--text-primary)' }}
         />
-        <span className="px-3 text-xs text-gray-500 shrink-0 border-l" style={{ borderColor: '#374151' }}>{einheit}</span>
+        <span className="px-3 text-xs shrink-0" style={{ color: 'var(--text-tertiary)', borderLeft: '1px solid var(--border-subtle)' }}>{einheit}</span>
       </div>
     </label>
   )
+
+  const materialPreisFeld = (label: string, wert: number, onChange: (v: number) => void) => (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <div className="flex items-center overflow-hidden" style={feldStyle}>
+        <input
+          type="number"
+          min={0}
+          value={wert}
+          onChange={(e) => onChange(Number(e.target.value) || 0)}
+          className="flex-1 min-w-0 px-3 py-2 text-sm outline-none"
+          style={{ backgroundColor: 'transparent', color: 'var(--text-primary)' }}
+        />
+        <span className="px-3 text-xs shrink-0" style={{ color: 'var(--text-tertiary)', borderLeft: '1px solid var(--border-subtle)' }}>€/m</span>
+      </div>
+    </label>
+  )
+
+  // Segmentgenaue Material-Kostenaufteilung (2026-08-14, Alex: "wenn NVTs
+  // generiert sind und der Verbände/Backbone plant, ist diese
+  // Längenpreiskalkulation noch nicht integriert") — dieselbe Zuordnung wie
+  // auf der Karte/im GIS-NB-Export (ermittleMaterialProSegment), NICHT
+  // einfach die gesamte Trassenlänge mit dem Backbone-Preis multipliziert
+  // (das war der vorherige, zu grobe Stand: der Backbone-Preis lief bisher
+  // über 100 % der Länge statt nur über die echten Backbone-Segmente, und
+  // die Sammelverband-Stufen fehlten komplett). Bei Doppelbelegung (Backbone
+  // + Sammelverband auf demselben Segment) zählt die Segmentlänge für BEIDE
+  // Materialien, da physisch zwei separate Leitungen verlegt werden.
+  const trasseMaterialLaengen = useMemo(() => {
+    const materialProSegment = ermittleMaterialProSegment(
+      trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen
+    )
+    const map = new Map<string, { material: MaterialEintrag; laenge: number }>()
+    trassePfade.forEach((pfad, i) => {
+      const m = materialProSegment[i]
+      if (!m || pfad.length < 2) return
+      const laenge = segmentLaenge(pfad)
+      const addiere = (mat: MaterialEintrag) => {
+        const key = mat.bezeichnungFirma || String(mat.lrArt)
+        const eintrag = map.get(key)
+        if (eintrag) eintrag.laenge += laenge
+        else map.set(key, { material: mat, laenge })
+      }
+      addiere(m.haupt)
+      if (m.zusatz) addiere(m.zusatz)
+    })
+    return [...map.values()]
+  }, [trassePfade, startpunkt, nvtStandorte, schachtStandorte, hausanschluesse, materialProfil, backboneVerbindungen, materialUebersteuerungen])
 
   const strasseSumme = strasseLaenge * preise.strassePreisProMeter
   const feldwegSumme = feldwegLaenge * preise.feldwegPreisProMeter
@@ -101,7 +198,11 @@ export default function KalkulationModal({
   const sonderpositionSumme = preise.sonderpositionAnzahl * preise.sonderpositionPreis
   const nvtSumme = nvtAnzahl * preise.nvtPreis
   const schachtSumme = schachtAnzahl * preise.schachtPreis
-  const gesamt = strasseSumme + feldwegSumme + hausanschlussSumme + sonderpositionSumme + nvtSumme + schachtSumme
+  const trasseMaterialSumme = trasseMaterialLaengen.reduce((sum, { material, laenge }) => sum + laenge * material.preisProMeter, 0)
+  const materialHausanschlussSumme = hausanschlussLaenge * materialProfil.hausanschluss.preisProMeter
+  const gesamt =
+    strasseSumme + feldwegSumme + hausanschlussSumme + sonderpositionSumme + nvtSumme + schachtSumme +
+    trasseMaterialSumme + materialHausanschlussSumme
 
   const handlePdfExport = () => {
     const zeilen = [
@@ -116,6 +217,17 @@ export default function KalkulationModal({
         : []),
       ...(schachtAnzahl > 0
         ? [{ label: 'Schacht', menge: `${schachtAnzahl} Stk.`, einzelpreis: `${preise.schachtPreis} €/Stk.`, summe: schachtSumme }]
+        : []),
+      ...trasseMaterialLaengen
+        .filter(({ material }) => material.preisProMeter > 0)
+        .map(({ material, laenge }) => ({
+          label: `Material ${material.bezeichnungFirma}`,
+          menge: `${Math.round(laenge)} m`,
+          einzelpreis: `${material.preisProMeter} €/m`,
+          summe: laenge * material.preisProMeter,
+        })),
+      ...(materialProfil.hausanschluss.preisProMeter > 0
+        ? [{ label: `Material Hausanschluss (${materialProfil.hausanschluss.bezeichnungFirma})`, menge: `${Math.round(hausanschlussLaenge)} m`, einzelpreis: `${materialProfil.hausanschluss.preisProMeter} €/m`, summe: materialHausanschlussSumme }]
         : []),
     ]
     const firmendaten = ladeFirmendaten()
@@ -138,28 +250,28 @@ export default function KalkulationModal({
   }
 
   const zeile = (label: string, menge: string, summe: number) => (
-    <div className="flex justify-between items-center text-xs py-1.5" style={{ borderBottom: '1px solid #1f2430' }}>
-      <span className="text-gray-500">{label} <span className="text-gray-600">({menge})</span></span>
-      <span className="text-gray-200 font-medium">{formatEuro(summe)}</span>
+    <div className="flex justify-between items-center text-xs py-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <span style={{ color: 'var(--text-tertiary)' }}>{label} <span style={{ color: 'var(--text-tertiary)', opacity: 0.7 }}>({menge})</span></span>
+      <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{formatEuro(summe)}</span>
     </div>
   )
 
   const sektion = (titel: string, inhalt: React.ReactNode) => (
-    <div className="rounded-xl p-3.5" style={{ backgroundColor: '#181c24', border: '1px solid #262b36' }}>
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">{titel}</p>
+    <div className="p-3.5" style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-lg)' }}>
+      <p className="text-xs font-medium uppercase tracking-wider mb-3" style={{ color: 'var(--text-tertiary)' }}>{titel}</p>
       <div className="grid grid-cols-2 gap-3">{inhalt}</div>
     </div>
   )
 
   return (
-    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
-      <div className="rounded-2xl shadow-2xl flex flex-col"
-        style={{ backgroundColor: '#14171d', border: '1px solid #2a2f3a', width: 420, maxHeight: '90vh' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#262b36' }}>
-          <span className="text-base font-semibold text-white">💰 Kalkulation</span>
+    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(6,7,10,0.7)' }}>
+      <div className="shadow-2xl flex flex-col"
+        style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-xl)', width: 460, maxHeight: '90vh' }}>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <span className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>💰 Kalkulation</span>
           <button onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-sm hover:bg-gray-800 transition-colors"
-            style={{ color: '#9ca3af' }}>
+            className="w-7 h-7 flex items-center justify-center text-sm transition-colors hover:brightness-125"
+            style={{ backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)', borderRadius: 'var(--radius-sm)' }}>
             ✕
           </button>
         </div>
@@ -178,7 +290,7 @@ export default function KalkulationModal({
               <div />
               {feld('Sonderposition · Anzahl', 'sonderpositionAnzahl', 'Stk.')}
               {feld('Sonderposition · Preis', 'sonderpositionPreis', '€/Stk.')}
-              <p className="col-span-2 text-xs text-gray-600 -mt-1.5">
+              <p className="col-span-2 text-xs -mt-1.5" style={{ color: 'var(--text-tertiary)' }}>
                 Frei nutzbarer Zusatzposten, z.B. für Erschwerniszuschläge, Bohrungen oder sonstige Sonderfälle, die nicht über die Standardsätze abgedeckt sind.
               </p>
             </>
@@ -187,8 +299,8 @@ export default function KalkulationModal({
           {sektion('📡 NVT', (
             <>
               <div className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Anzahl (aus Projekt)</span>
-                <div className="flex items-center rounded-lg px-3 py-2 text-sm" style={{ border: '1px solid #374151', backgroundColor: '#0d1117', color: '#9ca3af' }}>
+                <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Anzahl (aus Projekt)</span>
+                <div className="flex items-center px-3 py-2 text-sm" style={{ ...feldStyle, color: 'var(--text-secondary)' }}>
                   {nvtAnzahl} Stk.
                 </div>
               </div>
@@ -199,8 +311,8 @@ export default function KalkulationModal({
           {sektion('🕳️ Schacht', (
             <>
               <div className="flex flex-col gap-1">
-                <span className="text-xs text-gray-400">Anzahl (aus Projekt)</span>
-                <div className="flex items-center rounded-lg px-3 py-2 text-sm" style={{ border: '1px solid #374151', backgroundColor: '#0d1117', color: '#9ca3af' }}>
+                <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Anzahl (aus Projekt)</span>
+                <div className="flex items-center px-3 py-2 text-sm" style={{ ...feldStyle, color: 'var(--text-secondary)' }}>
                   {schachtAnzahl} Stk.
                 </div>
               </div>
@@ -208,25 +320,57 @@ export default function KalkulationModal({
             </>
           ))}
 
-          <div className="rounded-xl p-4 flex flex-col mt-1" style={{ backgroundColor: '#0f1216', border: '1px solid #262b36' }}>
+          {sektion(`🧵 Material${bundesfoerderung ? ' (Bundesförderung)' : ''}`, (
+            <>
+              {materialPreisFeld(
+                `Trasse (${materialProfil.trasse.bezeichnungFirma} · ${lrArtLabel(materialProfil.trasse.lrArt)})`,
+                materialProfil.trasse.preisProMeter,
+                (v) => aktualisiereMaterialPreis('trasse', v)
+              )}
+              {materialPreisFeld(
+                `Hausanschluss (${materialProfil.hausanschluss.bezeichnungFirma} · ${lrArtLabel(materialProfil.hausanschluss.lrArt)})`,
+                materialProfil.hausanschluss.preisProMeter,
+                (v) => aktualisiereMaterialPreis('hausanschluss', v)
+              )}
+              {materialProfil.kundenanschlussStufen.map((stufe, i) => (
+                <div key={i}>
+                  {materialPreisFeld(`Sammelverband ${stufe.bezeichnungFirma}`, stufe.preisProMeter, (v) => aktualisiereStufePreis(i, v))}
+                </div>
+              ))}
+              <p className="col-span-2 text-xs -mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                Material-Typ/-Größe wird unter ⚙️ Einstellungen → Materialkatalog festgelegt, hier nur der Preis pro Meter. Die Summe unten rechnet mit der tatsächlich je Segment verlegten Länge (Backbone nur zwischen Verteilern, Sammelverband nach echtem Bedarf) — nicht mit der gesamten Trassenlänge.
+              </p>
+            </>
+          ))}
+
+          <div className="p-4 flex flex-col mt-1" style={{ backgroundColor: 'var(--surface-2)', borderRadius: 'var(--radius-lg)' }}>
             {zeile('Befestigte Oberfläche', `${Math.round(strasseLaenge)} m`, strasseSumme)}
             {zeile('Unbefestigte Oberfläche', `${Math.round(feldwegLaenge)} m`, feldwegSumme)}
             {zeile('Hausanschlüsse', `${hausanschluesseCount} Stk.`, hausanschlussSumme)}
             {preise.sonderpositionAnzahl > 0 && zeile('Sonderposition', `${preise.sonderpositionAnzahl} Stk.`, sonderpositionSumme)}
             {nvtAnzahl > 0 && zeile('NVT', `${nvtAnzahl} Stk.`, nvtSumme)}
             {schachtAnzahl > 0 && zeile('Schacht', `${schachtAnzahl} Stk.`, schachtSumme)}
-            <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid #262b36' }}>
-              <span className="text-sm font-medium text-gray-300">Gesamt</span>
-              <span className="text-lg font-semibold text-blue-400">{formatEuro(gesamt)}</span>
+            {trasseMaterialLaengen
+              .filter(({ material }) => material.preisProMeter > 0)
+              .map(({ material, laenge }) => (
+                <div key={material.bezeichnungFirma || material.lrArt}>
+                  {zeile(`Material ${material.bezeichnungFirma}`, `${Math.round(laenge)} m`, laenge * material.preisProMeter)}
+                </div>
+              ))}
+            {materialHausanschlussSumme > 0 && zeile(`Material Hausanschluss`, `${Math.round(hausanschlussLaenge)} m`, materialHausanschlussSumme)}
+            <div className="flex justify-between items-center pt-3 mt-1.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+              <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Gesamt</span>
+              <span className="text-lg font-semibold" style={{ color: '#93c5fd' }}>{formatEuro(gesamt)}</span>
             </div>
           </div>
 
           <button onClick={handlePdfExport}
-            className="w-full px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors">
+            className="w-full px-3.5 py-2.5 text-sm font-medium text-white transition-colors hover:brightness-110"
+            style={{ backgroundColor: 'var(--accent-blue)', borderRadius: 'var(--radius-md)' }}>
             📄 Als PDF exportieren
           </button>
 
-          <p className="text-xs text-gray-600 text-center">
+          <p className="text-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
             Preise werden geräteweit gespeichert und gelten projektübergreifend.
           </p>
         </div>
