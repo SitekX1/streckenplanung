@@ -97,10 +97,19 @@ export async function parseExcelFile(file: File): Promise<Address[]> {
     if ((!isFinite(lat) || !isFinite(lon)) && zuordnung.x && zuordnung.y) {
       const x = parseFloat(wert(row, 'x'))
       const y = parseFloat(wert(row, 'y'))
-      if (isFinite(x) && isFinite(y) && x > 100_000 && x < 900_000 && y > 4_000_000 && y < 6_500_000) {
-        const wgs84 = utm32nZuWgs84(x, y)
-        lat = wgs84.lat
-        lon = wgs84.lon
+      if (isFinite(x) && isFinite(y)) {
+        if (x > 100_000 && x < 900_000 && y > 4_000_000 && y < 6_500_000) {
+          const wgs84 = utm32nZuWgs84(x, y)
+          lat = wgs84.lat
+          lon = wgs84.lon
+        } else if (x >= -180 && x <= 180 && y >= -90 && y <= 90) {
+          // x/y-Spalten enthalten trotz UTM-verdächtiger Namen (ostwert/
+          // rechtswert) bereits WGS84-Gradwerte — GIS-Konvention x=lon, y=lat
+          // (2026-10-01, Alex: Import "findet die Punkte nicht", Spalten
+          // hießen x/y, Werte aber z.B. x=10.58/y=48.23 statt UTM-Metern).
+          lon = x
+          lat = y
+        }
       }
     }
 
